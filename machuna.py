@@ -270,6 +270,23 @@ def _byteswap_v210(path: str):
     data.tofile(path)                       # write back
 
 
+def _generate_white_key(fill_raw: str, output_path: str):
+    """Generate a solid white v210 key plane matching the size of the fill plane.
+    
+    White in v210 big-endian is the repeating 8-byte pattern:
+    20 01 02 00 04 08 00 40  (confirmed from K-Watch reference file)
+    """
+    fill_size = os.path.getsize(fill_raw)
+    pattern = bytes([0x20, 0x01, 0x02, 0x00, 0x04, 0x08, 0x00, 0x40])
+    repeats = fill_size // len(pattern)
+    with open(output_path, 'wb') as f:
+        f.write(pattern * repeats)
+        # Handle any remainder (shouldn't happen with valid v210 data)
+        remainder = fill_size % len(pattern)
+        if remainder:
+            f.write(pattern[:remainder])
+
+
 # ─────────────────────────────────────────────────────────────
 #  SWS writer
 # ─────────────────────────────────────────────────────────────
@@ -360,7 +377,8 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
                   video_standard: str = '1080i50',
                   split_fat32: bool = True,
                   delete_source: bool = False,
-                  log=print):
+                  log=print,
+                  ignore_alpha: bool = False):
     """Convert a single TGA/PNG/BMP/JPG still to .SWS."""
 
     log(f"Converting still: {os.path.basename(input_path)}")
@@ -371,10 +389,12 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         fill_raw = os.path.join(tmp, 'fill.v210')
         key_raw  = None
 
-        log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}")
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=info['has_alpha'])
+        has_alpha = info['has_alpha'] and not ignore_alpha
+        log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
+        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
         if key_raw is None:
-            actual_key = None
+            actual_key = os.path.join(tmp, 'key.v210')
+            _generate_white_key(fill_raw, actual_key)
         else:
             actual_key = os.path.join(tmp, 'key.v210')
             os.rename(fill_raw + '.alpha.raw', actual_key)
@@ -408,7 +428,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  video_standard: str = '1080i50',
                  split_fat32: bool = True,
                  delete_source: bool = False,
-                 log=print):
+                 log=print,
+                 ignore_alpha: bool = False):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS."""
 
     log(f"Converting clip: {os.path.basename(input_path)}")
@@ -416,16 +437,20 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     w, h, fps = info['width'], info['height'], info['fps']
     frame_count = info['frame_count']
 
-    log(f"  Size: {w}x{h}  FPS: {fps:.2f}  Frames: {frame_count}  has_alpha={info['has_alpha']}")
+    has_alpha = info['has_alpha'] and not ignore_alpha
+    log(f"  Size: {w}x{h}  FPS: {fps:.2f}  Frames: {frame_count}  has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_raw   = os.path.join(tmp, 'fill.v210')
         actual_key = None
 
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=info['has_alpha'])
+        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
         if key_raw:
             actual_key = os.path.join(tmp, 'key.v210')
             os.rename(fill_raw + '.alpha.raw', actual_key)
+        else:
+            actual_key = os.path.join(tmp, 'key.v210')
+            _generate_white_key(fill_raw, actual_key)
 
         plane_size = os.path.getsize(fill_raw) // frame_count
         src_name   = os.path.basename(input_path)
@@ -456,13 +481,15 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          video_standard: str = '1080i50',
                          split_fat32: bool = True,
                          delete_source: bool = False,
-                         log=print):
+                         log=print,
+                         ignore_alpha: bool = False):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
     info = get_video_info(tga_files[0])
     w, h = info['width'], info['height']
     frame_count = len(tga_files)
+    has_alpha = info['has_alpha'] and not ignore_alpha
 
     with tempfile.TemporaryDirectory() as tmp:
         # Build a concat demuxer file
@@ -481,7 +508,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         # Key/alpha
         actual_key = None
-        if info['has_alpha']:
+        if has_alpha:
             key_raw = os.path.join(tmp, 'key.v210')
             cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                        '-i', concat_file,
@@ -498,6 +525,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                 subprocess.run(cmd_key, capture_output=True, check=True)
             _byteswap_v210(key_raw)
             actual_key = key_raw
+        else:
+            actual_key = os.path.join(tmp, 'key.v210')
+            _generate_white_key(fill_raw, actual_key)
 
         _byteswap_v210(fill_raw)
 
@@ -617,12 +647,14 @@ class WatchService:
                  video_standard: str = '1080i50',
                  split_fat32: bool = True,
                  delete_source: bool = False,
+                 ignore_alpha: bool = False,
                  log=print):
         self.watch_dir      = watch_dir
         self.dest_dir       = dest_dir
         self.video_standard = video_standard
         self.split_fat32    = split_fat32
         self.delete_source  = delete_source
+        self.ignore_alpha   = ignore_alpha
         self.log            = log
         self._stop_event    = threading.Event()
         self._seen           = set()
@@ -673,12 +705,14 @@ class WatchService:
                 if meta['type'] == 'clip':
                     convert_clip(fpath, meta['file_num'], self.dest_dir,
                                  self.video_standard, self.split_fat32,
-                                 self.delete_source, self.log)
+                                 self.delete_source, self.log,
+                                 ignore_alpha=self.ignore_alpha)
 
                 elif meta['type'] == 'still' and meta['is_fill']:
                     convert_still(fpath, meta['file_num'], self.dest_dir,
                                   self.video_standard, self.split_fat32,
-                                  self.delete_source, self.log)
+                                  self.delete_source, self.log,
+                                  ignore_alpha=self.ignore_alpha)
 
                 elif meta['type'] == 'tga_seq' and meta['is_fill']:
                     self._accumulate_seq(fname, fpath, meta, entries)
@@ -702,7 +736,8 @@ class WatchService:
             del self._pending_seqs[fnum]
             convert_tga_sequence(frames, fnum, self.dest_dir,
                                  self.video_standard, self.split_fat32,
-                                 self.delete_source, self.log)
+                                 self.delete_source, self.log,
+                                 ignore_alpha=self.ignore_alpha)
 
     @staticmethod
     def _file_stable(path: str, wait: float = 0.5) -> bool:
@@ -748,6 +783,7 @@ def launch_gui():
                     'standard': std_var.get(),
                     'split':    split_var.get(),
                     'delete':   delete_var.get(),
+                    'ignore_alpha': ignore_alpha_var.get(),
                 }, f)
         except Exception:
             pass
@@ -789,18 +825,21 @@ def launch_gui():
                             values=list(VIDEO_STANDARDS.keys()), state='readonly')
     std_cb.pack(side='left', **pad)
 
-    split_var  = tk.BooleanVar(value=True)
-    delete_var = tk.BooleanVar(value=False)
+    split_var        = tk.BooleanVar(value=True)
+    delete_var       = tk.BooleanVar(value=False)
+    ignore_alpha_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(frm3, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
     s = load_settings()
     if s.get('watch'):    watch_var.set(s['watch'])
     if s.get('dest'):     dest_var.set(s['dest'])
     if s.get('standard'): std_var.set(s['standard'])
-    if 'split'  in s:     split_var.set(s['split'])
-    if 'delete' in s:     delete_var.set(s['delete'])
+    if 'split'        in s: split_var.set(s['split'])
+    if 'delete'       in s: delete_var.set(s['delete'])
+    if 'ignore_alpha' in s: ignore_alpha_var.set(s['ignore_alpha'])
 
     # ── Buttons ──
     frm4 = ttk.Frame(root)
@@ -836,7 +875,8 @@ def launch_gui():
             log(f"ERROR: {e}")
             return
         save_settings()
-        svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(), log)
+        svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(),
+                           ignore_alpha=ignore_alpha_var.get(), log=log)
         svc.start()
         service_ref[0] = svc
         run_btn.config(state='disabled')
