@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test.
+**Current version:** v1.1.1
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
