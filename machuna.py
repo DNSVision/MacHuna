@@ -1178,6 +1178,11 @@ def launch_gui():
     run_btn.config(command=start_watching)
     stop_btn.config(command=stop_watching)
 
+    def on_closing():
+        save_settings()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 
