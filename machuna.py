@@ -972,6 +972,12 @@ def launch_gui():
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
     log_frame.pack(fill='both', expand=True, **pad)
+
+    log_toolbar = ttk.Frame(log_frame)
+    log_toolbar.pack(fill='x', padx=4, pady=(4, 0))
+    ttk.Button(log_toolbar, text="Clear Log",
+               command=lambda: log_text.delete('1.0', 'end')).pack(side='right')
+
     log_text = scrolledtext.ScrolledText(log_frame, height=20, font=('Menlo', 11))
     log_text.pack(fill='both', expand=True, padx=4, pady=4)
 
