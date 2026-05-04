@@ -843,6 +843,7 @@ def launch_gui():
     ttk.Checkbutton(frm3, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
+    start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
     s = load_settings()
     if s.get('watch'):    watch_var.set(s['watch'])
     if s.get('dest'):     dest_var.set(s['dest'])
@@ -867,7 +868,6 @@ def launch_gui():
     frm5.pack(fill='x', **pad)
 
     ttk.Label(frm5, text="Start number:").pack(side='left', **pad)
-    start_num_var = tk.IntVar(value=1)
     start_num_entry = ttk.Spinbox(frm5, from_=1, to=9999, textvariable=start_num_var, width=6)
     start_num_entry.pack(side='left', **pad)
 
