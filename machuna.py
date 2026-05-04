@@ -1183,6 +1183,10 @@ def launch_gui():
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    # On macOS, Cmd+Q fires the tk::mac::Quit event rather than WM_DELETE_WINDOW
+    root.createcommand('tk::mac::Quit', on_closing)
+
     root.mainloop()
 
 
