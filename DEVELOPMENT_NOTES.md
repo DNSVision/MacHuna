@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.0.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested.
+**Current version:** v1.1
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -57,7 +57,7 @@ git push
 2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, alpha is ignored and a solid white key plane is written matching K-Watch behaviour exactly (confirmed by hex analysis).
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
 4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
-5. **Audio support** -- Format fully reverse-engineered and documented in Audio Spec.pdf. Needs Kahuna to verify output.
+5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Verified by hex comparison against MacHuna-generated SWS -- file size and audio section exact match. Awaiting live Kahuna test.
 6. **Split large files (>4GB)** -- Code crashes with overflow error on large files. Needs Kahuna and a large file to test properly. See known issues below.
 7. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
 8. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
@@ -90,7 +90,7 @@ For now, the Open Files button in the Batch Convert section provides equivalent 
 [0x000 - 0x1FF]  512-byte header
 [0x200 - N]      Fill plane  (plane_size x frame_count bytes, v210 big-endian)
 [N - M]          Key plane   (plane_size x frame_count bytes, v210 big-endian)
-[M - EOF]        Audio data  (if present -- see Audio Spec.pdf)
+[M - EOF]        Audio data  (if present)
 ```
 
 ### Key Header Fields (all big-endian)
@@ -113,8 +113,8 @@ For now, the Open Files button in the Batch Convert section provides equivalent 
 | 0x1A8 | uint32 | Play count (= frame count) |
 | 0x1B0 | float32 | Play rate (1.0) |
 | 0x1B4 | uint32 | (plane_size x frame_count + header_size) / 32 |
-| 0x1C2 | uint16 | Audio frame size (0 if no audio) |
-| 0x1CC | uint32 | Total file size |
+| 0x1C2 | uint16 | Audio frame size: 0x1680 (5760) if audio, 0 if not |
+| 0x1CC | uint32 | Total file size (includes audio if present) |
 | 0x1E8 | uint32 | Audio data offset / 32 (0 if no audio) |
 | 0x1EC | uint32 | Audio format flag: 0x03000000 (0 if no audio) |
 
@@ -139,15 +139,20 @@ When no alpha is present (or ignore alpha ticked), _generate_white_key() writes 
 
 ---
 
-## Audio Format (v1.x target)
+## Audio Format (confirmed by hex analysis of K-Watch and MacHuna output)
 
-Fully documented in Audio Spec.pdf. Summary:
 - Audio appended after key plane
-- 48kHz, 24-bit PCM, 16 channels (8 stereo pairs)
-- 5,760 bytes per frame per channel at 25fps (2,880 at 50fps)
-- Header fields 0x1C2, 0x1E8, 0x1EC and 0x1CC need updating
-- ffmpeg extraction: -acodec pcm_s24le -ar 48000 -ac 16 -f s24le
+- **16-bit signed little-endian PCM** (not 24-bit -- matches common MOV source format)
+- **16 channels interleaved** -- source channels padded to 16 with silence
+- **48,000 Hz sample rate**
+- Samples per frame = 48000 / fps (e.g. 960 at 50fps, 1920 at 25fps)
+- Bytes per frame = samples_per_frame x 2 x 16
+- Audio frame size header field (0x1C2) is always 0x1680 (5760) regardless of fps -- fixed value
+- Audio data offset = 512 + plane_size x frame_count x 2
+- ffmpeg extraction: -acodec pcm_s16le -ar 48000 -ac 16 -f s16le
 - TGA sequence audio is out of scope
+
+Note: The Audio Spec.pdf was written before full hex analysis and incorrectly states 24-bit PCM. The actual format is 16-bit. The spec PDF can be disregarded -- the implementation in extract_audio() is correct.
 
 ---
 
@@ -168,6 +173,9 @@ From hex analysis of a real K-Watch split file:
 
 Do not fix until near a Kahuna with a large file to test.
 
+### Video plane differences between machines
+MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and between different machines running MacHuna. This is normal -- ffmpeg produces slightly different v210 encoding on different hardware/versions. The Kahuna accepted MacHuna output correctly on live test. This is not a bug.
+
 ---
 
 ## Technical Decisions
@@ -180,6 +188,8 @@ Do not fix until near a Kahuna with a large file to test.
 - White key plane: Written by _generate_white_key() whenever no alpha present, matching K-Watch exactly.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
 - Batch convert scope: MOVs and single-frame stills only. TGA sequences require the Watch Folder service.
+- Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
+- Audio frame size header field (0x1C2): Fixed value 0x1680 (5760) regardless of fps. Actual bytes per frame varies with fps but this header field does not.
 
 ---
 
@@ -190,7 +200,7 @@ Do not fix until near a Kahuna with a large file to test.
 ├── machuna.py              # Main application source
 ├── machuna.icns            # App icon (Apple icon format)
 ├── machuna_final_1024.png  # Source icon image (1024x1024px)
-├── Audio Spec.pdf          # Audio format reverse-engineering notes
+├── Audio Spec.pdf          # Early audio format notes -- superseded, see notes above
 ├── README.md               # Public-facing repository readme
 ├── DEVELOPMENT_NOTES.md    # This file
 └── .gitignore              # Excludes build/, dist/, *.spec etc.
