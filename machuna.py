@@ -27,6 +27,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    HAS_DND = False  # Disabled -- tkdnd native library incompatible with Homebrew Python/Tk on Apple Silicon
+except (ImportError, Exception):
+    HAS_DND = False
+
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
 # ─────────────────────────────────────────────────────────────
@@ -784,11 +790,15 @@ def launch_gui():
                     'split':    split_var.get(),
                     'delete':   delete_var.get(),
                     'ignore_alpha': ignore_alpha_var.get(),
+                    'start_num': start_num_var.get(),
                 }, f)
         except Exception:
             pass
 
-    root = tk.Tk()
+    try:
+        root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
+    except Exception:
+        root = tk.Tk()
     root.title("MacHuna v1.0")
     root.geometry("700x600")
     root.resizable(True, True)
@@ -840,6 +850,7 @@ def launch_gui():
     if 'split'        in s: split_var.set(s['split'])
     if 'delete'       in s: delete_var.set(s['delete'])
     if 'ignore_alpha' in s: ignore_alpha_var.set(s['ignore_alpha'])
+    if 'start_num'    in s: start_num_var.set(s['start_num'])
 
     # ── Buttons ──
     frm4 = ttk.Frame(root)
@@ -850,6 +861,18 @@ def launch_gui():
     stop_btn = ttk.Button(frm4, text="⏹  Stop", state='disabled')
     run_btn.pack(side='left', **pad)
     stop_btn.pack(side='left', **pad)
+
+    # ── Open Files / Batch Convert row ──
+    frm5 = ttk.LabelFrame(root, text="Batch Convert")
+    frm5.pack(fill='x', **pad)
+
+    ttk.Label(frm5, text="Start number:").pack(side='left', **pad)
+    start_num_var = tk.IntVar(value=1)
+    start_num_entry = ttk.Spinbox(frm5, from_=1, to=9999, textvariable=start_num_var, width=6)
+    start_num_entry.pack(side='left', **pad)
+
+    open_btn = ttk.Button(frm5, text="Open Files…")
+    open_btn.pack(side='left', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
@@ -862,6 +885,163 @@ def launch_gui():
         log_text.insert('end', f"[{ts}] {msg}\n")
         log_text.see('end')
         root.update_idletasks()
+
+    def on_drop(event):
+        """Handle files dropped onto the log area."""
+        d = dest_var.get().strip()
+        if not d:
+            log("ERROR: Please set a Destination Folder before dropping files.")
+            return
+
+        # Parse the drop data -- tkinterdnd2 returns paths wrapped in {} if they contain spaces
+        raw = event.data.strip()
+        paths = []
+        # Handle paths wrapped in braces (spaces in filenames)
+        import shlex
+        try:
+            paths = shlex.split(raw)
+        except ValueError:
+            # Fallback: strip braces manually
+            paths = [p.strip('{}') for p in re.findall(r'\{[^}]+\}|\S+', raw)]
+
+        # Filter to supported file types
+        supported = {'.mov', '.mp4', '.avi', '.mxf', '.tga', '.png', '.bmp', '.jpg', '.jpeg'}
+        valid = [p for p in paths if Path(p).suffix.lower() in supported]
+
+        if not valid:
+            log("ERROR: No supported files in drop.")
+            return
+
+        # Ask for starting file number
+        import tkinter.simpledialog as simpledialog
+        start_num = simpledialog.askinteger(
+            "File Number",
+            f"Starting file number for {len(valid)} file(s):",
+            initialvalue=1, minvalue=1, maxvalue=9999, parent=root
+        )
+        if start_num is None:
+            return  # user cancelled
+
+        try:
+            check_ffmpeg()
+        except RuntimeError as e:
+            log(f"ERROR: {e}")
+            return
+
+        def convert_dropped():
+            for i, path in enumerate(sorted(valid)):
+                fnum = start_num + i
+                ext = Path(path).suffix.lower()
+                try:
+                    if ext in {'.mov', '.mp4', '.avi', '.mxf'}:
+                        convert_clip(path, fnum, d,
+                                     std_var.get(), split_var.get(),
+                                     delete_var.get(), log,
+                                     ignore_alpha=ignore_alpha_var.get())
+                    elif ext == '.tga' and Path(path).stat().st_size > 0:
+                        convert_still(path, fnum, d,
+                                      std_var.get(), split_var.get(),
+                                      delete_var.get(), log,
+                                      ignore_alpha=ignore_alpha_var.get())
+                    else:
+                        convert_still(path, fnum, d,
+                                      std_var.get(), split_var.get(),
+                                      delete_var.get(), log,
+                                      ignore_alpha=ignore_alpha_var.get())
+                except Exception as e:
+                    import traceback
+                    log(f"  ERROR converting {Path(path).name}: {e}")
+                    log(f"  {traceback.format_exc()}")
+
+        threading.Thread(target=convert_dropped, daemon=True).start()
+
+    # ── Wire up drag and drop to log area ──
+    if HAS_DND:
+        log_text.drop_target_register(DND_FILES)
+        log_text.dnd_bind('<<Drop>>', on_drop)
+        log(f"Drag and drop enabled -- drop files onto the log area to convert.")
+
+    def open_files():
+        """Open a file picker for batch conversion."""
+        d = dest_var.get().strip()
+        if not d:
+            log("ERROR: Please set a Destination Folder before converting files.")
+            return
+
+        supported_types = [
+            ('Video & Image files', '*.mov *.mp4 *.avi *.mxf *.tga *.png *.bmp *.jpg *.jpeg'),
+            ('Video files', '*.mov *.mp4 *.avi *.mxf'),
+            ('Image files', '*.tga *.png *.bmp *.jpg *.jpeg'),
+            ('All files', '*.*'),
+        ]
+        paths = filedialog.askopenfilenames(
+            title="Select files to convert",
+            filetypes=supported_types,
+            parent=root
+        )
+        if not paths:
+            return
+
+        start_num = start_num_var.get()
+        valid = sorted(paths)  # alphabetical order
+
+        log(f"Batch convert: {len(valid)} file(s) starting at number {start_num}")
+        for i, p in enumerate(valid):
+            log(f"  {start_num + i} ← {Path(p).name}")
+
+        try:
+            check_ffmpeg()
+        except RuntimeError as e:
+            log(f"ERROR: {e}")
+            return
+
+        def convert_batch():
+            results = []
+            for i, path in enumerate(valid):
+                fnum = start_num + i
+                ext = Path(path).suffix.lower()
+                try:
+                    if ext in {'.mov', '.mp4', '.avi', '.mxf'}:
+                        convert_clip(path, fnum, d,
+                                     std_var.get(), split_var.get(),
+                                     delete_var.get(), log,
+                                     ignore_alpha=ignore_alpha_var.get())
+                    else:
+                        convert_still(path, fnum, d,
+                                      std_var.get(), split_var.get(),
+                                      delete_var.get(), log,
+                                      ignore_alpha=ignore_alpha_var.get())
+                    results.append((fnum, Path(path).name, 'OK'))
+                except Exception as e:
+                    import traceback
+                    log(f"  ERROR converting {Path(path).name}: {e}")
+                    log(f"  {traceback.format_exc()}")
+                    results.append((fnum, Path(path).name, f'ERROR: {e}'))
+
+            # Write conversion log to destination folder
+            if results:
+                from datetime import datetime as dt
+                log_filename = f"MacHuna_Log_{dt.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                log_path = os.path.join(d, log_filename)
+                try:
+                    with open(log_path, 'w') as f:
+                        f.write(f"MacHuna Conversion Log\n")
+                        f.write(f"{'=' * 40}\n")
+                        f.write(f"Date: {dt.now().strftime('%d %b %Y %H:%M:%S')}\n")
+                        f.write(f"Standard: {std_var.get()}\n")
+                        f.write(f"{'=' * 40}\n\n")
+                        for fnum, fname, status in results:
+                            f.write(f"{fnum:4d}  {fname}  [{status}]\n")
+                    log(f"Conversion log saved: {log_filename}")
+                except Exception as e:
+                    log(f"  Could not write log file: {e}")
+
+            # Advance start number for next batch
+            root.after(0, lambda: start_num_var.set(start_num + len(valid)))
+
+        threading.Thread(target=convert_batch, daemon=True).start()
+
+    open_btn.config(command=open_files)
 
     def start_watching():
         w = watch_var.get().strip()
