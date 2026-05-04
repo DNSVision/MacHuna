@@ -77,11 +77,23 @@ def build_sws_header(source_filename: str,
                      plane_size: int,
                      video_standard: str = '1080p50',
                      play_rate: float = 1.0,
-                     is_still: bool = True) -> bytes:
+                     is_still: bool = True,
+                     fps: float = 25.0,
+                     has_audio: bool = False) -> bytes:
     """Build a 512-byte SWS file header."""
 
     std_code = VIDEO_STANDARDS.get(video_standard, 0x4923)
     now_str  = datetime.now().strftime('%a %b %d %H:%M:%S %Y').encode('ascii')
+
+    # Audio parameters (confirmed from K-Watch reference file analysis)
+    # audio_frame_size = 0x1680 (5760) -- fixed value in header regardless of fps
+    # Actual bytes per frame = round(48000/fps) * 2 bytes * 16 channels
+    AUDIO_FRAME_SIZE_HDR = 0x1680  # always 5760 in header (confirmed)
+    samples_per_frame    = round(48000 / fps)
+    audio_bytes_per_frame = samples_per_frame * 2 * 16
+    audio_data_size      = audio_bytes_per_frame * frame_count if has_audio else 0
+    audio_offset         = SWS_HEADER_SIZE + plane_size * 2 * frame_count  # after fill+key
+    total_size           = audio_offset + audio_data_size
 
     hdr = bytearray(SWS_HEADER_SIZE)
 
@@ -145,9 +157,17 @@ def build_sws_header(source_filename: str,
     val_1b4 = (plane_size * frame_count + SWS_HEADER_SIZE) // 32
     struct.pack_into('>I', hdr, 0x1B4, val_1b4)
 
-    # 0x1CC  Total file size = header + (fill_plane + key_plane) * frame_count
-    total_size = SWS_HEADER_SIZE + plane_size * 2 * frame_count
+    # 0x1C2  Audio frame size (uint16 BE) -- 0x1680 (5760) if audio, 0 if not
+    struct.pack_into('>H', hdr, 0x1C2, AUDIO_FRAME_SIZE_HDR if has_audio else 0)
+
+    # 0x1CC  Total file size = header + (fill+key) planes + audio data
     struct.pack_into('>I', hdr, 0x1CC, total_size)
+
+    # 0x1E8  Audio data offset / 32 (0 if no audio)
+    struct.pack_into('>I', hdr, 0x1E8, (audio_offset // 32) if has_audio else 0)
+
+    # 0x1EC  Audio format flag: 0x03000000 (0 if no audio)
+    struct.pack_into('>I', hdr, 0x1EC, 0x03000000 if has_audio else 0)
 
     return bytes(hdr)
 
@@ -191,7 +211,7 @@ def get_video_info(input_path: str) -> dict:
     import json
     data = json.loads(result.stdout)
 
-    info = {'width': 0, 'height': 0, 'fps': 25.0, 'frame_count': 1, 'has_alpha': False}
+    info = {'width': 0, 'height': 0, 'fps': 25.0, 'frame_count': 1, 'has_alpha': False, 'has_audio': False}
 
     for stream in data.get('streams', []):
         if stream.get('codec_type') == 'video':
@@ -222,7 +242,9 @@ def get_video_info(input_path: str) -> dict:
             # TGA files always have alpha in our use case
             if input_path.lower().endswith('.tga'):
                 info['has_alpha'] = True
-            break
+
+        elif stream.get('codec_type') == 'audio':
+            info['has_audio'] = True
 
     return info
 
@@ -293,6 +315,52 @@ def _generate_white_key(fill_raw: str, output_path: str):
             f.write(pattern[:remainder])
 
 
+def extract_audio(input_path: str, output_path: str, frame_count: int, fps: float) -> bool:
+    """Extract audio from input file and write as raw 16-bit LE PCM, 16 channels, 48kHz.
+
+    Format confirmed by hex analysis of K-Watch reference SWS files:
+    - 16-bit signed little-endian samples (matches common MOV source format)
+    - 16 channels interleaved (source channels padded to 16 with silence)
+    - 48,000 Hz sample rate
+    - Samples per frame = 48000 / fps (e.g. 960 at 50fps, 1920 at 25fps)
+    - Bytes per frame = samples_per_frame x 2 bytes x 16 channels
+    - Padded with zero bytes to exact frame alignment if necessary
+
+    Returns True if audio was extracted successfully, False if source has no audio.
+    """
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+
+    # Extract as 16-bit LE, 16 channels, 48kHz raw PCM
+    cmd = [ffmpeg, '-y', '-i', input_path,
+           '-vn',
+           '-acodec', 'pcm_s16le',
+           '-ar', '48000',
+           '-ac', '16',
+           '-f', 's16le',
+           output_path]
+    result = subprocess.run(cmd, capture_output=True)
+
+    if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        return False
+
+    # Verify and pad to exact frame alignment
+    samples_per_frame = round(48000 / fps)
+    bytes_per_frame   = samples_per_frame * 2 * 16  # 2 bytes/sample, 16 channels
+    expected_size     = bytes_per_frame * frame_count
+    actual_size       = os.path.getsize(output_path)
+
+    if actual_size < expected_size:
+        # Pad with silence to exact length
+        with open(output_path, 'ab') as f:
+            f.write(b'\x00' * (expected_size - actual_size))
+    elif actual_size > expected_size:
+        # Truncate to exact length
+        with open(output_path, 'r+b') as f:
+            f.truncate(expected_size)
+
+    return True
+
+
 # ─────────────────────────────────────────────────────────────
 #  SWS writer
 # ─────────────────────────────────────────────────────────────
@@ -302,18 +370,21 @@ def write_sws(dest_path: str,
               key_raw: Optional[str],
               header: bytes,
               split_fat32: bool = True,
-              frame_count: int = 1):
+              frame_count: int = 1,
+              audio_raw: Optional[str] = None):
     """Write the final .SWS file (or split folder if > 4GB).
     
     Structure (confirmed from PC binary analysis):
       header
       fill_frame1, fill_frame2, ..., fill_frameN
       key_frame1,  key_frame2,  ..., key_frameN
+      audio_data  (if present)
     """
 
-    fill_size = os.path.getsize(fill_raw)
-    key_size  = os.path.getsize(key_raw) if key_raw else 0
-    total     = SWS_HEADER_SIZE + fill_size + key_size
+    fill_size  = os.path.getsize(fill_raw)
+    key_size   = os.path.getsize(key_raw) if key_raw else 0
+    audio_size = os.path.getsize(audio_raw) if audio_raw else 0
+    total      = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
     if split_fat32 and total > FAT32_LIMIT:
         _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count)
@@ -323,6 +394,8 @@ def write_sws(dest_path: str,
             _copy_file(fill_raw, out)
             if key_raw:
                 _copy_file(key_raw, out)
+            if audio_raw:
+                _copy_file(audio_raw, out)
         print(f"  Written: {dest_path}  ({total:,} bytes)")
 
 
@@ -435,7 +508,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  split_fat32: bool = True,
                  delete_source: bool = False,
                  log=print,
-                 ignore_alpha: bool = False):
+                 ignore_alpha: bool = False,
+                 include_audio: bool = True):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS."""
 
     log(f"Converting clip: {os.path.basename(input_path)}")
@@ -444,11 +518,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     frame_count = info['frame_count']
 
     has_alpha = info['has_alpha'] and not ignore_alpha
-    log(f"  Size: {w}x{h}  FPS: {fps:.2f}  Frames: {frame_count}  has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
+    will_include_audio = include_audio and info['has_audio']
+    log(f"  Size: {w}x{h}  FPS: {fps:.2f}  Frames: {frame_count}  has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}  audio={info['has_audio']}{' (included)' if will_include_audio else ' (excluded)' if info['has_audio'] else ''}")
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_raw   = os.path.join(tmp, 'fill.v210')
         actual_key = None
+        audio_raw  = None
 
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
         if key_raw:
@@ -457,6 +533,15 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         else:
             actual_key = os.path.join(tmp, 'key.v210')
             _generate_white_key(fill_raw, actual_key)
+
+        # Extract audio if requested and present
+        if will_include_audio:
+            audio_path = os.path.join(tmp, 'audio.pcm')
+            if extract_audio(input_path, audio_path, frame_count, fps):
+                audio_raw = audio_path
+                log(f"  Audio extracted: {os.path.getsize(audio_raw):,} bytes")
+            else:
+                log(f"  Audio extraction failed -- writing without audio")
 
         plane_size = os.path.getsize(fill_raw) // frame_count
         src_name   = os.path.basename(input_path)
@@ -470,10 +555,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
+            fps=fps,
+            has_audio=(audio_raw is not None),
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=frame_count)
+        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32,
+                  frame_count=frame_count, audio_raw=audio_raw)
 
     if delete_source:
         os.remove(input_path)
@@ -654,6 +742,7 @@ class WatchService:
                  split_fat32: bool = True,
                  delete_source: bool = False,
                  ignore_alpha: bool = False,
+                 include_audio: bool = True,
                  log=print):
         self.watch_dir      = watch_dir
         self.dest_dir       = dest_dir
@@ -661,6 +750,7 @@ class WatchService:
         self.split_fat32    = split_fat32
         self.delete_source  = delete_source
         self.ignore_alpha   = ignore_alpha
+        self.include_audio  = include_audio
         self.log            = log
         self._stop_event    = threading.Event()
         self._seen           = set()
@@ -712,7 +802,8 @@ class WatchService:
                     convert_clip(fpath, meta['file_num'], self.dest_dir,
                                  self.video_standard, self.split_fat32,
                                  self.delete_source, self.log,
-                                 ignore_alpha=self.ignore_alpha)
+                                 ignore_alpha=self.ignore_alpha,
+                                 include_audio=self.include_audio)
 
                 elif meta['type'] == 'still' and meta['is_fill']:
                     convert_still(fpath, meta['file_num'], self.dest_dir,
@@ -790,6 +881,7 @@ def launch_gui():
                     'split':    split_var.get(),
                     'delete':   delete_var.get(),
                     'ignore_alpha': ignore_alpha_var.get(),
+                    'include_audio': include_audio_var.get(),
                     'start_num': start_num_var.get(),
                 }, f)
         except Exception:
@@ -835,23 +927,25 @@ def launch_gui():
                             values=list(VIDEO_STANDARDS.keys()), state='readonly')
     std_cb.pack(side='left', **pad)
 
-    split_var        = tk.BooleanVar(value=True)
-    delete_var       = tk.BooleanVar(value=False)
-    ignore_alpha_var = tk.BooleanVar(value=False)
+    split_var         = tk.BooleanVar(value=True)
+    delete_var        = tk.BooleanVar(value=False)
+    ignore_alpha_var  = tk.BooleanVar(value=False)
+    include_audio_var = tk.BooleanVar(value=True)
     ttk.Checkbutton(frm3, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
-    start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
     s = load_settings()
     if s.get('watch'):    watch_var.set(s['watch'])
     if s.get('dest'):     dest_var.set(s['dest'])
     if s.get('standard'): std_var.set(s['standard'])
     if 'split'        in s: split_var.set(s['split'])
     if 'delete'       in s: delete_var.set(s['delete'])
-    if 'ignore_alpha' in s: ignore_alpha_var.set(s['ignore_alpha'])
-    if 'start_num'    in s: start_num_var.set(s['start_num'])
+    if 'ignore_alpha'   in s: ignore_alpha_var.set(s['ignore_alpha'])
+    if 'include_audio'  in s: include_audio_var.set(s['include_audio'])
+    if 'start_num'      in s: start_num_var.set(s['start_num'])
 
     # ── Buttons ──
     frm4 = ttk.Frame(root)
@@ -868,14 +962,12 @@ def launch_gui():
     frm5.pack(fill='x', **pad)
 
     ttk.Label(frm5, text="Start number:").pack(side='left', **pad)
+    start_num_var = tk.IntVar(value=1)
     start_num_entry = ttk.Spinbox(frm5, from_=1, to=9999, textvariable=start_num_var, width=6)
     start_num_entry.pack(side='left', **pad)
 
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
-
-    ttk.Label(frm5, text="For TGA sequences, use the Watch Folder service above.",
-              foreground='gray').pack(side='left', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
@@ -940,7 +1032,8 @@ def launch_gui():
                         convert_clip(path, fnum, d,
                                      std_var.get(), split_var.get(),
                                      delete_var.get(), log,
-                                     ignore_alpha=ignore_alpha_var.get())
+                                     ignore_alpha=ignore_alpha_var.get(),
+                                     include_audio=include_audio_var.get())
                     elif ext == '.tga' and Path(path).stat().st_size > 0:
                         convert_still(path, fnum, d,
                                       std_var.get(), split_var.get(),
@@ -1008,7 +1101,8 @@ def launch_gui():
                         convert_clip(path, fnum, d,
                                      std_var.get(), split_var.get(),
                                      delete_var.get(), log,
-                                     ignore_alpha=ignore_alpha_var.get())
+                                     ignore_alpha=ignore_alpha_var.get(),
+                                     include_audio=include_audio_var.get())
                     else:
                         convert_still(path, fnum, d,
                                       std_var.get(), split_var.get(),
@@ -1059,7 +1153,8 @@ def launch_gui():
             return
         save_settings()
         svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(),
-                           ignore_alpha=ignore_alpha_var.get(), log=log)
+                           ignore_alpha=ignore_alpha_var.get(),
+                           include_audio=include_audio_var.get(), log=log)
         svc.start()
         service_ref[0] = svc
         run_btn.config(state='disabled')
