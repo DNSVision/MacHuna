@@ -58,7 +58,7 @@ git push
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
 4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Verified by hex comparison against MacHuna-generated SWS -- file size and audio section exact match. Awaiting live Kahuna test.
-6. **Split large files (>4GB)** -- Code crashes with overflow error on large files. Needs Kahuna and a large file to test properly. See known issues below.
+6. **Split large files (>4GB)** -- Format now fully reverse-engineered from real K-Watch split files (see Split File Format section below). Ready to implement. Needs Kahuna and a large file to verify output. Do not implement until audio Kahuna test is complete.
 7. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
 8. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
 9. **Standalone preview viewer** -- Fill, key and audio preview with audio meters. Most complex item.
@@ -85,7 +85,7 @@ For now, the Open Files button in the Batch Convert section provides equivalent 
 
 ## SWS Format Technical Reference
 
-### File Layout
+### File Layout (single file, no split)
 ```
 [0x000 - 0x1FF]  512-byte header
 [0x200 - N]      Fill plane  (plane_size x frame_count bytes, v210 big-endian)
@@ -139,6 +139,45 @@ When no alpha is present (or ignore alpha ticked), _generate_white_key() writes 
 
 ---
 
+## Split File Format (>4GB)
+
+Fully reverse-engineered from a real K-Watch split file (3-chunk example, 1080i25, 1000 frames).
+
+### Folder and file structure
+```
+1.SWS/                  (folder named as the clip number)
+  01_OF_03._XX          (first chunk -- header + video data, exactly 2GB)
+  02_OF_03._XX          (subsequent chunks -- raw video data only, exactly 2GB)
+  03_OF_03._XX          (final chunk -- raw video data only, remainder)
+```
+
+### Chunk sizes
+- Chunks 1 through N-1: exactly 2,147,483,648 bytes (2GB)
+- Final chunk: remainder (whatever is left)
+- Chunk 1 includes the 512-byte header; all others are raw video data with no header
+
+### Header differences vs non-split files (chunk 1 header only)
+
+| Offset | Non-split value | Split value |
+|--------|----------------|-------------|
+| 0x1A8 | frame_count (play count) | 0 |
+| 0x1B4 | (plane x frames + 512) / 32 | 0 |
+| 0x1CC | total file size | size of final chunk only |
+
+- 0x1A4 frame_count: total frames across ALL chunks (unchanged)
+- All other header fields: identical to non-split
+
+### Audio in split files
+Not observed in the reference file and almost certainly not supported given the file sizes involved. Do not implement audio for split files.
+
+### Implementation notes
+- The existing _write_sws_split() function has a skeleton but the header logic is wrong -- it needs updating to match the above
+- The 0x1CC field containing the final chunk size rather than total size is confirmed by hex analysis
+- Play count (0x1A8) and 0x1B4 are both zeroed in split files -- confirmed
+- Test by generating a >4GB file on the M1 and loading onto a Kahuna
+
+---
+
 ## Audio Format (confirmed by hex analysis of K-Watch and MacHuna output)
 
 - Audio appended after key plane
@@ -159,19 +198,7 @@ Note: The Audio Spec.pdf was written before full hex analysis and incorrectly st
 ## Known Issues
 
 ### Large File Split (>4GB)
-Files producing SWS larger than 4GB crash with:
-  struct.error: 'I' format requires 0 <= number <= 4294967295
-
-This is in build_sws_header() at offset 0x1CC where total_size overflows uint32.
-
-From hex analysis of a real K-Watch split file:
-- Only first chunk has the 512-byte header
-- Subsequent chunks are raw video data, no header
-- Chunk size is exactly 2GB (2,147,483,648 bytes)
-- Naming: 01_OF_03._XX, 02_OF_03._XX etc.
-- Value at 0x1CC in split files not yet fully understood
-
-Do not fix until near a Kahuna with a large file to test.
+Format fully reverse-engineered (see Split File Format section). Implementation straightforward but not yet done. Do not implement until audio Kahuna test is confirmed working.
 
 ### Video plane differences between machines
 MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and between different machines running MacHuna. This is normal -- ffmpeg produces slightly different v210 encoding on different hardware/versions. The Kahuna accepted MacHuna output correctly on live test. This is not a bug.
