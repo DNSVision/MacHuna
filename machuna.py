@@ -874,6 +874,9 @@ def launch_gui():
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
 
+    ttk.Label(frm5, text="For TGA sequences, use the Watch Folder service above.",
+              foreground='gray').pack(side='left', **pad)
+
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
     log_frame.pack(fill='both', expand=True, **pad)
