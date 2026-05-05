@@ -344,12 +344,18 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
     """
     ffmpeg = _get_ffmpeg_path('ffmpeg')
 
-    # Extract as 16-bit LE, 16 channels, 48kHz raw PCM
+    # Extract as 16-bit LE, 16 channels, 48kHz raw PCM.
+    # K-Watch channel mapping (confirmed by hex analysis of reference SWS):
+    #   Ch1 = Left, Ch2 = silence, Ch3 = Right, Ch4 = silence, Ch5-16 = silence
+    # A straight -ac 16 upmix puts L on Ch1 and R on Ch2 which is wrong.
+    # Use the pan filter to route explicitly. Unspecified channels are silent.
+    # Note: 'c1=0' syntax is invalid in ffmpeg -- just omit silent channels.
+    pan_filter = 'pan=16c|c0=c0|c2=c1'
     cmd = [ffmpeg, '-y', '-i', input_path,
            '-vn',
+           '-af', pan_filter,
            '-acodec', 'pcm_s16le',
            '-ar', '48000',
-           '-ac', '16',
            '-f', 's16le',
            output_path]
     result = subprocess.run(cmd, capture_output=True)
