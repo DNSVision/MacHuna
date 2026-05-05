@@ -81,8 +81,14 @@ def build_sws_header(source_filename: str,
                      play_rate: float = 1.0,
                      is_still: bool = True,
                      fps: float = 25.0,
-                     has_audio: bool = False) -> bytes:
-    """Build a 512-byte SWS file header."""
+                     has_audio: bool = False,
+                     has_key: bool = True) -> bytes:
+    """Build a 512-byte SWS file header.
+
+    has_key: if False (ignore alpha / no key plane written), 0x1A8 and 0x1B4
+             are zeroed and audio offset is calculated after fill only,
+             matching confirmed K-Watch behaviour.
+    """
 
     std_code = VIDEO_STANDARDS.get(video_standard, 0x4923)
     now_str  = datetime.now().strftime('%a %b %d %H:%M:%S %Y').encode('ascii')
@@ -94,8 +100,12 @@ def build_sws_header(source_filename: str,
     samples_per_frame    = round(48000 / fps)
     audio_bytes_per_frame = samples_per_frame * 2 * 16
     audio_data_size      = audio_bytes_per_frame * frame_count if has_audio else 0
-    audio_offset         = SWS_HEADER_SIZE + plane_size * 2 * frame_count  # after fill+key
-    total_size           = audio_offset + audio_data_size
+
+    # Audio offset is after fill+key if key present, fill only if not
+    # Confirmed by hex analysis of K-Watch no-alpha reference file
+    planes_size  = plane_size * frame_count * (2 if has_key else 1)
+    audio_offset = SWS_HEADER_SIZE + planes_size
+    total_size   = audio_offset + audio_data_size
 
     hdr = bytearray(SWS_HEADER_SIZE)
 
@@ -149,20 +159,22 @@ def build_sws_header(source_filename: str,
     # 0x1A4  Frame count (uint32 BE)
     struct.pack_into('>I', hdr, 0x1A4, frame_count)
 
-    # 0x1A8  Play count = frame count (confirmed from clip analysis)
-    struct.pack_into('>I', hdr, 0x1A8, frame_count)
+    # 0x1A8  Play count -- frame count if key present, 0 if no key plane
+    # Confirmed: K-Watch zeros this field when no key plane is written
+    struct.pack_into('>I', hdr, 0x1A8, frame_count if has_key else 0)
 
     # 0x1B0  Play rate (float32 BE) = 1.0
     struct.pack_into('>f', hdr, 0x1B0, play_rate)
 
-    # 0x1B4  (plane_size * frame_count + header_size) / 32
-    val_1b4 = (plane_size * frame_count + SWS_HEADER_SIZE) // 32
+    # 0x1B4  (plane_size * frame_count + header_size) / 32 -- zeroed if no key plane
+    # Confirmed: K-Watch zeros this field when no key plane is written
+    val_1b4 = (plane_size * frame_count + SWS_HEADER_SIZE) // 32 if has_key else 0
     struct.pack_into('>I', hdr, 0x1B4, val_1b4)
 
     # 0x1C2  Audio frame size (uint16 BE) -- 0x1680 (5760) if audio, 0 if not
     struct.pack_into('>H', hdr, 0x1C2, AUDIO_FRAME_SIZE_HDR if has_audio else 0)
 
-    # 0x1CC  Total file size = header + (fill+key) planes + audio data
+    # 0x1CC  Total file size = header + planes + audio data
     struct.pack_into('>I', hdr, 0x1CC, total_size)
 
     # 0x1E8  Audio data offset / 32 (0 if no audio)
@@ -473,7 +485,10 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         has_alpha = info['has_alpha'] and not ignore_alpha
         log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
-        if key_raw is None:
+        if ignore_alpha:
+            # No key plane written at all -- matches K-Watch behaviour
+            actual_key = None
+        elif key_raw is None:
             actual_key = os.path.join(tmp, 'key.v210')
             _generate_white_key(fill_raw, actual_key)
         else:
@@ -492,6 +507,7 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=True,
+            has_key=(actual_key is not None),
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -529,7 +545,10 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         audio_raw  = None
 
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
-        if key_raw:
+        if ignore_alpha:
+            # No key plane written at all -- matches K-Watch behaviour
+            actual_key = None
+        elif key_raw:
             actual_key = os.path.join(tmp, 'key.v210')
             os.rename(fill_raw + '.alpha.raw', actual_key)
         else:
@@ -559,6 +578,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             is_still=False,
             fps=fps,
             has_audio=(audio_raw is not None),
+            has_key=(actual_key is not None),
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
