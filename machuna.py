@@ -33,6 +33,8 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
+VERSION = "1.1.1"
+
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
 # ─────────────────────────────────────────────────────────────
@@ -891,7 +893,7 @@ def launch_gui():
         root = TkinterDnD.Tk() if HAS_DND else tk.Tk()
     except Exception:
         root = tk.Tk()
-    root.title("MacHuna v1.0")
+    root.title(f"MacHuna v{VERSION}")
     root.geometry("700x600")
     root.resizable(True, True)
 
@@ -1186,6 +1188,20 @@ def launch_gui():
 
     # On macOS, Cmd+Q fires the tk::mac::Quit event rather than WM_DELETE_WINDOW
     root.createcommand('tk::mac::Quit', on_closing)
+
+    # macOS About box (MacHuna menu > About MacHuna)
+    def show_about():
+        import tkinter.messagebox as mb
+        mb.showinfo(
+            title="About MacHuna",
+            message=(
+                f"MacHuna v{VERSION}\n\n"
+                "Mac replacement for Grass Valley K-Watch\n\n"
+                "Authors: David Steer & Claude (Anthropic)"
+            ),
+            parent=root,
+        )
+    root.createcommand('tk::mac::ShowAbout', show_about)
 
     root.mainloop()
 
