@@ -1189,19 +1189,63 @@ def launch_gui():
     # On macOS, Cmd+Q fires the tk::mac::Quit event rather than WM_DELETE_WINDOW
     root.createcommand('tk::mac::Quit', on_closing)
 
-    # macOS About box (MacHuna menu > About MacHuna)
+    # macOS About box -- wire up via the application menu
+    # tk::mac::ShowAbout is silently overridden by the PyInstaller default panel,
+    # so we build an explicit menubar and intercept the About item directly.
+    # Custom Toplevel used for centred text and correct app icon.
     def show_about():
-        import tkinter.messagebox as mb
-        mb.showinfo(
-            title="About MacHuna",
-            message=(
-                f"MacHuna v{VERSION}\n\n"
-                "Mac replacement for Grass Valley K-Watch\n\n"
-                "Authors: David Steer & Claude (Anthropic)"
-            ),
-            parent=root,
-        )
-    root.createcommand('tk::mac::ShowAbout', show_about)
+        win = tk.Toplevel(root)
+        win.title("About MacHuna")
+        win.resizable(False, False)
+        win.grab_set()  # modal
+
+        # Try to show the app icon
+        icon_loaded = False
+        try:
+            icon_path = None
+            if getattr(sys, 'frozen', False):
+                # Inside the .app bundle: Resources folder sits alongside MacOS/
+                bundle_dir = os.path.dirname(os.path.dirname(sys.executable))
+                icon_path = os.path.join(bundle_dir, 'Resources', 'machuna_final_1024.png')
+            else:
+                # Running as a script: look next to machuna.py
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         'machuna_final_1024.png')
+            if icon_path and os.path.exists(icon_path):
+                from PIL import Image, ImageTk
+                img = Image.open(icon_path).resize((96, 96), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                lbl_icon = tk.Label(win, image=photo)
+                lbl_icon.image = photo  # keep reference
+                lbl_icon.pack(pady=(20, 8))
+                icon_loaded = True
+        except Exception:
+            pass
+
+        if not icon_loaded:
+            tk.Label(win, text="🚀", font=('Helvetica', 48)).pack(pady=(20, 8))
+
+        tk.Label(win, text=f"MacHuna v{VERSION}",
+                 font=('Helvetica', 16, 'bold'), justify='center').pack()
+        tk.Label(win, text="Mac alternative for Grass Valley K-Watch",
+                 font=('Helvetica', 12), justify='center').pack(pady=(8, 0))
+        tk.Label(win, text="Authors: David Steer & Claude (Anthropic)",
+                 font=('Helvetica', 12), justify='center').pack(pady=(4, 0))
+
+        ttk.Button(win, text="OK", command=win.destroy).pack(pady=20)
+
+        win.update_idletasks()
+        # Centre over main window
+        x = root.winfo_x() + (root.winfo_width()  - win.winfo_width())  // 2
+        y = root.winfo_y() + (root.winfo_height() - win.winfo_height()) // 2
+        win.geometry(f"+{x}+{y}")
+
+    menubar = tk.Menu(root)
+    apple_menu = tk.Menu(menubar, name='apple')
+    menubar.add_cascade(menu=apple_menu)
+    apple_menu.add_command(label="About MacHuna", command=show_about)
+    apple_menu.add_separator()
+    root.config(menu=menubar)
 
     root.mainloop()
 
