@@ -1204,9 +1204,8 @@ def launch_gui():
         try:
             icon_path = None
             if getattr(sys, 'frozen', False):
-                # Inside the .app bundle: Resources folder sits alongside MacOS/
-                bundle_dir = os.path.dirname(os.path.dirname(sys.executable))
-                icon_path = os.path.join(bundle_dir, 'Resources', 'machuna_final_1024.png')
+                # PyInstaller extracts --add-data files to sys._MEIPASS
+                icon_path = os.path.join(sys._MEIPASS, 'machuna_final_1024.png')
             else:
                 # Running as a script: look next to machuna.py
                 icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
