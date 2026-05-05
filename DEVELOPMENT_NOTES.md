@@ -9,7 +9,7 @@ This document is for continuity between development sessions. If starting a new 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
 **Current version:** v1.1.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed.
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed. VERSION constant added, title bar and About box now read from it automatically.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -26,19 +26,22 @@ MacHuna is a macOS watch folder application that converts video and still image 
 
 ### Build Command
 
+Always run from the project directory so build artefacts land in `~/Developer/MacHuna/` rather than the home folder.
+
 ```bash
-python3.12 -m PyInstaller \
+cd ~/Developer/MacHuna && python3.12 -m PyInstaller \
   --onedir \
   --windowed \
   --name "MacHuna" \
   --icon ~/Developer/MacHuna/machuna.icns \
   --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg:." \
   --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffprobe:." \
+  --add-data "/Users/davidsteer/Developer/MacHuna/machuna_final_1024.png:." \
   --noconfirm \
   ~/Developer/MacHuna/machuna.py
 ```
 
-Built .app appears in `~/dist/MacHuna/MacHuna.app`. Right-click > Open first time to bypass Gatekeeper.
+Note: `--add-data` bundles the app icon PNG for the About box. The `~` shorthand does not expand inside `--add-data` so the full path is required. Built .app appears in `~/Developer/MacHuna/dist/MacHuna.app`. Right-click > Open first time to bypass Gatekeeper.
 
 ### GitHub Push Workflow
 
@@ -212,6 +215,8 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
+- VERSION constant: Single `VERSION = "1.1.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() whenever no alpha present, matching K-Watch exactly.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
 - Batch convert scope: MOVs and single-frame stills only. TGA sequences require the Watch Folder service.
