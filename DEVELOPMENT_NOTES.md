@@ -57,7 +57,7 @@ git push
 ## Roadmap (Priority Order)
 
 1. ~~**Tidy dev environment / GitHub**~~ -- DONE
-2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, alpha is ignored and a solid white key plane is written matching K-Watch behaviour exactly (confirmed by hex analysis).
+2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, no key plane is written at all and header fields 0x1A8 and 0x1B4 are zeroed -- matches K-Watch behaviour exactly (confirmed by live Kahuna test and hex analysis of K-Watch reference file). Note: earlier implementation wrote a solid white key plane which was incorrect -- the Kahuna was showing a black key panel rather than no key at all.
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
 4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Verified by hex comparison against MacHuna-generated SWS -- file size and audio section exact match. Awaiting live Kahuna test.
@@ -217,7 +217,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
 - VERSION constant: Single `VERSION = "1.1.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
-- White key plane: Written by _generate_white_key() whenever no alpha present, matching K-Watch exactly.
+- White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
 - Batch convert scope: MOVs and single-frame stills only. TGA sequences require the Watch Folder service.
 - Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
