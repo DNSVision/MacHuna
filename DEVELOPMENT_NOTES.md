@@ -185,13 +185,13 @@ Not observed in the reference file and almost certainly not supported given the 
 
 - Audio appended after key plane
 - **16-bit signed little-endian PCM** (not 24-bit -- matches common MOV source format)
-- **16 channels interleaved** -- source channels padded to 16 with silence
+- **16 channels interleaved** -- K-Watch channel mapping: Ch1=Left, Ch2=silence, Ch3=Right, Ch4=silence, Ch5-16=silence. Confirmed by hex analysis of K-Watch reference SWS. A straight ffmpeg -ac 16 upmix is wrong (puts R on Ch2). Use pan filter: `pan=16c|c0=c0|c2=c1`
 - **48,000 Hz sample rate**
 - Samples per frame = 48000 / fps (e.g. 960 at 50fps, 1920 at 25fps)
 - Bytes per frame = samples_per_frame x 2 x 16
 - Audio frame size header field (0x1C2) is always 0x1680 (5760) regardless of fps -- fixed value
 - Audio data offset = 512 + plane_size x frame_count x 2
-- ffmpeg extraction: -acodec pcm_s16le -ar 48000 -ac 16 -f s16le
+- ffmpeg extraction: -af 'pan=16c|c0=c0|c2=c1' -acodec pcm_s16le -ar 48000 -f s16le
 - TGA sequence audio is out of scope
 
 Note: The Audio Spec.pdf was written before full hex analysis and incorrectly states 24-bit PCM. The actual format is 16-bit. The spec PDF can be disregarded -- the implementation in extract_audio() is correct.
