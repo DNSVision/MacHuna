@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.4.0
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.4.0: SWS Preview Player integrated as built-in Toplevel window, launched via SWS Player button in Batch Convert row. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder (filename includes file number, sequence identifier, and date). Batch convert log updated to new date format (DD-MM-YYYY), stems only in log body, [OK] column aligned.
+**Current version:** v1.4.1
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -211,6 +211,9 @@ Note: The Audio Spec.pdf was written before full hex analysis and incorrectly st
 
 ## Known Issues
 
+### PortAudio AUHAL errors on macOS 26 beta
+When running as a script (`python3.12 machuna.py --gui`), sounddevice/PortAudio prints `||PaMacCore (AUHAL)|| Error on line 2796: err='-50', msg=Unknown Error` to the terminal during audio playback. Audio plays correctly despite these messages. They are terminal-only and invisible to users running the built `.app`. This is a known macOS 26 beta / Homebrew PortAudio instability, in the same category as the rapid button click crash. Not worth investigating until macOS 26 goes final.
+
 ### Video plane differences between machines
 MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and between different machines running MacHuna. This is normal -- ffmpeg produces slightly different v210 encoding on different hardware/versions. The Kahuna accepted MacHuna output correctly on live test. This is not a bug.
 
@@ -223,14 +226,15 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
-- VERSION constant: Single `VERSION = "1.4.0"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- VERSION constant: Single `VERSION = "1.4.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
 - Batch convert scope: MOVs and single-frame stills only. TGA sequences require the Watch Folder service.
 - Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
-- Audio frame size header field (0x1C2): Fixed value 0x1680 (5760) regardless of fps. Actual bytes per frame varies with fps but this header field does not.
+- Audio frame size header field (0x1C2) is always 0x1680 (5760) in MacHuna-generated files regardless of fps. Actual bytes per frame varies with fps but this header field does not. Note: third-party workflows may write a different value here (e.g. 0x3EC0 observed in a Grass Valley K-Manager generated file) -- do not rely on this field for audio detection. Use 0x1E8 and 0x1EC instead.
 - Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
+- SWS Player audio detection: uses `aud_offset > 0 AND aud_fmt == 0x03000000` (fields 0x1E8 and 0x1EC) rather than checking `aud_frame_size == 0x1680` (0x1C2). Confirmed by analysis of a third-party SWS file where 0x1C2 was 0x3EC0 -- audio was present and correctly located but the player was reporting no audio. The 0x1C2 field varies between workflows and is not a reliable audio detection indicator.
 - SWS Player integration: All player code lives in machuna.py above launch_gui(). Classes renamed to avoid any future collision: PlayerFrameCache, PlayerAudio. Decode functions prefixed _player_. The standalone sws_player.py repo (DNSVision/SWSPlayer) is now superseded for production use but retained as a reference. sounddevice is a gracefully-degraded dependency -- if not installed, HAS_AUDIO is False and the player opens without audio playback (meters still drawn, no sound).
 - tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer class can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
 

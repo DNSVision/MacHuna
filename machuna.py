@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1058,8 +1058,11 @@ class SWSHeader:
 
         aud_frame_size   = struct.unpack_from('>H', raw, OFF_AUD_FSZ)[0]
         aud_offset_div32 = struct.unpack_from('>I', raw, OFF_AUD_OFF)[0]
+        aud_fmt          = struct.unpack_from('>I', raw, OFF_AUD_FMT)[0]
 
-        self.has_audio    = (aud_frame_size == 0x1680 and aud_offset_div32 > 0)
+        # Use audio offset and format flag to detect audio -- more robust than
+        # checking aud_frame_size == 0x1680, which varies between workflows.
+        self.has_audio    = (aud_offset_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_offset_div32 * 32 if self.has_audio else 0
         self.fps          = self._get_fps(self.std_code)
         self.auto_play    = bool(self.std_code & 0x04)
