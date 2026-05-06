@@ -10,7 +10,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 
 ## Features
 
-- Converts MOV, MP4 and other common video formats to `.SWS`
+- Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS` (K-Watch supports MOV and AVI only)
 - Converts TGA sequences to `.SWS` clips
 - Converts still images (PNG, TGA, BMP, JPG etc.) to `.SWS` stills
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
@@ -20,7 +20,6 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Batch convert with file picker and auto-incrementing file numbers
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
-- Automatic FAT32 split for files over 4GB
 - Watch folder service runs in background
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
