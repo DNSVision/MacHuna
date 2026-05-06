@@ -17,6 +17,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
 - Audio support -- 16-bit PCM, 16 channels, correct K-Watch channel mapping (L=Ch1, R=Ch3)
 - Include/exclude audio option
+- Auto play and Loop play flags baked into the SWS header at conversion time
 - Batch convert with file picker and auto-incrementing file numbers
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
 - Automatic FAT32 split for files over 4GB
@@ -62,7 +63,8 @@ The built app will appear in the `dist/` folder.
 2. Set your Watch Folder -- drop source files here
 3. Set your Destination Folder -- converted .SWS files appear here
 4. Select your video standard
-5. Click Start Watching
+5. Set playback options (Auto play, Loop play) as required
+6. Click Start Watching
 
 MacHuna will convert files automatically as they appear and log progress in the app window.
 
@@ -84,8 +86,6 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 - Large file split >4GB (format fully reverse-engineered, implementation pending)
 - SWS to MOV conversion
-- Auto-loop -- bake loop flag into SWS header at conversion time
-- Auto-play -- bake autoplay flag into SWS header at conversion time
 - Drag and drop into watch window
 - Preview viewer (fill, key and audio)
 - HLG Rec.2020 colour space option

@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.1.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against MacHuna output -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed. VERSION constant added, title bar and About box now read from it automatically.
+**Current version:** v1.2.0
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against K-Watch output -- awaiting live Kahuna test. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed. VERSION constant added, title bar and About box now read from it automatically.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -61,11 +61,12 @@ git push
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
 4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Verified by hex comparison against MacHuna-generated SWS -- file size and audio section exact match. Awaiting live Kahuna test.
-6. **Split large files (>4GB)** -- Format now fully reverse-engineered from real K-Watch split files (see Split File Format section below). Ready to implement. Needs Kahuna and a large file to verify output. Do not implement until audio Kahuna test is complete.
-7. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
-8. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
-9. **Standalone preview viewer** -- Fill, key and audio preview with audio meters. Most complex item.
-10. **Integrate preview into main app** -- Follows naturally from item 9.
+6. ~~**Auto play / Loop play**~~ -- DONE. Bits 2 and 3 of the low byte at 0x188 confirmed by hex analysis of K-Watch reference files across all four flag combinations (neither, auto only, loop only, both). Auto play = bit 2 (0x04), Loop play = bit 3 (0x08), OR'd into the video standard code. Both checkboxes added to GUI (default: off), saved to settings, passed through all converters and WatchService. Awaiting live Kahuna test.
+7. **Split large files (>4GB)** -- Format now fully reverse-engineered from real K-Watch split files (see Split File Format section below). Ready to implement. Needs Kahuna and a large file to verify output. Do not implement until audio Kahuna test is complete.
+8. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
+9. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
+10. **Standalone preview viewer** -- Fill, key and audio preview with audio meters. Most complex item.
+11. **Integrate preview into main app** -- Follows naturally from item 10.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
@@ -105,7 +106,7 @@ For now, the Open Files button in the Batch Convert section provides equivalent 
 | 0x100 | string | Clip name |
 | 0x148 | string | Creation timestamp |
 | 0x168 | string | Modified timestamp |
-| 0x188 | uint32 | Video standard code |
+| 0x188 | uint32 | Video standard code (includes playback flags -- see below) |
 | 0x18C | uint32 | FPS numerator |
 | 0x190 | uint32 | Width in pixels |
 | 0x194 | uint32 | Height in pixels |
@@ -130,6 +131,24 @@ For now, the Open Files button in the Batch Convert section provides equivalent 
 | 0x00004925 | 1080p25 |
 | 0x00004817 | 720p50 |
 | 0x00004816 | 720p59.94 |
+
+### Playback Flags (offset 0x188, low byte)
+
+The low byte of the video standard code at 0x188 carries playback flags OR'd into the base standard value. Confirmed by hex analysis of K-Watch reference files across all four flag combinations.
+
+| Bit | Mask | Flag |
+|-----|------|------|
+| 2 | 0x04 | Auto Play |
+| 3 | 0x08 | Loop Play |
+
+Examples for 1080i50 base code 0x4923:
+
+| State | 0x188 value |
+|-------|-------------|
+| Neither | 0x00004923 |
+| Auto play only | 0x00004927 |
+| Loop play only | 0x0000492B |
+| Auto play + Loop play | 0x0000492F |
 
 ### v210 Encoding
 ffmpeg outputs v210 as little-endian 32-bit words. The Kahuna expects big-endian. Every 4-byte word must be byte-swapped after conversion via _byteswap_v210().
@@ -215,13 +234,14 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
-- VERSION constant: Single `VERSION = "1.1.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- VERSION constant: Single `VERSION = "1.2.0"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
 - Batch convert scope: MOVs and single-frame stills only. TGA sequences require the Watch Folder service.
 - Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
 - Audio frame size header field (0x1C2): Fixed value 0x1680 (5760) regardless of fps. Actual bytes per frame varies with fps but this header field does not.
+- Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
 
 ---
 

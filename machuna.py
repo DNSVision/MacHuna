@@ -33,7 +33,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -82,15 +82,24 @@ def build_sws_header(source_filename: str,
                      is_still: bool = True,
                      fps: float = 25.0,
                      has_audio: bool = False,
-                     has_key: bool = True) -> bytes:
+                     has_key: bool = True,
+                     auto_play: bool = False,
+                     loop_play: bool = False) -> bytes:
     """Build a 512-byte SWS file header.
 
     has_key: if False (ignore alpha / no key plane written), 0x1A8 and 0x1B4
              are zeroed and audio offset is calculated after fill only,
              matching confirmed K-Watch behaviour.
+
+    auto_play: sets bit 2 (0x04) of the low byte at 0x188 (confirmed by hex analysis).
+    loop_play: sets bit 3 (0x08) of the low byte at 0x188 (confirmed by hex analysis).
     """
 
     std_code = VIDEO_STANDARDS.get(video_standard, 0x4923)
+    if auto_play:
+        std_code |= 0x04
+    if loop_play:
+        std_code |= 0x08
     now_str  = datetime.now().strftime('%a %b %d %H:%M:%S %Y').encode('ascii')
 
     # Audio parameters (confirmed from K-Watch reference file analysis)
@@ -477,7 +486,9 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
                   split_fat32: bool = True,
                   delete_source: bool = False,
                   log=print,
-                  ignore_alpha: bool = False):
+                  ignore_alpha: bool = False,
+                  auto_play: bool = False,
+                  loop_play: bool = False):
     """Convert a single TGA/PNG/BMP/JPG still to .SWS."""
 
     log(f"Converting still: {os.path.basename(input_path)}")
@@ -514,6 +525,8 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             video_standard=video_standard,
             is_still=True,
             has_key=(actual_key is not None),
+            auto_play=auto_play,
+            loop_play=loop_play,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -533,7 +546,9 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  delete_source: bool = False,
                  log=print,
                  ignore_alpha: bool = False,
-                 include_audio: bool = True):
+                 include_audio: bool = True,
+                 auto_play: bool = False,
+                 loop_play: bool = False):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS."""
 
     log(f"Converting clip: {os.path.basename(input_path)}")
@@ -585,6 +600,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             fps=fps,
             has_audio=(audio_raw is not None),
             has_key=(actual_key is not None),
+            auto_play=auto_play,
+            loop_play=loop_play,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -604,7 +621,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          split_fat32: bool = True,
                          delete_source: bool = False,
                          log=print,
-                         ignore_alpha: bool = False):
+                         ignore_alpha: bool = False,
+                         auto_play: bool = False,
+                         loop_play: bool = False):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
@@ -667,6 +686,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
+            auto_play=auto_play,
+            loop_play=loop_play,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -771,6 +792,8 @@ class WatchService:
                  delete_source: bool = False,
                  ignore_alpha: bool = False,
                  include_audio: bool = True,
+                 auto_play: bool = False,
+                 loop_play: bool = False,
                  log=print):
         self.watch_dir      = watch_dir
         self.dest_dir       = dest_dir
@@ -779,6 +802,8 @@ class WatchService:
         self.delete_source  = delete_source
         self.ignore_alpha   = ignore_alpha
         self.include_audio  = include_audio
+        self.auto_play      = auto_play
+        self.loop_play      = loop_play
         self.log            = log
         self._stop_event    = threading.Event()
         self._seen           = set()
@@ -831,13 +856,17 @@ class WatchService:
                                  self.video_standard, self.split_fat32,
                                  self.delete_source, self.log,
                                  ignore_alpha=self.ignore_alpha,
-                                 include_audio=self.include_audio)
+                                 include_audio=self.include_audio,
+                                 auto_play=self.auto_play,
+                                 loop_play=self.loop_play)
 
                 elif meta['type'] == 'still' and meta['is_fill']:
                     convert_still(fpath, meta['file_num'], self.dest_dir,
                                   self.video_standard, self.split_fat32,
                                   self.delete_source, self.log,
-                                  ignore_alpha=self.ignore_alpha)
+                                  ignore_alpha=self.ignore_alpha,
+                                  auto_play=self.auto_play,
+                                  loop_play=self.loop_play)
 
                 elif meta['type'] == 'tga_seq' and meta['is_fill']:
                     self._accumulate_seq(fname, fpath, meta, entries)
@@ -862,7 +891,9 @@ class WatchService:
             convert_tga_sequence(frames, fnum, self.dest_dir,
                                  self.video_standard, self.split_fat32,
                                  self.delete_source, self.log,
-                                 ignore_alpha=self.ignore_alpha)
+                                 ignore_alpha=self.ignore_alpha,
+                                 auto_play=self.auto_play,
+                                 loop_play=self.loop_play)
 
     @staticmethod
     def _file_stable(path: str, wait: float = 0.5) -> bool:
@@ -910,6 +941,8 @@ def launch_gui():
                     'delete':   delete_var.get(),
                     'ignore_alpha': ignore_alpha_var.get(),
                     'include_audio': include_audio_var.get(),
+                    'auto_play': auto_play_var.get(),
+                    'loop_play': loop_play_var.get(),
                     'start_num': start_num_var.get(),
                 }, f)
         except Exception:
@@ -959,10 +992,14 @@ def launch_gui():
     delete_var        = tk.BooleanVar(value=False)
     ignore_alpha_var  = tk.BooleanVar(value=False)
     include_audio_var = tk.BooleanVar(value=True)
+    auto_play_var     = tk.BooleanVar(value=False)
+    loop_play_var     = tk.BooleanVar(value=False)
     ttk.Checkbutton(frm3, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
     start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
@@ -974,6 +1011,8 @@ def launch_gui():
     if 'delete'       in s: delete_var.set(s['delete'])
     if 'ignore_alpha'   in s: ignore_alpha_var.set(s['ignore_alpha'])
     if 'include_audio'  in s: include_audio_var.set(s['include_audio'])
+    if 'auto_play'      in s: auto_play_var.set(s['auto_play'])
+    if 'loop_play'      in s: loop_play_var.set(s['loop_play'])
     if 'start_num'      in s: start_num_var.set(s['start_num'])
 
     # ── Buttons ──
@@ -1067,17 +1106,23 @@ def launch_gui():
                                      std_var.get(), split_var.get(),
                                      delete_var.get(), log,
                                      ignore_alpha=ignore_alpha_var.get(),
-                                     include_audio=include_audio_var.get())
+                                     include_audio=include_audio_var.get(),
+                                     auto_play=auto_play_var.get(),
+                                     loop_play=loop_play_var.get())
                     elif ext == '.tga' and Path(path).stat().st_size > 0:
                         convert_still(path, fnum, d,
                                       std_var.get(), split_var.get(),
                                       delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get())
+                                      ignore_alpha=ignore_alpha_var.get(),
+                                      auto_play=auto_play_var.get(),
+                                      loop_play=loop_play_var.get())
                     else:
                         convert_still(path, fnum, d,
                                       std_var.get(), split_var.get(),
                                       delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get())
+                                      ignore_alpha=ignore_alpha_var.get(),
+                                      auto_play=auto_play_var.get(),
+                                      loop_play=loop_play_var.get())
                 except Exception as e:
                     import traceback
                     log(f"  ERROR converting {Path(path).name}: {e}")
@@ -1136,12 +1181,16 @@ def launch_gui():
                                      std_var.get(), split_var.get(),
                                      delete_var.get(), log,
                                      ignore_alpha=ignore_alpha_var.get(),
-                                     include_audio=include_audio_var.get())
+                                     include_audio=include_audio_var.get(),
+                                     auto_play=auto_play_var.get(),
+                                     loop_play=loop_play_var.get())
                     else:
                         convert_still(path, fnum, d,
                                       std_var.get(), split_var.get(),
                                       delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get())
+                                      ignore_alpha=ignore_alpha_var.get(),
+                                      auto_play=auto_play_var.get(),
+                                      loop_play=loop_play_var.get())
                     results.append((fnum, Path(path).name, 'OK'))
                 except Exception as e:
                     import traceback
@@ -1188,7 +1237,10 @@ def launch_gui():
         save_settings()
         svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(),
                            ignore_alpha=ignore_alpha_var.get(),
-                           include_audio=include_audio_var.get(), log=log)
+                           include_audio=include_audio_var.get(),
+                           auto_play=auto_play_var.get(),
+                           loop_play=loop_play_var.get(),
+                           log=log)
         svc.start()
         service_ref[0] = svc
         run_btn.config(state='disabled')
