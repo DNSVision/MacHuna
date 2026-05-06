@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.2.0
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against K-Watch output -- awaiting live Kahuna test. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.1.1 fixes: Clear Log button added, settings now save correctly on Cmd+Q, start_num_var UnboundLocalError on launch fixed. VERSION constant added, title bar and About box now read from it automatically.
+**Current version:** v1.2.1
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against K-Watch output -- awaiting live Kahuna test. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.2.1: TGA sequence conversion now writes a log file to the destination folder (filename includes file number, sequence identifier, and date). Batch convert log updated to new date format (DD-MM-YYYY), stems only in log body, [OK] column aligned.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -234,7 +234,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
-- VERSION constant: Single `VERSION = "1.2.0"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- VERSION constant: Single `VERSION = "1.2.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.

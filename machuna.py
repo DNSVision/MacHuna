@@ -33,7 +33,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -698,6 +698,26 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             os.remove(f)
 
     log(f"  Done → {dest_path}")
+
+    # Write conversion log to destination folder
+    # Sequence identifier = everything before the first underscore in the first TGA filename
+    first_name = Path(tga_files[0]).stem
+    seq_id = first_name.split('_')[0] if '_' in first_name else first_name
+    date_str = datetime.now().strftime('%d-%m-%Y')
+    log_filename = f"MacHuna_Log_{file_number}_{seq_id}_{date_str}.txt"
+    log_path = os.path.join(dest_dir, log_filename)
+    try:
+        with open(log_path, 'w') as lf:
+            lf.write(f"MacHuna Conversion Log\n")
+            lf.write(f"{'=' * 40}\n")
+            lf.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
+            lf.write(f"Standard: {video_standard}\n")
+            lf.write(f"{'=' * 40}\n\n")
+            lf.write(f"{file_number:4d}  {seq_id}  [OK]\n")
+        log(f"  Conversion log saved: {log_filename}")
+    except Exception as e:
+        log(f"  Could not write log file: {e}")
+
     return dest_path
 
 
@@ -1191,27 +1211,29 @@ def launch_gui():
                                       ignore_alpha=ignore_alpha_var.get(),
                                       auto_play=auto_play_var.get(),
                                       loop_play=loop_play_var.get())
-                    results.append((fnum, Path(path).name, 'OK'))
+                    results.append((fnum, Path(path).stem, 'OK'))
                 except Exception as e:
                     import traceback
                     log(f"  ERROR converting {Path(path).name}: {e}")
                     log(f"  {traceback.format_exc()}")
-                    results.append((fnum, Path(path).name, f'ERROR: {e}'))
+                    results.append((fnum, Path(path).stem, f'ERROR: {e}'))
 
             # Write conversion log to destination folder
             if results:
                 from datetime import datetime as dt
-                log_filename = f"MacHuna_Log_{dt.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                date_str = dt.now().strftime('%d-%m-%Y')
+                log_filename = f"MacHuna_Log_{date_str}.txt"
                 log_path = os.path.join(d, log_filename)
                 try:
+                    max_len = max(len(fname) for _, fname, _ in results)
                     with open(log_path, 'w') as f:
                         f.write(f"MacHuna Conversion Log\n")
                         f.write(f"{'=' * 40}\n")
-                        f.write(f"Date: {dt.now().strftime('%d %b %Y %H:%M:%S')}\n")
+                        f.write(f"Date: {dt.now().strftime('%d %b %Y')}\n")
                         f.write(f"Standard: {std_var.get()}\n")
                         f.write(f"{'=' * 40}\n\n")
                         for fnum, fname, status in results:
-                            f.write(f"{fnum:4d}  {fname}  [{status}]\n")
+                            f.write(f"{fnum:4d}  {fname:<{max_len}}  [{status}]\n")
                     log(f"Conversion log saved: {log_filename}")
                 except Exception as e:
                     log(f"  Could not write log file: {e}")
