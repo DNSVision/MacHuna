@@ -33,7 +33,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -184,7 +184,9 @@ def build_sws_header(source_filename: str,
     struct.pack_into('>H', hdr, 0x1C2, AUDIO_FRAME_SIZE_HDR if has_audio else 0)
 
     # 0x1CC  Total file size = header + planes + audio data
-    struct.pack_into('>I', hdr, 0x1CC, total_size)
+    # Capped at uint32 max for files >4GB -- _write_sws_split() patches this
+    # field with the correct final chunk size before writing chunk 1.
+    struct.pack_into('>I', hdr, 0x1CC, min(total_size, 0xFFFFFFFF))
 
     # 0x1E8  Audio data offset / 32 (0 if no audio)
     struct.pack_into('>I', hdr, 0x1E8, (audio_offset // 32) if has_audio else 0)
@@ -400,7 +402,8 @@ def write_sws(dest_path: str,
               header: bytes,
               split_fat32: bool = True,
               frame_count: int = 1,
-              audio_raw: Optional[str] = None):
+              audio_raw: Optional[str] = None,
+              log=print):
     """Write the final .SWS file (or split folder if > 4GB).
     
     Structure (confirmed from PC binary analysis):
@@ -416,7 +419,7 @@ def write_sws(dest_path: str,
     total      = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
     if split_fat32 and total > FAT32_LIMIT:
-        _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count)
+        _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log)
     else:
         with open(dest_path, 'wb') as out:
             out.write(header)
@@ -425,7 +428,7 @@ def write_sws(dest_path: str,
                 _copy_file(key_raw, out)
             if audio_raw:
                 _copy_file(audio_raw, out)
-        print(f"  Written: {dest_path}  ({total:,} bytes)")
+        log(f"  Written: {dest_path}  ({total:,} bytes)")
 
 
 def _copy_file(src: str, dest_fh):
@@ -434,47 +437,104 @@ def _copy_file(src: str, dest_fh):
             dest_fh.write(chunk)
 
 
-def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str], header: bytes, frame_count: int = 1):
-    """Split large SWS into FAT32-safe chunks inside a .SWS folder."""
+def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
+                     header: bytes, frame_count: int = 1, log=print):
+    """Split large SWS into 2GB FAT32-safe chunks inside a named folder.
+
+    Chunk format (confirmed by hex analysis of K-Watch reference split files):
+      - Folder named <clip_number>.SWS
+      - Chunk filenames: 01_OF_03._XX, 02_OF_03._XX, 03_OF_03._XX ...
+      - Chunk 1: patched 512-byte header + video data, exactly 2GB
+      - Chunks 2..N-1: raw video data only, exactly 2GB each
+      - Final chunk: raw video data only, remainder (any size)
+
+    Header patches for split files (confirmed by hex analysis):
+      - 0x1A8 (play count): zeroed
+      - 0x1B4: zeroed
+      - 0x1CC (total file size): set to size of final chunk only
+      - 0x1A4 (frame count): unchanged -- total frames across all chunks
+      - All other fields: identical to non-split header
+
+    Data layout within the stream (same as non-split):
+      header | all fill frames | all key frames
+      (audio is not supported in split files)
+    """
+    CHUNK_SIZE = 2 * 1024 * 1024 * 1024  # exactly 2GB per chunk
+
     os.makedirs(dest_folder, exist_ok=True)
 
-    CHUNK = FAT32_LIMIT - 1
+    # Calculate total data size so we know the final chunk size in advance.
+    # Audio is excluded from split files.
+    fill_size = os.path.getsize(fill_raw)
+    key_size  = os.path.getsize(key_raw) if key_raw else 0
+    total_data = SWS_HEADER_SIZE + fill_size + key_size
 
-    chunks = []
+    # Number of chunks
+    n_chunks = (total_data + CHUNK_SIZE - 1) // CHUNK_SIZE
 
-    def stream():
-        yield header
-        if key_raw and frame_count > 1:
-            plane_size = os.path.getsize(fill_raw) // frame_count
-            with open(fill_raw, 'rb') as ff, open(key_raw, 'rb') as kf:
-                for _ in range(frame_count):
-                    yield ff.read(plane_size)
-                    yield kf.read(plane_size)
-        else:
-            with open(fill_raw, 'rb') as f:
-                while data := f.read(1024 * 1024):
-                    yield data
-            if key_raw:
-                with open(key_raw, 'rb') as f:
-                    while data := f.read(1024 * 1024):
-                        yield data
+    # Final chunk size = total minus all full preceding chunks
+    full_chunks_size = (n_chunks - 1) * CHUNK_SIZE
+    final_chunk_size = total_data - full_chunks_size
 
-    buf = b''
-    for piece in stream():
-        buf += piece
-        while len(buf) >= CHUNK:
-            chunks.append(buf[:CHUNK])
-            buf = buf[CHUNK:]
-    if buf:
-        chunks.append(buf)
+    # Build patched header for split files:
+    #   0x1A8 = 0  (play count zeroed)
+    #   0x1B4 = 0  (zeroed)
+    #   0x1CC = final chunk size (not total file size)
+    hdr = bytearray(header)
+    struct.pack_into('>I', hdr, 0x1A8, 0)
+    struct.pack_into('>I', hdr, 0x1B4, 0)
+    struct.pack_into('>I', hdr, 0x1CC, final_chunk_size)
+    hdr = bytes(hdr)
 
-    total = len(chunks)
-    for i, chunk_data in enumerate(chunks):
-        name = f"{i+1:02d}_OF_{total:02d}__XX"
+    log(f"  Split: {n_chunks} chunks  ({total_data:,} bytes total, "
+        f"final chunk {final_chunk_size:,} bytes)")
+
+    # Stream data source: header, then all fill frames, then all key frames.
+    # Never held entirely in memory -- written chunk by chunk to disk.
+    def data_source():
+        yield hdr
+        with open(fill_raw, 'rb') as f:
+            while block := f.read(1024 * 1024):
+                yield block
+        if key_raw:
+            with open(key_raw, 'rb') as f:
+                while block := f.read(1024 * 1024):
+                    yield block
+
+    chunk_idx  = 0
+    bytes_in_chunk = 0
+    out_fh     = None
+    buf        = b''
+
+    def open_next_chunk():
+        nonlocal chunk_idx, bytes_in_chunk, out_fh
+        if out_fh:
+            out_fh.close()
+        chunk_idx += 1
+        name = f"{chunk_idx:02d}_OF_{n_chunks:02d}._XX"
         path = os.path.join(dest_folder, name)
-        with open(path, 'wb') as f:
-            f.write(chunk_data)
-        print(f"  Written chunk: {path}  ({len(chunk_data):,} bytes)")
+        out_fh = open(path, 'wb')
+        bytes_in_chunk = 0
+        return path
+
+    current_path = open_next_chunk()
+
+    for block in data_source():
+        buf += block
+        while buf:
+            space = CHUNK_SIZE - bytes_in_chunk
+            to_write = buf[:space]
+            out_fh.write(to_write)
+            bytes_in_chunk += len(to_write)
+            buf = buf[len(to_write):]
+
+            if bytes_in_chunk == CHUNK_SIZE and chunk_idx < n_chunks:
+                log(f"  Written chunk {chunk_idx:02d}: {current_path}  ({bytes_in_chunk:,} bytes)")
+                current_path = open_next_chunk()
+
+    if out_fh:
+        out_fh.close()
+        log(f"  Written chunk {chunk_idx:02d}: {current_path}  ({bytes_in_chunk:,} bytes)")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -530,7 +590,7 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=1)
+        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=1, log=log)
 
     if delete_source:
         os.remove(input_path)
@@ -606,7 +666,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32,
-                  frame_count=frame_count, audio_raw=audio_raw)
+                  frame_count=frame_count, audio_raw=audio_raw, log=log)
 
     if delete_source:
         os.remove(input_path)
@@ -691,7 +751,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=frame_count)
+        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=frame_count, log=log)
 
     if delete_source:
         for f in tga_files:

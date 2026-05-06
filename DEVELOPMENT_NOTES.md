@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.2.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support implemented and verified by hex comparison against K-Watch output -- awaiting live Kahuna test. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.2.1: TGA sequence conversion now writes a log file to the destination folder (filename includes file number, sequence identifier, and date). Batch convert log updated to new date format (DD-MM-YYYY), stems only in log body, [OK] column aligned.
+**Current version:** v1.3.0
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder (filename includes file number, sequence identifier, and date). Batch convert log updated to new date format (DD-MM-YYYY), stems only in log body, [OK] column aligned.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -60,17 +60,18 @@ git push
 2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, no key plane is written at all and header fields 0x1A8 and 0x1B4 are zeroed -- matches K-Watch behaviour exactly (confirmed by live Kahuna test and hex analysis of K-Watch reference file). Note: earlier implementation wrote a solid white key plane which was incorrect -- the Kahuna was showing a black key panel rather than no key at all.
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
 4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
-5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Verified by hex comparison against MacHuna-generated SWS -- file size and audio section exact match. Awaiting live Kahuna test.
+5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Confirmed working on live Kahuna.
 6. ~~**Auto play / Loop play**~~ -- DONE. Bits 2 and 3 of the low byte at 0x188 confirmed by hex analysis of K-Watch reference files across all four flag combinations (neither, auto only, loop only, both). Auto play = bit 2 (0x04), Loop play = bit 3 (0x08), OR'd into the video standard code. Both checkboxes added to GUI (default: off), saved to settings, passed through all converters and WatchService. Awaiting live Kahuna test.
-7. **Split large files (>4GB)** -- Format now fully reverse-engineered from real K-Watch split files (see Split File Format section below). Ready to implement. Needs Kahuna and a large file to verify output. Do not implement until audio Kahuna test is complete.
+7. ~~**Split large files (>4GB)**~~ -- DONE. Format fully reverse-engineered from real K-Watch split files. _write_sws_split() rewritten: correct 2GB chunk size, correct data layout (all fill then all key, not interleaved), correct header patching (0x1A8 and 0x1B4 zeroed, 0x1CC set to final chunk size), correct filename format (01_OF_03._XX), streams directly to disk with no in-memory buffering. Also fixed uint32 overflow in build_sws_header() for files >4GB (0x1CC now capped at 0xFFFFFFFF -- patched correctly by _write_sws_split() anyway). Confirmed working on live Kahuna.
 8. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
 9. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
-10. **Standalone preview viewer** -- Fill, key and audio preview with audio meters. Most complex item.
-11. **Integrate preview into main app** -- Follows naturally from item 10.
+10. **Standalone preview viewer** -- Fill, key and audio preview with audio meters. SWS Player (sws_player.py) built as companion app -- see SWS Player repo. Integration into MacHuna planned.
+11. **Integrate preview into main app** -- Planned. Simple approach: Open SWS Player button launches player as a Toplevel child window. Note: split file preview not yet supported in SWS Player.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
 - True drag and drop (currently disabled -- see drag and drop note below)
+- Split file support in SWS Player (requires virtual multi-file stream abstraction and frame cap)
 - Cloud/networked version
 
 ---
@@ -163,7 +164,7 @@ When no alpha is present (or ignore alpha ticked), _generate_white_key() writes 
 
 ## Split File Format (>4GB)
 
-Fully reverse-engineered from a real K-Watch split file (3-chunk example, 1080i25, 1000 frames).
+Fully reverse-engineered from a real K-Watch split file (3-chunk example, 1080i25, 1000 frames). Implemented and confirmed working on live Kahuna in v1.3.0.
 
 ### Folder and file structure
 ```
@@ -190,13 +191,14 @@ Fully reverse-engineered from a real K-Watch split file (3-chunk example, 1080i2
 - All other header fields: identical to non-split
 
 ### Audio in split files
-Not observed in the reference file and almost certainly not supported given the file sizes involved. Do not implement audio for split files.
+Not observed in the reference file and almost certainly not supported given the file sizes involved. Not implemented.
 
 ### Implementation notes
-- The existing _write_sws_split() function has a skeleton but the header logic is wrong -- it needs updating to match the above
-- The 0x1CC field containing the final chunk size rather than total size is confirmed by hex analysis
-- Play count (0x1A8) and 0x1B4 are both zeroed in split files -- confirmed
-- Test by generating a >4GB file on the M1 and loading onto a Kahuna
+- _write_sws_split() streams directly to disk in 1MB blocks -- no in-memory buffering
+- Data layout: all fill frames contiguously, then all key frames (not interleaved per frame)
+- Header patched inside _write_sws_split() before writing chunk 1 -- build_sws_header() is called normally and the three split-specific fields are overwritten
+- build_sws_header() caps 0x1CC at 0xFFFFFFFF to prevent uint32 overflow for files >4GB -- the correct final chunk size is patched in by _write_sws_split() anyway
+- Filename format confirmed from real K-Watch reference files: 01_OF_03._XX (single underscore before _XX)
 
 ---
 
@@ -219,9 +221,6 @@ Note: The Audio Spec.pdf was written before full hex analysis and incorrectly st
 
 ## Known Issues
 
-### Large File Split (>4GB)
-Format fully reverse-engineered (see Split File Format section). Implementation straightforward but not yet done. Do not implement until audio Kahuna test is confirmed working.
-
 ### Video plane differences between machines
 MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and between different machines running MacHuna. This is normal -- ffmpeg produces slightly different v210 encoding on different hardware/versions. The Kahuna accepted MacHuna output correctly on live test. This is not a bug.
 
@@ -234,7 +233,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
-- VERSION constant: Single `VERSION = "1.2.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- VERSION constant: Single `VERSION = "1.3.0"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
@@ -242,6 +241,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
 - Audio frame size header field (0x1C2): Fixed value 0x1680 (5760) regardless of fps. Actual bytes per frame varies with fps but this header field does not.
 - Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
+- Split file uint32 overflow: build_sws_header() caps 0x1CC at 0xFFFFFFFF for files >4GB to prevent a struct.error. The correct final chunk size is patched into this field by _write_sws_split() before chunk 1 is written.
 
 ---
 

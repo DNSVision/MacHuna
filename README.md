@@ -18,6 +18,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Audio support -- 16-bit PCM, 16 channels, correct K-Watch channel mapping (L=Ch1, R=Ch3)
 - Include/exclude audio option
 - Auto play and Loop play flags baked into the SWS header at conversion time
+- Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - Batch convert with file picker and auto-incrementing file numbers
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
 - Watch folder service runs in background
@@ -77,13 +78,16 @@ MacHuna will convert files automatically as they appear and log progress in the 
 
 For TGA sequences, use the Watch Folder service -- batch convert does not support sequences.
 
+### Large Files (>4GB)
+
+Files larger than 4GB are automatically split into 2GB chunks inside a folder named `<number>.SWS`, matching the K-Watch split file format exactly. The Split >4GB option in Settings must be enabled (it is on by default).
+
 ## SWS Format
 
-The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endian fill and key video planes, with optional 16-channel PCM audio appended. MacHuna reverse-engineered this format from real K-Watch output and has been verified against a live Kahuna mainframe.
+The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endian fill and key video planes, with optional 16-channel PCM audio appended. MacHuna reverse-engineered this format from real K-Watch output and has been verified against a live Grass Valley Kahuna mainframe.
 
 ## Roadmap
 
-- Large file split >4GB (format fully reverse-engineered, implementation pending)
 - SWS to MOV conversion
 - Drag and drop into watch window
 - Preview viewer (fill, key and audio)
