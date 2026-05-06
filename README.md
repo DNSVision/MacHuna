@@ -26,7 +26,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 
 ## Requirements
 
-- macOS 12 or later (Apple Silicon or Intel)
+- macOS 12 or later (Apple Silicon)
 - ffmpeg (bundled in the .app -- no separate installation needed when running the app)
 
 ## Building from Source
