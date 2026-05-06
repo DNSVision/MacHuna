@@ -63,29 +63,18 @@ git push
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Confirmed working on live Kahuna.
 6. ~~**Auto play / Loop play**~~ -- DONE. Bits 2 and 3 of the low byte at 0x188 confirmed by hex analysis of K-Watch reference files across all four flag combinations (neither, auto only, loop only, both). Auto play = bit 2 (0x04), Loop play = bit 3 (0x08), OR'd into the video standard code. Both checkboxes added to GUI (default: off), saved to settings, passed through all converters and WatchService. Awaiting live Kahuna test.
 7. ~~**Split large files (>4GB)**~~ -- DONE. Format fully reverse-engineered from real K-Watch split files. _write_sws_split() rewritten: correct 2GB chunk size, correct data layout (all fill then all key, not interleaved), correct header patching (0x1A8 and 0x1B4 zeroed, 0x1CC set to final chunk size), correct filename format (01_OF_03._XX), streams directly to disk with no in-memory buffering. Also fixed uint32 overflow in build_sws_header() for files >4GB (0x1CC now capped at 0xFFFFFFFF -- patched correctly by _write_sws_split() anyway). Confirmed working on live Kahuna.
-8. **SWS to MOV conversion** -- Reverse conversion. All format knowledge in place. No Kahuna needed to verify.
-9. **Manual reorder in batch convert** -- Parked. Currently files are sorted alphabetically. Drag-to-reorder list is a future feature.
+8. **SWS to MOV conversion** -- Reverse conversion. Planned as a separate standalone app. All format knowledge in place from MacHuna reverse-engineering work.
+9. ~~**Manual reorder in batch convert**~~ -- Dropped. Alphabetical ordering is sufficient.
 10. ~~**Standalone preview viewer**~~ -- DONE. SWS Player built as companion app (DNSVision/SWSPlayer) and integrated into MacHuna in v1.4.0. All player code folded into machuna.py -- SWSHeader, PlayerFrameCache, PlayerAudio, numpy v210 decoder, composite and meter functions. tkinter and Pillow imports moved to top level to support the player classes.
 11. ~~**Integrate preview into main app**~~ -- DONE. SWS Player button added to top-right of Batch Convert row. Opens SWSPlayer as a non-modal tk.Toplevel child window. File picker opens at the configured Destination Folder. Multiple player windows can be open simultaneously. Closing the player does not affect MacHuna.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
-- True drag and drop (currently disabled -- see drag and drop note below)
 - Split file support in SWS Player (requires virtual multi-file stream abstraction and frame cap)
-- Frame stepping / scrubbing in SWS Player (left/right arrow key bindings)
-- Cloud/networked version
+- ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
 
----
-
-## Drag and Drop Status
-
-`tkinterdnd2-universal` is installed but HAS_DND is hardcoded to False in the script. The native tkdnd library is incompatible with Homebrew Python 3.12 on Apple Silicon -- crashes with "cannot find symbol tkdnd_Init".
-
-The drag and drop code is fully written in on_drop() and will work once the library issue is resolved. Options to fix:
-- Install Python from python.org (official installer) instead of Homebrew
-- Build tkdnd from source against Homebrew's Tk
-
-For now, the Open Files button in the Batch Convert section provides equivalent functionality for MOVs and single-frame stills. TGA sequences must use the Watch Folder service.
+### Separate Future Apps
+- SWS to MOV converter -- reverse conversion app, all format knowledge available from MacHuna work
 
 ---
 

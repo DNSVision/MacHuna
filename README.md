@@ -89,10 +89,12 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 ## Roadmap
 
-- SWS to MOV conversion
-- Drag and drop into watch window
+- HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
-- HLG Rec.2020 colour space option
+
+## Related Projects
+
+- **SWS to MOV converter** -- planned as a separate app for reverse conversion of .SWS files back to MOV
 
 ## Licence
 
