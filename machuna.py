@@ -28,12 +28,18 @@ from pathlib import Path
 from typing import Optional
 
 try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, scrolledtext
+except ImportError:
+    tk = None
+
+try:
     from tkinterdnd2 import TkinterDnD, DND_FILES
     HAS_DND = False  # Disabled -- tkdnd native library incompatible with Homebrew Python/Tk on Apple Silicon
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -988,6 +994,752 @@ class WatchService:
 
 
 # ─────────────────────────────────────────────────────────────
+#  SWS Preview Player
+#  Integrated from SWSPlayer companion app (DNSVision/SWSPlayer).
+#  Launched as a tk.Toplevel child window from the MacHuna GUI.
+# ─────────────────────────────────────────────────────────────
+
+try:
+    import sounddevice as sd
+    HAS_AUDIO = True
+except ImportError:
+    HAS_AUDIO = False
+
+import numpy as np
+from PIL import Image, ImageTk
+
+# Header field offsets (player read side -- matches build_sws_header write side)
+OFF_MAGIC    = 0x000
+OFF_STD_CODE = 0x188
+OFF_WIDTH    = 0x190
+OFF_HEIGHT   = 0x194
+OFF_PLANE_SZ = 0x1A0
+OFF_FRAMES   = 0x1A4
+OFF_PLAY_CNT = 0x1A8
+OFF_AUD_FSZ  = 0x1C2
+OFF_AUD_OFF  = 0x1E8
+OFF_AUD_FMT  = 0x1EC
+
+# FPS lookup from video standard code (flag bits stripped before lookup)
+STD_CODE_FPS = {
+    0x4923: 50.0,
+    0x4921: 59.94,
+    0x4925: 25.0,
+    0x4813: 50.0,
+    0x4814: 59.94,
+    0x4817: 50.0,
+    0x4816: 59.94,
+}
+
+# Panel display size for quad layout
+PANEL_W = 480
+PANEL_H = 270
+
+
+class SWSHeader:
+    """Parsed SWS file header (player read side)."""
+
+    def __init__(self, path: str):
+        with open(path, 'rb') as f:
+            raw = f.read(SWS_HEADER_SIZE)
+        if len(raw) < SWS_HEADER_SIZE:
+            raise ValueError("File too small to be a valid SWS file.")
+        magic = raw[OFF_MAGIC:OFF_MAGIC + 16]
+        if magic != SWS_MAGIC:
+            raise ValueError(f"Not a valid SWS file (bad magic: {magic!r})")
+
+        self.std_code    = struct.unpack_from('>I', raw, OFF_STD_CODE)[0]
+        self.width       = struct.unpack_from('>I', raw, OFF_WIDTH)[0]
+        self.height      = struct.unpack_from('>I', raw, OFF_HEIGHT)[0]
+        self.plane_size  = struct.unpack_from('>I', raw, OFF_PLANE_SZ)[0]
+        self.frame_count = struct.unpack_from('>I', raw, OFF_FRAMES)[0]
+        self.play_count  = struct.unpack_from('>I', raw, OFF_PLAY_CNT)[0]
+        self.has_key     = (self.play_count > 0)
+
+        aud_frame_size   = struct.unpack_from('>H', raw, OFF_AUD_FSZ)[0]
+        aud_offset_div32 = struct.unpack_from('>I', raw, OFF_AUD_OFF)[0]
+
+        self.has_audio    = (aud_frame_size == 0x1680 and aud_offset_div32 > 0)
+        self.audio_offset = aud_offset_div32 * 32 if self.has_audio else 0
+        self.fps          = self._get_fps(self.std_code)
+        self.auto_play    = bool(self.std_code & 0x04)
+        self.loop_play    = bool(self.std_code & 0x08)
+
+    @staticmethod
+    def _get_fps(std_code: int) -> float:
+        low16 = std_code & 0xFFFF
+        if low16 in STD_CODE_FPS:
+            return STD_CODE_FPS[low16]
+        for mask in [~0x04 & 0xFFFF, ~0x08 & 0xFFFF, ~0x0C & 0xFFFF]:
+            candidate = low16 & mask
+            if candidate in STD_CODE_FPS:
+                return STD_CODE_FPS[candidate]
+        return 25.0
+
+
+def _v210_plane_to_yuv(raw_be: bytes, width: int, height: int,
+                       frame_count: int) -> np.ndarray:
+    """Decode big-endian v210 plane to float32 YCbCr (frame_count, H, W, 3).
+    Pure numpy -- ffmpeg 7.x has a bug decoding v210 from raw files."""
+    words = np.frombuffer(raw_be, dtype='>u4').copy()
+    words.byteswap(inplace=True)
+    words = words.view('<u4')
+
+    padded_w         = ((width + 47) // 48) * 48
+    line_bytes       = padded_w * 8 // 3
+    line_pad         = ((line_bytes + 127) // 128) * 128
+    total_line_words = line_pad // 4
+    active_words     = line_bytes // 4
+    frame_words      = total_line_words * height
+
+    results = np.zeros((frame_count, height, width, 3), dtype=np.float32)
+
+    for f in range(frame_count):
+        frame = words[f * frame_words: (f + 1) * frame_words]
+        frame = frame.reshape(height, total_line_words)[:, :active_words]
+        groups_per_line = active_words // 4
+        frame = frame[:, :groups_per_line * 4].reshape(height, groups_per_line, 4)
+
+        w0, w1, w2, w3 = frame[:,:,0], frame[:,:,1], frame[:,:,2], frame[:,:,3]
+
+        cb0 = ((w0 >>  0) & 0x3FF).astype(np.float32)
+        y0  = ((w0 >> 10) & 0x3FF).astype(np.float32)
+        cr0 = ((w0 >> 20) & 0x3FF).astype(np.float32)
+        y1  = ((w1 >>  0) & 0x3FF).astype(np.float32)
+        cb2 = ((w1 >> 10) & 0x3FF).astype(np.float32)
+        y2  = ((w1 >> 20) & 0x3FF).astype(np.float32)
+        cr2 = ((w2 >>  0) & 0x3FF).astype(np.float32)
+        y3  = ((w2 >> 10) & 0x3FF).astype(np.float32)
+        cb4 = ((w2 >> 20) & 0x3FF).astype(np.float32)
+        y4  = ((w3 >>  0) & 0x3FF).astype(np.float32)
+        cr4 = ((w3 >> 10) & 0x3FF).astype(np.float32)
+        y5  = ((w3 >> 20) & 0x3FF).astype(np.float32)
+
+        n   = groups_per_line
+        yuv = np.zeros((height, n * 6, 3), dtype=np.float32)
+        yuv[:, 0::6, 0] = y0;  yuv[:, 0::6, 1] = cb0; yuv[:, 0::6, 2] = cr0
+        yuv[:, 1::6, 0] = y1;  yuv[:, 1::6, 1] = cb0; yuv[:, 1::6, 2] = cr0
+        yuv[:, 2::6, 0] = y2;  yuv[:, 2::6, 1] = cb2; yuv[:, 2::6, 2] = cr2
+        yuv[:, 3::6, 0] = y3;  yuv[:, 3::6, 1] = cb2; yuv[:, 3::6, 2] = cr2
+        yuv[:, 4::6, 0] = y4;  yuv[:, 4::6, 1] = cb4; yuv[:, 4::6, 2] = cr4
+        yuv[:, 5::6, 0] = y5;  yuv[:, 5::6, 1] = cb4; yuv[:, 5::6, 2] = cr4
+
+        results[f] = yuv[:, :width, :]
+
+    return results
+
+
+def _yuv_to_rgb8(yuv: np.ndarray) -> np.ndarray:
+    """BT.709 limited-range YCbCr (10-bit float) -> RGB uint8."""
+    yn  = (yuv[:,:,0] -  64.0) / (940.0 -  64.0)
+    cbn = (yuv[:,:,1] - 512.0) / (960.0 -  64.0)
+    crn = (yuv[:,:,2] - 512.0) / (960.0 -  64.0)
+    r = yn + 1.5748 * crn
+    g = yn - 0.1873 * cbn - 0.4681 * crn
+    b = yn + 1.8556 * cbn
+    return np.clip(np.stack([r, g, b], axis=-1) * 255.0, 0, 255).astype(np.uint8)
+
+
+def _yuv_to_gray8(yuv: np.ndarray) -> np.ndarray:
+    """Y channel (10-bit float) -> grayscale uint8."""
+    return np.clip((yuv[:,:,0] - 64.0) / (940.0 - 64.0) * 255.0, 0, 255).astype(np.uint8)
+
+
+def _player_decode_rgb(raw_be: bytes, width: int, height: int, frame_count: int) -> list:
+    """Decode BE v210 plane to list of RGB PIL Images at PANEL_W x PANEL_H."""
+    yuv = _v210_plane_to_yuv(raw_be, width, height, frame_count)
+    images = []
+    for f in range(frame_count):
+        img = Image.fromarray(_yuv_to_rgb8(yuv[f]), 'RGB')
+        images.append(img.resize((PANEL_W, PANEL_H), Image.BILINEAR))
+    return images
+
+
+def _player_decode_gray(raw_be: bytes, width: int, height: int, frame_count: int) -> list:
+    """Decode BE v210 plane to list of grayscale arrays at PANEL_W x PANEL_H."""
+    yuv = _v210_plane_to_yuv(raw_be, width, height, frame_count)
+    arrays = []
+    for f in range(frame_count):
+        img = Image.fromarray(_yuv_to_gray8(yuv[f]), 'L')
+        arrays.append(np.array(img.resize((PANEL_W, PANEL_H), Image.BILINEAR)))
+    return arrays
+
+
+_CHECKER = None
+
+def _get_chequerboard(h: int, w: int, square: int = 16) -> np.ndarray:
+    """Return a chequerboard RGB array (H, W, 3)."""
+    global _CHECKER
+    if _CHECKER is not None and _CHECKER.shape[:2] == (h, w):
+        return _CHECKER
+    tile = np.zeros((square * 2, square * 2, 3), dtype=np.uint8)
+    tile[:square, :square] = 180
+    tile[square:, square:] = 180
+    tile[:square, square:] = 100
+    tile[square:, :square] = 100
+    reps_h = (h + tile.shape[0] - 1) // tile.shape[0]
+    reps_w = (w + tile.shape[1] - 1) // tile.shape[1]
+    checker = np.tile(tile, (reps_h, reps_w, 1))[:h, :w]
+    _CHECKER = checker
+    return _CHECKER
+
+
+def _make_composite(fill_rgb: np.ndarray, key_gray: np.ndarray) -> np.ndarray:
+    """Composite fill over chequerboard using key as alpha mask."""
+    h, w = fill_rgb.shape[:2]
+    checker = _get_chequerboard(h, w)
+    alpha = key_gray.astype(np.float32) / 255.0
+    alpha = alpha[:, :, np.newaxis]
+    composite = (fill_rgb.astype(np.float32) * alpha +
+                 checker.astype(np.float32) * (1.0 - alpha))
+    return composite.astype(np.uint8)
+
+
+class PlayerFrameCache:
+    """Loads and decodes all frames from an SWS file into memory."""
+
+    def __init__(self, path: str, header: SWSHeader, progress_cb=None):
+        self.path      = path
+        self.header    = header
+        self.frames    = []       # list of [fill_img, key_img, composite_img] PIL Images
+        self.audio_pcm = None     # raw bytes: 16ch 16-bit LE 48kHz
+        self.cancelled = False
+        self._load(progress_cb)
+
+    def _load(self, progress_cb):
+        h = self.header
+        file_size = os.path.getsize(self.path)
+
+        with open(self.path, 'rb') as f:
+            if progress_cb:
+                progress_cb(5, "Reading fill plane...")
+            f.seek(SWS_HEADER_SIZE)
+            fill_plane_bytes = h.plane_size * h.frame_count
+            fill_raw = f.read(fill_plane_bytes)
+
+            if progress_cb:
+                progress_cb(15, "Decoding fill plane...")
+            fill_images = _player_decode_rgb(fill_raw, h.width, h.height, h.frame_count)
+            del fill_raw
+
+            self.frames = [[img, None, None] for img in fill_images]
+
+            if h.has_key and not self.cancelled:
+                if progress_cb:
+                    progress_cb(50, "Reading key plane...")
+                f.seek(SWS_HEADER_SIZE + fill_plane_bytes)
+                key_raw = f.read(fill_plane_bytes)
+
+                if progress_cb:
+                    progress_cb(60, "Decoding key plane...")
+                key_arrays = _player_decode_gray(key_raw, h.width, h.height, h.frame_count)
+                del key_raw
+
+                if progress_cb:
+                    progress_cb(75, "Building composites...")
+                for i, (frame_data, key_gray) in enumerate(zip(self.frames, key_arrays)):
+                    if self.cancelled:
+                        break
+                    key_img  = Image.fromarray(key_gray, 'L')
+                    comp_rgb = _make_composite(np.array(frame_data[0]), key_gray)
+                    comp_img = Image.fromarray(comp_rgb, 'RGB')
+                    frame_data[1] = key_img
+                    frame_data[2] = comp_img
+            else:
+                for frame_data in self.frames:
+                    frame_data[2] = frame_data[0]
+
+            if h.has_audio and not self.cancelled:
+                if progress_cb:
+                    progress_cb(90, "Loading audio...")
+                audio_len = file_size - h.audio_offset
+                if audio_len > 0:
+                    f.seek(h.audio_offset)
+                    self.audio_pcm = f.read(audio_len)
+
+        if progress_cb:
+            progress_cb(100, "Ready.")
+
+
+class PlayerAudio:
+    """Plays 16-bit LE PCM audio (16ch, 48kHz) via sounddevice. L=ch0, R=ch2."""
+
+    def __init__(self, pcm_bytes: bytes, fps: float, frame_count: int):
+        self.pcm_bytes   = pcm_bytes
+        self.fps         = fps
+        self.frame_count = frame_count
+        self._stream     = None
+        self._thread     = None
+        self._stop_event = threading.Event()
+        self._pos        = 0
+
+    def start(self, frame_index: int = 0):
+        self.stop()
+        samples_per_frame = round(48000 / self.fps)
+        bytes_per_frame   = samples_per_frame * 2 * 16
+        self._pos         = frame_index * bytes_per_frame
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._play, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._stream:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+    def _play(self):
+        if not HAS_AUDIO:
+            return
+        try:
+            pcm_slice = self.pcm_bytes[self._pos:]
+            if not pcm_slice:
+                return
+            samples = np.frombuffer(pcm_slice, dtype='<i2')
+            total_samples = len(samples) // 16
+            if total_samples == 0:
+                return
+            samples = samples[:total_samples * 16].reshape(-1, 16)
+            stereo = np.zeros((total_samples, 2), dtype=np.float32)
+            stereo[:, 0] = samples[:, 0].astype(np.float32) / 32768.0
+            stereo[:, 1] = samples[:, 2].astype(np.float32) / 32768.0
+
+            self._stream = None
+            time.sleep(0.05)
+            self._stream = sd.OutputStream(samplerate=48000, channels=2, dtype='float32')
+            self._stream.start()
+
+            chunk_size = 4800
+            pos = 0
+            while pos < len(stereo) and not self._stop_event.is_set():
+                self._stream.write(stereo[pos:pos + chunk_size])
+                pos += chunk_size
+        except Exception as e:
+            print(f"Audio playback error: {e}")
+        finally:
+            try:
+                if self._stream:
+                    self._stream.stop()
+                    self._stream.close()
+            except Exception:
+                pass
+
+
+def _player_compute_rms(pcm_bytes: bytes, frame_idx: int, fps: float) -> tuple:
+    """Return (left_db, right_db) RMS levels for the given frame."""
+    samples_per_frame = round(48000 / fps)
+    bytes_per_frame   = samples_per_frame * 2 * 16
+    start             = frame_idx * bytes_per_frame
+    if start >= len(pcm_bytes):
+        return (-80.0, -80.0)
+    chunk = np.frombuffer(pcm_bytes[start:start + bytes_per_frame], dtype='<i2')
+    total = len(chunk) // 16
+    if total == 0:
+        return (-80.0, -80.0)
+    chunk = chunk[:total * 16].reshape(-1, 16)
+    left  = chunk[:, 0].astype(np.float32) / 32768.0
+    right = chunk[:, 2].astype(np.float32) / 32768.0
+    rms_l = np.sqrt(np.mean(left  ** 2)) if len(left)  else 0.0
+    rms_r = np.sqrt(np.mean(right ** 2)) if len(right) else 0.0
+    db_l  = 20 * np.log10(rms_l) if rms_l > 0 else -80.0
+    db_r  = 20 * np.log10(rms_r) if rms_r > 0 else -80.0
+    return (max(-80.0, db_l), max(-80.0, db_r))
+
+
+class SWSPlayer(tk.Toplevel):
+    """SWS Preview Player window -- launched from MacHuna as a non-modal Toplevel."""
+
+    def __init__(self, parent, initial_dir: str = ''):
+        super().__init__(parent)
+        self.title("SWS Preview Player")
+        self.resizable(False, False)
+        self._initial_dir = initial_dir
+
+        self._cache: Optional[PlayerFrameCache] = None
+        self._current_frame = 0
+        self._playing = False
+        self._play_thread = None
+        self._stop_event = threading.Event()
+        self._audio_player: Optional[PlayerAudio] = None
+        self._tk_images = {}
+        self._photo_fill = []
+        self._photo_key  = []
+        self._photo_comp = []
+
+        self._build_ui()
+
+        # Centre over parent window
+        self.update_idletasks()
+        px = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
+        py = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{px}+{py}")
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _build_ui(self):
+        pad = 4
+
+        # Info strip
+        info_frame = tk.Frame(self)
+        info_frame.pack(fill='x', padx=pad, pady=(pad, 0))
+        self._info_var = tk.StringVar(value="No file loaded")
+        tk.Label(info_frame, textvariable=self._info_var,
+                 font=('Helvetica', 11)).pack(side='left')
+
+        # Quad panel grid
+        quad = tk.Frame(self)
+        quad.pack(padx=pad, pady=pad)
+
+        label_cfg  = dict(font=('Helvetica', 10), anchor='w')
+        canvas_cfg = dict(width=PANEL_W, height=PANEL_H,
+                          bg='#888888', highlightthickness=1,
+                          highlightbackground='#cccccc')
+
+        fill_col = tk.Frame(quad)
+        fill_col.grid(row=0, column=0, padx=(0, pad//2), pady=(0, pad//2))
+        tk.Label(fill_col, text="Fill", **label_cfg).pack(fill='x')
+        self._fill_canvas = tk.Canvas(fill_col, **canvas_cfg)
+        self._fill_canvas.pack()
+        self._fill_item = self._fill_canvas.create_image(0, 0, anchor='nw')
+
+        key_col = tk.Frame(quad)
+        key_col.grid(row=0, column=1, padx=(pad//2, 0), pady=(0, pad//2))
+        tk.Label(key_col, text="Key", **label_cfg).pack(fill='x')
+        self._key_canvas = tk.Canvas(key_col, **canvas_cfg)
+        self._key_canvas.pack()
+        self._key_item = self._key_canvas.create_image(0, 0, anchor='nw')
+
+        comp_col = tk.Frame(quad)
+        comp_col.grid(row=1, column=0, padx=(0, pad//2), pady=(pad//2, 0))
+        tk.Label(comp_col, text="Composite", **label_cfg).pack(fill='x')
+        self._comp_canvas = tk.Canvas(comp_col, **canvas_cfg)
+        self._comp_canvas.pack()
+        self._comp_item = self._comp_canvas.create_image(0, 0, anchor='nw')
+
+        meter_col = tk.Frame(quad)
+        meter_col.grid(row=1, column=1, padx=(pad//2, 0), pady=(pad//2, 0))
+        tk.Label(meter_col, text="Audio", **label_cfg).pack(fill='x')
+        self._meter_canvas = tk.Canvas(meter_col, **canvas_cfg)
+        self._meter_canvas.pack()
+        self._draw_meters(-80.0, -80.0)
+
+        # Transport controls
+        transport = tk.Frame(self)
+        transport.pack(pady=(0, pad))
+
+        self._cue_btn   = ttk.Button(transport, text="⏮  Cue",   command=self._on_cue)
+        self._play_btn  = ttk.Button(transport, text="▶  Play",  command=self._on_play)
+        self._pause_btn = ttk.Button(transport, text="⏸  Pause", command=self._on_pause)
+        self._stop_btn  = ttk.Button(transport, text="⏹  Stop",  command=self._on_stop)
+
+        self._cue_btn.pack(side='left', padx=4)
+        self._play_btn.pack(side='left', padx=4)
+        self._pause_btn.pack(side='left', padx=4)
+        self._stop_btn.pack(side='left', padx=4)
+
+        self._frame_var = tk.StringVar(value="Frame: --/--")
+        tk.Label(transport, textvariable=self._frame_var,
+                 font=('Helvetica', 11)).pack(side='left', padx=12)
+
+        ttk.Button(transport, text="Open SWS...",
+                   command=self._open_file).pack(side='right', padx=4)
+
+        # Status / progress
+        status_frame = tk.Frame(self)
+        status_frame.pack(fill='x', padx=pad, pady=(0, pad))
+        self._status_var = tk.StringVar(value="Open a .SWS file to begin.")
+        tk.Label(status_frame, textvariable=self._status_var,
+                 font=('Helvetica', 10), anchor='w').pack(side='left', fill='x', expand=True)
+        self._progress = ttk.Progressbar(status_frame, length=200, mode='determinate')
+        self._progress.pack(side='right', padx=(8, 0))
+
+    # ── File open ────────────────────────────────────────────
+
+    def _open_file(self):
+        path = filedialog.askopenfilename(
+            title="Open SWS File",
+            initialdir=self._initial_dir if self._initial_dir else None,
+            filetypes=[("Grass Valley SWS", "*.SWS *.sws"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        self._load_file(path)
+
+    def _load_file(self, path: str):
+        self._on_stop()
+        self._photo_fill = []
+        self._photo_key  = []
+        self._photo_comp = []
+        self._fill_canvas.itemconfigure(self._fill_item, image='')
+        self._key_canvas.itemconfigure(self._key_item, image='')
+        self._key_canvas.delete('nokey')
+        self._comp_canvas.itemconfigure(self._comp_item, image='')
+        self._draw_meters(-80.0, -80.0)
+        self._frame_var.set("Frame: --/--")
+
+        try:
+            header = SWSHeader(path)
+        except Exception as e:
+            messagebox.showerror("Invalid File", str(e), parent=self)
+            return
+
+        self.title(f"SWS Preview Player — {Path(path).name}")
+        flags = []
+        if header.auto_play:  flags.append("Auto Play")
+        if header.loop_play:  flags.append("Loop Play")
+        flags_str = f"  [{', '.join(flags)}]" if flags else ""
+        self._info_var.set(
+            f"{header.width}×{header.height}  {header.fps:.2f}fps  "
+            f"{header.frame_count} frames  "
+            f"Key: {'Yes' if header.has_key else 'No'}  "
+            f"Audio: {'Yes' if header.has_audio else 'No'}"
+            f"{flags_str}"
+        )
+        self._status_var.set("Loading frames...")
+        self._progress['value'] = 0
+
+        if not header.has_key:
+            self._key_canvas.create_text(
+                PANEL_W // 2, PANEL_H // 2,
+                text="No key plane", fill='#555555',
+                font=('Helvetica', 14), tags='nokey'
+            )
+
+        self.update()
+
+        def load():
+            def progress(pct, msg):
+                self.after(0, lambda: self._on_progress(pct, msg))
+            try:
+                cache = PlayerFrameCache(path, header, progress_cb=progress)
+                self.after(0, lambda: self._on_load_complete(cache, header))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_load_error(m))
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _on_progress(self, pct: int, msg: str):
+        self._progress['value'] = pct
+        self._status_var.set(msg)
+        self.update_idletasks()
+
+    def _on_load_complete(self, cache: PlayerFrameCache, header: SWSHeader):
+        self._cache = cache
+        self._current_frame = 0
+        self._progress['value'] = 100
+        n = len(cache.frames)
+
+        self._status_var.set("Converting frames for display...")
+        self.update_idletasks()
+
+        self._photo_fill = []
+        self._photo_key  = []
+        self._photo_comp = []
+        for fill_img, key_img, comp_img in cache.frames:
+            self._photo_fill.append(ImageTk.PhotoImage(fill_img))
+            self._photo_key.append(ImageTk.PhotoImage(key_img) if key_img else None)
+            self._photo_comp.append(ImageTk.PhotoImage(comp_img) if comp_img else None)
+
+        has_audio_str = "with audio" if cache.audio_pcm else "no audio"
+        self._status_var.set(
+            f"Loaded {n} frame{'s' if n != 1 else ''}  {has_audio_str}  "
+            f"({os.path.getsize(self._cache.path) / 1024 / 1024:.1f} MB)"
+        )
+        self._show_frame(0)
+
+        if not HAS_AUDIO and header.has_audio:
+            self._status_var.set(
+                self._status_var.get() +
+                "  [sounddevice not installed -- audio meters only]"
+            )
+
+    def _on_load_error(self, msg: str):
+        self._status_var.set(f"Error: {msg}")
+        messagebox.showerror("Load Error", msg, parent=self)
+
+    # ── Frame display ─────────────────────────────────────────
+
+    def _show_frame(self, idx: int):
+        if not self._cache or not self._photo_fill or idx >= len(self._photo_fill):
+            return
+
+        photo = self._photo_fill[idx]
+        self._tk_images['fill'] = photo
+        self._fill_canvas.itemconfigure(self._fill_item, image=photo)
+
+        key_photo = self._photo_key[idx] if self._photo_key else None
+        if key_photo:
+            self._key_canvas.delete('nokey')
+            self._tk_images['key'] = key_photo
+            self._key_canvas.itemconfigure(self._key_item, image=key_photo)
+        else:
+            self._key_canvas.itemconfigure(self._key_item, image='')
+            self._key_canvas.delete('nokey')
+            self._key_canvas.create_text(
+                PANEL_W // 2, PANEL_H // 2,
+                text="No key plane", fill='#555555',
+                font=('Helvetica', 14), tags='nokey'
+            )
+
+        comp_photo = self._photo_comp[idx] if self._photo_comp else None
+        if comp_photo:
+            self._tk_images['comp'] = comp_photo
+            self._comp_canvas.itemconfigure(self._comp_item, image=comp_photo)
+
+        if self._cache.audio_pcm:
+            l_db, r_db = _player_compute_rms(
+                self._cache.audio_pcm, idx, self._cache.header.fps
+            )
+            self._draw_meters(l_db, r_db)
+        else:
+            self._draw_meters(None, None)
+
+        self._frame_var.set(f"Frame: {idx + 1}/{len(self._cache.frames)}")
+        self._current_frame = idx
+
+    # ── Audio meters ──────────────────────────────────────────
+
+    def _draw_meters(self, l_db, r_db):
+        c = self._meter_canvas
+        c.delete('all')
+        w, h = PANEL_W, PANEL_H
+        c.create_rectangle(0, 0, w, h, fill='#111111', outline='')
+
+        if l_db is None:
+            c.create_text(w // 2, h // 2,
+                          text="No audio", fill='#999999', font=('Helvetica', 14))
+            return
+
+        bar_w = 60; gap = 40
+        x_l = (w - bar_w * 2 - gap) // 2
+        x_r = x_l + bar_w + gap
+        top = 30; bottom = h - 40
+        bar_h = bottom - top
+        db_min = -60.0; db_max = 0.0
+
+        def db_to_y(db):
+            clamped = max(db_min, min(db_max, db))
+            return bottom - int((clamped - db_min) / (db_max - db_min) * bar_h)
+
+        def bar_colour(db):
+            if db > -6:   return '#ff4444'
+            if db > -18:  return '#ffcc00'
+            return '#44cc44'
+
+        for db, x in [(l_db, x_l), (r_db, x_r)]:
+            c.create_rectangle(x, top, x + bar_w, bottom, fill='#222222', outline='')
+            y = db_to_y(db)
+            if y < bottom:
+                c.create_rectangle(x, y, x + bar_w, bottom,
+                                   fill=bar_colour(db), outline='')
+            for mark_db in [-60, -48, -36, -24, -18, -12, -6, 0]:
+                my = db_to_y(float(mark_db))
+                c.create_line(x, my, x + bar_w, my, fill='#444444', width=1)
+                c.create_text(x - 4, my, text=str(mark_db),
+                              fill='#666666', font=('Helvetica', 8), anchor='e')
+
+        c.create_text(x_l + bar_w // 2, bottom + 14, text="L",
+                      fill='#888888', font=('Helvetica', 11))
+        c.create_text(x_r + bar_w // 2, bottom + 14, text="R",
+                      fill='#888888', font=('Helvetica', 11))
+        c.create_text(w // 2, 14, text="Audio Levels (dBFS)",
+                      fill='#666666', font=('Helvetica', 10))
+
+    # ── Transport ─────────────────────────────────────────────
+
+    def _on_cue(self):
+        self._on_stop()
+
+    def _on_play(self):
+        if not self._cache or self._playing:
+            return
+        self._playing = True
+        self._stop_event.clear()
+        if self._cache.audio_pcm and HAS_AUDIO:
+            self._audio_player = PlayerAudio(
+                self._cache.audio_pcm,
+                self._cache.header.fps,
+                len(self._cache.frames)
+            )
+            self._audio_player.start(self._current_frame)
+        self._play_thread = threading.Thread(
+            target=self._playback_loop, daemon=True
+        )
+        self._play_thread.start()
+
+    def _on_pause(self):
+        if not self._playing:
+            return
+        self._playing = False
+        self._stop_event.set()
+        if self._audio_player:
+            self._audio_player.stop()
+
+    def _on_stop(self):
+        self._playing = False
+        self._stop_event.set()
+        if self._audio_player:
+            self._audio_player.stop()
+            self._audio_player = None
+        self._current_frame = 0
+        if self._cache:
+            self.after(0, lambda: self._show_frame(0))
+
+    def _playback_loop(self):
+        if not self._cache:
+            return
+        fps       = self._cache.header.fps
+        frame_dur = 1.0 / fps
+        n_frames  = len(self._cache.frames)
+        idx       = self._current_frame
+        loop      = self._cache.header.loop_play
+
+        while not self._stop_event.is_set():
+            t_start = time.perf_counter()
+            captured = idx
+            self.after(0, lambda i=captured: self._show_frame(i))
+            idx += 1
+            if idx >= n_frames:
+                if loop:
+                    idx = 0
+                    if self._audio_player:
+                        self._audio_player.stop()
+                        self._audio_player = PlayerAudio(
+                            self._cache.audio_pcm,
+                            self._cache.header.fps,
+                            n_frames
+                        )
+                        self._audio_player.start(0)
+                else:
+                    self._playing = False
+                    self.after(0, self._on_playback_ended)
+                    return
+            elapsed = time.perf_counter() - t_start
+            sleep = frame_dur - elapsed
+            if sleep > 0:
+                time.sleep(sleep)
+
+    def _on_playback_ended(self):
+        self._playing = False
+        if self._audio_player:
+            self._audio_player.stop()
+            self._audio_player = None
+        self._on_cue()
+
+    # ── Close ─────────────────────────────────────────────────
+
+    def _on_close(self):
+        self._on_stop()
+        self.destroy()
+
+
+# ─────────────────────────────────────────────────────────────
 #  Simple Tkinter GUI
 # ─────────────────────────────────────────────────────────────
 
@@ -1115,6 +1867,9 @@ def launch_gui():
 
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
+
+    ttk.Button(frm5, text="SWS Player",
+               command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")

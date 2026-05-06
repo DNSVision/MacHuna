@@ -19,6 +19,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Include/exclude audio option
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
+- Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Batch convert with file picker and auto-incrementing file numbers
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
 - Watch folder service runs in background
@@ -90,7 +91,7 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 - SWS to MOV conversion
 - Drag and drop into watch window
-- Preview viewer (fill, key and audio)
+- Split file support in SWS Preview Player
 - HLG Rec.2020 colour space option
 
 ## Licence
