@@ -1,6 +1,6 @@
 # MacHuna
 
-A macOS application for converting video and still image files to the Grass Valley Kahuna `.SWS` native format.
+A macOS application for converting video and still image files to the Grass Valley Kahuna `.SWS` native format, with built-in SWS preview and extraction tools.
 
 ## Overview
 
@@ -20,6 +20,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
+- Built-in Hula SWS Extractor -- converts .SWS files back to Kayenne MOV, Kayenne TGA, or Sony MVS TGA format, launched directly from the MacHuna window
 - Batch convert with file picker and auto-incrementing file numbers
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
 - Watch folder service runs in background
@@ -79,6 +80,20 @@ MacHuna will convert files automatically as they appear and log progress in the 
 
 For TGA sequences, use the Watch Folder service -- batch convert does not support sequences.
 
+### SWS Preview Player
+
+Click the SWS Player button in the Batch Convert row to open any .SWS file in the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls.
+
+### Hula SWS Extractor
+
+Click the Hula button in the Batch Convert row to open the Hula extractor. Converts .SWS files back to standard formats for use on other vision mixing desks:
+
+- **Kayenne MOV** -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store
+- **Kayenne TGA** -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
+- **Sony MVS TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
+
+Hula is also available as a standalone app at [DNSVision/Hula](https://github.com/DNSVision/Hula) for use without MacHuna.
+
 ### Large Files (>4GB)
 
 Files larger than 4GB are automatically split into 2GB chunks inside a folder named `<number>.SWS`, matching the K-Watch split file format exactly. The Split >4GB option in Settings must be enabled (it is on by default).
@@ -91,10 +106,11 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
+- Sony MVS 50i TGA output in Hula (convert 50P SWS to genuine 50i TGA sequences for older MVS desks)
 
 ## Related Projects
 
-- **SWS to MOV converter** -- planned as a separate app for reverse conversion of .SWS files back to MOV
+- **[Hula](https://github.com/DNSVision/Hula)** -- standalone SWS extractor for use without MacHuna
 
 ## Licence
 
