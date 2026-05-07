@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.0"
+VERSION = "1.5.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2164,6 +2164,7 @@ def launch_gui():
                     'hula_dest':   s.get('hula_dest', ''),
                     'hula_target': s.get('hula_target', HULA_TARGET_KAYENNE_MOV),
                     'hula_clip':   s.get('hula_clip', 'WIPE'),
+                    'window_geometry': root.geometry(),
                 }, f)
         except Exception:
             pass
@@ -2173,8 +2174,11 @@ def launch_gui():
     except Exception:
         root = tk.Tk()
     root.title(f"MacHuna v{VERSION}")
-    root.geometry("700x600")
     root.resizable(True, True)
+    root.minsize(960, 480)
+    # Restore saved window geometry, or use a sensible default
+    _saved_geo = load_settings().get('window_geometry', '960x560')
+    root.geometry(_saved_geo)
 
     # ── Style ──
     style = ttk.Style()
