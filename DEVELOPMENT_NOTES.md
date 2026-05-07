@@ -9,7 +9,7 @@ This document is for continuity between development sessions. If starting a new 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
 **Current version:** v1.5.0
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.5.0: Hula SWS Extractor integrated as built-in tool (non-modal Toplevel, Hula button in Batch Convert row). v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.5.1: Fix Sony MVS TGA naming convention (clip name prefix before frame number, e.g. WIPE0000.tga). v1.5.0: Hula SWS Extractor integrated as built-in tool (non-modal Toplevel, Hula button in Batch Convert row). v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -109,7 +109,7 @@ All Hula code lives in a clearly marked section just above `launch_gui()`:
 |--------|--------|--------|
 | Kayenne MOV | ProRes 4444, embedded alpha, BT.709, audio if present | `0001.mov`, `0002.mov` ... flat in dest |
 | Kayenne TGA | 32-bit RGBA TGA | `0001.tga` onwards, subfolder per SWS |
-| Sony MVS TGA | 32-bit RGBA TGA | `0000XXXX.tga` onwards, subfolder per SWS |
+| Sony MVS TGA | 32-bit RGBA TGA | `XXXX0000.tga` onwards (clip name prefix, then frame number), subfolder per SWS |
 
 ### Sony MVS 50i -- future work
 
