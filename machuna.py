@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1742,6 +1742,388 @@ class SWSPlayer(tk.Toplevel):
         self.destroy()
 
 
+
+# ─────────────────────────────────────────────────────────────
+#  Hula — SWS Extractor (integrated from DNSVision/Hula)
+#  Converts .SWS files back to Kayenne MOV, Kayenne TGA,
+#  or Sony MVS TGA format.
+# ─────────────────────────────────────────────────────────────
+
+HULA_TARGET_KAYENNE_MOV = "Kayenne MOV"
+HULA_TARGET_KAYENNE_TGA = "Kayenne TGA"
+HULA_TARGET_SONY_MVS    = "Sony MVS TGA"
+
+# Header field offsets for SWS read side (Hula uses read only)
+_HULA_OFF_STD_CODE = 0x188
+_HULA_OFF_WIDTH    = 0x190
+_HULA_OFF_HEIGHT   = 0x194
+_HULA_OFF_PLANE_SZ = 0x1A0
+_HULA_OFF_FRAMES   = 0x1A4
+_HULA_OFF_PLAY_CNT = 0x1A8
+_HULA_OFF_AUD_OFF  = 0x1E8
+_HULA_OFF_AUD_FMT  = 0x1EC
+
+# FPS lookup (same as SWSHeader in player section -- kept separate for clarity)
+_HULA_STD_CODE_FPS = {
+    0x4923: 50.0,  0x4921: 59.94, 0x4925: 25.0,
+    0x4813: 50.0,  0x4814: 59.94, 0x4817: 50.0,
+    0x4816: 59.94,
+}
+
+
+class HulaSWSHeader:
+    """Parse the 512-byte SWS header for Hula's read-only use."""
+
+    def __init__(self, path: str):
+        with open(path, 'rb') as f:
+            raw = f.read(SWS_HEADER_SIZE)
+        if len(raw) < SWS_HEADER_SIZE:
+            raise ValueError("File too small to be a valid SWS file.")
+        if raw[0:16] != SWS_MAGIC:
+            raise ValueError(f"Not a valid SWS file (bad magic: {raw[0:16]!r})")
+        self.width       = struct.unpack_from('>I', raw, _HULA_OFF_WIDTH)[0]
+        self.height      = struct.unpack_from('>I', raw, _HULA_OFF_HEIGHT)[0]
+        self.plane_size  = struct.unpack_from('>I', raw, _HULA_OFF_PLANE_SZ)[0]
+        self.frame_count = struct.unpack_from('>I', raw, _HULA_OFF_FRAMES)[0]
+        self.play_count  = struct.unpack_from('>I', raw, _HULA_OFF_PLAY_CNT)[0]
+        self.has_key     = (self.play_count > 0)
+        aud_off_div32    = struct.unpack_from('>I', raw, _HULA_OFF_AUD_OFF)[0]
+        aud_fmt          = struct.unpack_from('>I', raw, _HULA_OFF_AUD_FMT)[0]
+        self.has_audio   = (aud_off_div32 > 0 and aud_fmt == 0x03000000)
+        self.audio_offset = aud_off_div32 * 32 if self.has_audio else 0
+        std_code         = struct.unpack_from('>I', raw, _HULA_OFF_STD_CODE)[0]
+        self.fps         = self._get_fps(std_code)
+
+    @staticmethod
+    def _get_fps(std_code: int) -> float:
+        low16 = std_code & 0xFFFF
+        if low16 in _HULA_STD_CODE_FPS:
+            return _HULA_STD_CODE_FPS[low16]
+        for mask in [~0x04 & 0xFFFF, ~0x08 & 0xFFFF, ~0x0C & 0xFFFF]:
+            if (low16 & mask) in _HULA_STD_CODE_FPS:
+                return _HULA_STD_CODE_FPS[low16 & mask]
+        return 25.0
+
+    def __repr__(self):
+        return (f"HulaSWSHeader({self.width}x{self.height}, "
+                f"frames={self.frame_count}, plane_size={self.plane_size}, "
+                f"has_key={self.has_key}, has_audio={self.has_audio}, fps={self.fps})")
+
+
+def _hula_decode_frame(fill_bytes: bytes, key_bytes: bytes,
+                       width: int, height: int):
+    """Decode one frame from fill and key plane slices.
+    Returns (rgb uint8 HxWx3, alpha uint8 HxW).
+    Reuses the v210 decoder already present in machuna.py."""
+    fill_yuv = _v210_plane_to_yuv(fill_bytes, width, height, 1)
+    rgb      = _yuv_to_rgb8(fill_yuv[0])
+    if key_bytes:
+        key_yuv = _v210_plane_to_yuv(key_bytes, width, height, 1)
+        alpha   = _yuv_to_gray8(key_yuv[0])
+    else:
+        alpha = np.full((height, width), 255, dtype=np.uint8)
+    return rgb, alpha
+
+
+def _hula_extract_audio_stereo(sws_path: str, header: HulaSWSHeader,
+                                tmp_dir: str, log=print):
+    """Extract Ch0 (L) and Ch2 (R) from SWS 16ch PCM as stereo temp file."""
+    if not header.has_audio:
+        return None
+    file_size  = os.path.getsize(sws_path)
+    audio_size = file_size - header.audio_offset
+    if audio_size <= 0:
+        return None
+    with open(sws_path, 'rb') as f:
+        f.seek(header.audio_offset)
+        raw = f.read(audio_size)
+    samples = np.frombuffer(raw, dtype='<i2')
+    total   = len(samples) // 16
+    if total == 0:
+        return None
+    samples = samples[:total * 16].reshape(-1, 16)
+    stereo  = np.zeros((total, 2), dtype='<i2')
+    stereo[:, 0] = samples[:, 0]
+    stereo[:, 1] = samples[:, 2]
+    stereo_path = os.path.join(tmp_dir, 'hula_audio_stereo.pcm')
+    stereo.tofile(stereo_path)
+    log(f"  Audio extracted: {total} samples, stereo")
+    return stereo_path
+
+
+def _hula_convert_tga(sws_path: str, dest_parent: str,
+                      target: str, clip_name: str = 'WIPE', log=print):
+    """Convert one SWS to a TGA sequence subfolder."""
+    stem     = Path(sws_path).stem
+    dest_dir = os.path.join(dest_parent, stem)
+    os.makedirs(dest_dir, exist_ok=True)
+    header   = HulaSWSHeader(sws_path)
+    log(f"  {header}")
+    fill_off = SWS_HEADER_SIZE
+    key_off  = SWS_HEADER_SIZE + header.plane_size * header.frame_count
+    log(f"  Decoding {header.frame_count} frame(s)...")
+    with open(sws_path, 'rb') as f:
+        for i in range(header.frame_count):
+            f.seek(fill_off + i * header.plane_size)
+            fill_bytes = f.read(header.plane_size)
+            key_bytes  = None
+            if header.has_key:
+                f.seek(key_off + i * header.plane_size)
+                key_bytes = f.read(header.plane_size)
+            rgb, alpha = _hula_decode_frame(fill_bytes, key_bytes,
+                                            header.width, header.height)
+            rgba_img = Image.merge('RGBA', [
+                Image.fromarray(rgb[:, :, 0], 'L'),
+                Image.fromarray(rgb[:, :, 1], 'L'),
+                Image.fromarray(rgb[:, :, 2], 'L'),
+                Image.fromarray(alpha, 'L'),
+            ])
+            if target == HULA_TARGET_KAYENNE_TGA:
+                filename = f"{i + 1:04d}.tga"
+            else:
+                cn = clip_name.upper()[:4].ljust(4)
+                filename = f"{i:04d}{cn}.tga"
+            rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
+            if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
+                log(f"  Frame {i + 1}/{header.frame_count}")
+    log(f"  Done → {dest_dir}  ({header.frame_count} TGA files)")
+    return dest_dir
+
+
+def _hula_convert_mov(sws_path: str, dest_parent: str,
+                      mov_number: int, log=print) -> str:
+    """Convert one SWS to a ProRes 4444 MOV with embedded alpha."""
+    header   = HulaSWSHeader(sws_path)
+    log(f"  {header}")
+    fill_off = SWS_HEADER_SIZE
+    key_off  = SWS_HEADER_SIZE + header.plane_size * header.frame_count
+    out_path = os.path.join(dest_parent, f"{mov_number:04d}.mov")
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
+        log(f"  Decoding {header.frame_count} frame(s) to RGBA...")
+        with open(sws_path, 'rb') as f_in, open(raw_rgba, 'wb') as f_out:
+            for i in range(header.frame_count):
+                f_in.seek(fill_off + i * header.plane_size)
+                fill_bytes = f_in.read(header.plane_size)
+                key_bytes  = None
+                if header.has_key:
+                    f_in.seek(key_off + i * header.plane_size)
+                    key_bytes = f_in.read(header.plane_size)
+                rgb, alpha = _hula_decode_frame(fill_bytes, key_bytes,
+                                                header.width, header.height)
+                rgba = np.dstack([rgb, alpha[:, :, np.newaxis]])
+                f_out.write(rgba.tobytes())
+                if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
+                    log(f"  Frame {i + 1}/{header.frame_count}")
+        stereo_pcm = _hula_extract_audio_stereo(sws_path, header, tmp, log)
+        ffmpeg     = _get_ffmpeg_path('ffmpeg')
+        fps_str    = f"{header.fps:.6g}"
+        base_cmd   = [ffmpeg, '-y',
+                      '-f', 'rawvideo', '-pix_fmt', 'rgba',
+                      '-s', f"{header.width}x{header.height}",
+                      '-r', fps_str, '-i', raw_rgba]
+        if stereo_pcm:
+            base_cmd += ['-f', 's16le', '-ar', '48000', '-ac', '2',
+                         '-i', stereo_pcm]
+        base_cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
+                     '-pix_fmt', 'yuva444p10le',
+                     '-color_primaries', 'bt709',
+                     '-color_trc', 'bt709',
+                     '-colorspace', 'bt709']
+        if stereo_pcm:
+            base_cmd += ['-c:a', 'pcm_s16le', '-ar', '48000']
+        base_cmd.append(out_path)
+        log("  Encoding ProRes 4444...")
+        result = subprocess.run(base_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg encode failed (rc={result.returncode}):\n"
+                f"{result.stderr[-2000:]}"
+            )
+    log(f"  Done → {out_path}")
+    return out_path
+
+
+def _hula_run_batch(sws_paths: list, dest_dir: str, target: str,
+                    clip_name: str = 'WIPE', log=print):
+    """Convert a list of SWS files. Called from HulaWindow worker thread."""
+    os.makedirs(dest_dir, exist_ok=True)
+    ok = fail = 0
+    for idx, path in enumerate(sws_paths, start=1):
+        log(f"\n[{idx}/{len(sws_paths)}] {os.path.basename(path)}")
+        try:
+            if target == HULA_TARGET_KAYENNE_MOV:
+                _hula_convert_mov(path, dest_dir, idx, log=log)
+            else:
+                _hula_convert_tga(path, dest_dir, target,
+                                  clip_name=clip_name, log=log)
+            ok += 1
+        except Exception as e:
+            log(f"  ERROR: {e}")
+            fail += 1
+    log(f"\n{'='*40}")
+    log(f"Complete: {ok} succeeded, {fail} failed.")
+
+
+class HulaWindow(tk.Toplevel):
+    """Hula SWS Extractor -- non-modal child window launched from MacHuna."""
+
+    def __init__(self, parent, settings: dict, save_cb):
+        super().__init__(parent)
+        self.title("Hula — SWS Extractor")
+        self.resizable(False, False)
+        self._save_cb    = save_cb   # callable to persist settings
+        self._settings   = settings  # shared dict
+        self._selected   = []
+        self._build_ui(settings)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        # Centre over parent
+        self.update_idletasks()
+        px = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
+        py = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{px}+{py}")
+
+    def _build_ui(self, s: dict):
+        PAD = 8
+        pad = dict(padx=PAD, pady=4)
+
+        # Destination
+        dest_frame = ttk.LabelFrame(self, text="Destination Folder")
+        dest_frame.pack(fill='x', **pad)
+        self._dest_var = tk.StringVar(value=s.get('hula_dest', ''))
+        ttk.Entry(dest_frame, textvariable=self._dest_var, width=52).pack(
+            side='left', fill='x', expand=True)
+        ttk.Button(dest_frame, text="Browse…",
+                   command=self._browse_dest).pack(side='left', padx=(PAD, 0))
+
+        # Output target
+        tgt_frame = ttk.LabelFrame(self, text="Output Target")
+        tgt_frame.pack(fill='x', **pad)
+        self._target_var = tk.StringVar(
+            value=s.get('hula_target', HULA_TARGET_KAYENNE_MOV))
+        for label in (HULA_TARGET_KAYENNE_MOV,
+                      HULA_TARGET_KAYENNE_TGA,
+                      HULA_TARGET_SONY_MVS):
+            tk.Radiobutton(tgt_frame, text=label,
+                           variable=self._target_var, value=label,
+                           command=self._on_target_change
+                           ).pack(side='left', padx=(0, PAD))
+
+        # Clip name (Sony MVS only)
+        clip_frame = tk.Frame(tgt_frame)
+        clip_frame.pack(side='left', padx=(PAD * 2, 0))
+        tk.Label(clip_frame, text="Clip name (4 chars):").pack(side='left')
+        self._clip_var = tk.StringVar(value=s.get('hula_clip', 'WIPE'))
+        vcmd = self.register(lambda P: len(P) <= 4 and (P == '' or P.isalnum()))
+        self._clip_entry = ttk.Entry(clip_frame, textvariable=self._clip_var,
+                                     width=5, validate='key',
+                                     validatecommand=(vcmd, '%P'))
+        self._clip_entry.pack(side='left', padx=(4, 0))
+        tk.Label(clip_frame,
+                 text="(all clips share this name — they will merge on import)",
+                 font=('Helvetica', 10), fg='#888888'
+                 ).pack(side='left', padx=(8, 0))
+
+        # Files
+        files_frame = ttk.LabelFrame(self, text="SWS Files")
+        files_frame.pack(fill='x', **pad)
+        self._files_var = tk.StringVar(value="No files selected.")
+        tk.Label(files_frame, textvariable=self._files_var,
+                 font=('Helvetica', 11), anchor='w'
+                 ).pack(side='left', fill='x', expand=True)
+        ttk.Button(files_frame, text="Open Files…",
+                   command=self._open_files).pack(side='left', padx=(PAD, 0))
+
+        # Buttons
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(fill='x', **pad)
+        self._convert_btn = ttk.Button(btn_frame, text="Convert",
+                                       command=self._do_convert)
+        self._convert_btn.pack(side='left')
+        self._clear_btn = ttk.Button(btn_frame, text="Clear Log")
+        self._clear_btn.pack(side='left', padx=(PAD, 0))
+
+        # Log
+        log_frame = ttk.LabelFrame(self, text="Log")
+        log_frame.pack(fill='both', expand=True, **pad)
+        self._log_box = scrolledtext.ScrolledText(
+            log_frame, width=80, height=16,
+            font=('Menlo', 11), state='disabled')
+        self._log_box.pack(fill='both', expand=True)
+
+        def clear_log():
+            self._log_box.config(state='normal')
+            self._log_box.delete('1.0', 'end')
+            self._log_box.config(state='disabled')
+
+        self._clear_btn.config(command=clear_log)
+        self._on_target_change()
+
+    def _browse_dest(self):
+        d = filedialog.askdirectory(title="Choose destination folder",
+                                    parent=self)
+        if d:
+            self._dest_var.set(d)
+
+    def _open_files(self):
+        paths = filedialog.askopenfilenames(
+            title="Select SWS files", parent=self,
+            filetypes=[('SWS files', '*.SWS *.sws'), ('All files', '*.*')])
+        if paths:
+            self._selected = sorted(paths)
+            n = len(self._selected)
+            self._files_var.set(f"{n} file{'s' if n != 1 else ''} selected.")
+
+    def _on_target_change(self):
+        is_sony = self._target_var.get() == HULA_TARGET_SONY_MVS
+        self._clip_entry.config(state='normal' if is_sony else 'disabled')
+
+    def _log(self, msg: str):
+        def _append():
+            self._log_box.config(state='normal')
+            self._log_box.insert('end', msg + '\n')
+            self._log_box.see('end')
+            self._log_box.config(state='disabled')
+        self.after(0, _append)
+
+    def _do_convert(self):
+        dest  = self._dest_var.get().strip()
+        tgt   = self._target_var.get()
+        cname = self._clip_var.get().strip().upper()
+        if not dest:
+            messagebox.showerror("Hula", "Please set a destination folder.",
+                                 parent=self)
+            return
+        if not self._selected:
+            messagebox.showerror("Hula", "Please select at least one SWS file.",
+                                 parent=self)
+            return
+        if tgt == HULA_TARGET_SONY_MVS and len(cname) != 4:
+            messagebox.showerror("Hula",
+                                 "Sony MVS clip name must be exactly 4 characters.",
+                                 parent=self)
+            return
+        try:
+            check_ffmpeg()
+        except RuntimeError as e:
+            messagebox.showerror("Hula", str(e), parent=self)
+            return
+        # Persist settings
+        self._settings['hula_dest']   = dest
+        self._settings['hula_target'] = tgt
+        self._settings['hula_clip']   = cname
+        self._save_cb()
+        self._convert_btn.config(state='disabled')
+
+        def worker():
+            try:
+                _hula_run_batch(list(self._selected), dest, tgt,
+                                clip_name=cname, log=self._log)
+            finally:
+                self.after(0, lambda: self._convert_btn.config(state='normal'))
+
+        threading.Thread(target=worker, daemon=True).start()
+
 # ─────────────────────────────────────────────────────────────
 #  Simple Tkinter GUI
 # ─────────────────────────────────────────────────────────────
@@ -1779,6 +2161,9 @@ def launch_gui():
                     'auto_play': auto_play_var.get(),
                     'loop_play': loop_play_var.get(),
                     'start_num': start_num_var.get(),
+                    'hula_dest':   s.get('hula_dest', ''),
+                    'hula_target': s.get('hula_target', HULA_TARGET_KAYENNE_MOV),
+                    'hula_clip':   s.get('hula_clip', 'WIPE'),
                 }, f)
         except Exception:
             pass
@@ -1849,6 +2234,8 @@ def launch_gui():
     if 'auto_play'      in s: auto_play_var.set(s['auto_play'])
     if 'loop_play'      in s: loop_play_var.set(s['loop_play'])
     if 'start_num'      in s: start_num_var.set(s['start_num'])
+    # Hula settings live in the same dict -- HulaWindow reads them directly
+    # s is passed by reference so HulaWindow can update it in place
 
     # ── Buttons ──
     frm4 = ttk.Frame(root)
@@ -1873,6 +2260,8 @@ def launch_gui():
 
     ttk.Button(frm5, text="SWS Player",
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
+    ttk.Button(frm5, text="Hula",
+               command=lambda: HulaWindow(root, s, save_settings)).pack(side='right', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
