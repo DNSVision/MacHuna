@@ -4,6 +4,27 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.4 — 2026-05-07
+
+### Fixed
+- Default window size set to 1121x592, matching a well-proportioned layout on a MacBook Air display. Window size is persisted between sessions -- MacHuna remembers the last size you set.
+
+---
+
+## v1.5.3 — 2026-05-07
+
+### Fixed
+- Interim window size adjustment (superseded by v1.5.4).
+
+---
+
+## v1.5.2 — 2026-05-07
+
+### Fixed
+- Window no longer opens too narrow on first launch, hiding the Settings checkboxes. Minimum window width set to 960px. Window size persisted to settings on quit and restored on next launch.
+
+---
+
 ## v1.5.1 — 2026-05-07
 
 ### Fixed
