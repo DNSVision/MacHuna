@@ -1882,7 +1882,7 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
                 filename = f"{i + 1:04d}.tga"
             else:
                 cn = clip_name.upper()[:4].ljust(4)
-                filename = f"{i:04d}{cn}.tga"
+                filename = f"{cn}{i:04d}.tga"
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
                 log(f"  Frame {i + 1}/{header.frame_count}")
