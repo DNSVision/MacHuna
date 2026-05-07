@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2177,7 +2177,7 @@ def launch_gui():
     root.resizable(True, True)
     root.minsize(960, 480)
     # Restore saved window geometry, or use a sensible default
-    _saved_geo = load_settings().get('window_geometry', '960x560')
+    _saved_geo = load_settings().get('window_geometry', '1400x660')
     root.geometry(_saved_geo)
 
     # ── Style ──
