@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.4.1
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
+**Current version:** v1.5.0
+**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.5.0: Hula SWS Extractor integrated as built-in tool (non-modal Toplevel, Hula button in Batch Convert row). v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -63,7 +63,7 @@ git push
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Confirmed working on live Kahuna.
 6. ~~**Auto play / Loop play**~~ -- DONE. Bits 2 and 3 of the low byte at 0x188 confirmed by hex analysis of K-Watch reference files across all four flag combinations (neither, auto only, loop only, both). Auto play = bit 2 (0x04), Loop play = bit 3 (0x08), OR'd into the video standard code. Both checkboxes added to GUI (default: off), saved to settings, passed through all converters and WatchService. Awaiting live Kahuna test.
 7. ~~**Split large files (>4GB)**~~ -- DONE. Format fully reverse-engineered from real K-Watch split files. _write_sws_split() rewritten: correct 2GB chunk size, correct data layout (all fill then all key, not interleaved), correct header patching (0x1A8 and 0x1B4 zeroed, 0x1CC set to final chunk size), correct filename format (01_OF_03._XX), streams directly to disk with no in-memory buffering. Also fixed uint32 overflow in build_sws_header() for files >4GB (0x1CC now capped at 0xFFFFFFFF -- patched correctly by _write_sws_split() anyway). Confirmed working on live Kahuna.
-8. **SWS to MOV conversion** -- Reverse conversion. Planned as a separate standalone app. All format knowledge in place from MacHuna reverse-engineering work.
+8. ~~**SWS to MOV / TGA conversion (Hula)**~~ -- DONE. Hula SWS Extractor built first as standalone app (DNSVision/Hula v0.1.0), then integrated into MacHuna v1.5.0. See Hula Integration section below.
 9. ~~**Manual reorder in batch convert**~~ -- Dropped. Alphabetical ordering is sufficient.
 10. ~~**Standalone preview viewer**~~ -- DONE. SWS Player built as companion app (DNSVision/SWSPlayer) and integrated into MacHuna in v1.4.0. All player code folded into machuna.py -- SWSHeader, PlayerFrameCache, PlayerAudio, numpy v210 decoder, composite and meter functions. tkinter and Pillow imports moved to top level to support the player classes.
 11. ~~**Integrate preview into main app**~~ -- DONE. SWS Player button added to top-right of Batch Convert row. Opens SWSPlayer as a non-modal tk.Toplevel child window. File picker opens at the configured Destination Folder. Multiple player windows can be open simultaneously. Closing the player does not affect MacHuna.
@@ -71,10 +71,53 @@ git push
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
 - Split file support in SWS Player (requires virtual multi-file stream abstraction and frame cap)
+- Sony MVS 50i TGA output in Hula -- see Hula Integration section below
 - ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
 
-### Separate Future Apps
-- SWS to MOV converter -- reverse conversion app, all format knowledge available from MacHuna work
+---
+
+## Hula Integration (v1.5.0)
+
+Hula is an SWS extractor -- the reverse of MacHuna. It converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS desks. It was developed first as a standalone app (`DNSVision/Hula`) then folded into MacHuna following the same pattern as SWS Player.
+
+### How it works in MacHuna
+
+- A "Hula" button sits in the Batch Convert row, to the left of the "SWS Player" button
+- Clicking it opens a `HulaWindow` -- a non-modal `tk.Toplevel` child window
+- The window is self-contained: destination folder, output target, clip name, file picker, convert button, log
+- Settings (`hula_dest`, `hula_target`, `hula_clip`) are persisted in the existing `~/.kwatch_settings.json` under `hula_` prefixed keys
+- The shared settings dict `s` is passed by reference to `HulaWindow` so it can update settings in place; `save_settings` is passed as a callback
+
+### Code structure in machuna.py
+
+All Hula code lives in a clearly marked section just above `launch_gui()`:
+
+- `HULA_TARGET_*` constants
+- `_HULA_OFF_*` header offset constants (read side only -- no write side needed)
+- `_HULA_STD_CODE_FPS` dict
+- `HulaSWSHeader` class -- parses the 512-byte SWS header for reading
+- `_hula_decode_frame()` -- decodes one frame pair using the existing `_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8` functions (no duplication)
+- `_hula_extract_audio_stereo()` -- extracts Ch0+Ch2 from SWS 16ch PCM as stereo temp file
+- `_hula_convert_tga()` -- converts one SWS to a TGA sequence subfolder
+- `_hula_convert_mov()` -- converts one SWS to a ProRes 4444 MOV
+- `_hula_run_batch()` -- batch dispatcher, called from worker thread
+- `HulaWindow` class -- the tkinter GUI
+
+### Output formats
+
+| Target | Format | Naming |
+|--------|--------|--------|
+| Kayenne MOV | ProRes 4444, embedded alpha, BT.709, audio if present | `0001.mov`, `0002.mov` ... flat in dest |
+| Kayenne TGA | 32-bit RGBA TGA | `0001.tga` onwards, subfolder per SWS |
+| Sony MVS TGA | 32-bit RGBA TGA | `0000XXXX.tga` onwards, subfolder per SWS |
+
+### Sony MVS 50i -- future work
+
+Older Sony MVS desks that do not support 50P require interlaced TGA sequences. In practice, productions often deliver 25P to these desks, which plays back with visible judder. Hula could optionally convert 50P SWS files to genuine 50i TGA sequences by interleaving lines from consecutive progressive frame pairs (field weaving). Field order is almost certainly BFF for PAL/50Hz but must be confirmed on real hardware before implementation. Full technical notes are in the Hula repo's `DEVELOPMENT_NOTES.md`.
+
+### Standalone Hula repo
+
+`DNSVision/Hula` remains active as a standalone app for operators who need Hula without MacHuna. The two codebases should be kept in sync -- if the Hula converters are updated in MacHuna, the equivalent changes should be ported back to `hula.py` in the standalone repo, and vice versa.
 
 ---
 
@@ -125,21 +168,10 @@ git push
 
 ### Playback Flags (offset 0x188, low byte)
 
-The low byte of the video standard code at 0x188 carries playback flags OR'd into the base standard value. Confirmed by hex analysis of K-Watch reference files across all four flag combinations.
-
 | Bit | Mask | Flag |
 |-----|------|------|
 | 2 | 0x04 | Auto Play |
 | 3 | 0x08 | Loop Play |
-
-Examples for 1080i50 base code 0x4923:
-
-| State | 0x188 value |
-|-------|-------------|
-| Neither | 0x00004923 |
-| Auto play only | 0x00004927 |
-| Loop play only | 0x0000492B |
-| Auto play + Loop play | 0x0000492F |
 
 ### v210 Encoding
 ffmpeg outputs v210 as little-endian 32-bit words. The Kahuna expects big-endian. Every 4-byte word must be byte-swapped after conversion via _byteswap_v210().
@@ -225,8 +257,8 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - ffmpeg path: Must point to real binary not Homebrew symlink (/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg). Symlinks confuse PyInstaller.
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
-- Settings persistence: Stored as JSON in ~/.kwatch_settings.json.
-- VERSION constant: Single `VERSION = "1.4.1"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
+- Settings persistence: Stored as JSON in ~/.kwatch_settings.json. Hula settings stored in same file under hula_ prefixed keys.
+- VERSION constant: Single `VERSION = "1.5.0"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
@@ -236,7 +268,8 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
 - SWS Player audio detection: uses `aud_offset > 0 AND aud_fmt == 0x03000000` (fields 0x1E8 and 0x1EC) rather than checking `aud_frame_size == 0x1680` (0x1C2). Confirmed by analysis of a third-party SWS file where 0x1C2 was 0x3EC0 -- audio was present and correctly located but the player was reporting no audio. The 0x1C2 field varies between workflows and is not a reliable audio detection indicator.
 - SWS Player integration: All player code lives in machuna.py above launch_gui(). Classes renamed to avoid any future collision: PlayerFrameCache, PlayerAudio. Decode functions prefixed _player_. The standalone sws_player.py repo (DNSVision/SWSPlayer) is now superseded for production use but retained as a reference. sounddevice is a gracefully-degraded dependency -- if not installed, HAS_AUDIO is False and the player opens without audio playback (meters still drawn, no sound).
-- tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer class can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
+- Hula integration: All Hula code lives in machuna.py in a clearly marked section just above launch_gui(). Classes and functions prefixed Hula/hula_ to avoid collision. The v210 decoder functions (_v210_plane_to_yuv, _yuv_to_rgb8, _yuv_to_gray8) are shared -- Hula reuses them directly without duplication.
+- tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer and HulaWindow classes can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
 
 ---
 
