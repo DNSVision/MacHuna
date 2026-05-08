@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.5.0
-**Status:** Alpha tested on a live Grass Valley Kahuna mainframe. Core conversion working correctly. Batch convert added and tested. Audio support confirmed working on live Kahuna. Auto play and Loop play flags implemented and verified by hex analysis of K-Watch reference files -- awaiting live Kahuna test. v1.5.1: Fix Sony MVS TGA naming convention (clip name prefix before frame number, e.g. WIPE0000.tga). v1.5.0: Hula SWS Extractor integrated as built-in tool (non-modal Toplevel, Hula button in Batch Convert row). v1.4.1: SWS Player audio detection fixed -- now uses aud_offset and aud_fmt fields rather than aud_frame_size, correctly detecting audio in third-party SWS files. v1.4.0: SWS Preview Player integrated as built-in Toplevel window. v1.3.0: Large file split (>4GB) implemented and confirmed working on live Kahuna. v1.2.1: TGA sequence conversion now writes a log file to the destination folder.
+**Current version:** v1.5.7
+**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.7: Stop button now kills ffmpeg immediately; Cancel Batch button added for Open Files batches. v1.5.5: Format variant field (0x18C) fixed -- 0x08 for interlaced, 0x18 for progressive. Previously hardcoded to 0x18, causing interlaced files to show as progressive on the Kahuna. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -141,7 +141,7 @@ Older Sony MVS desks that do not support 50P require interlaced TGA sequences. I
 | 0x148 | string | Creation timestamp |
 | 0x168 | string | Modified timestamp |
 | 0x188 | uint32 | Video standard code (includes playback flags -- see below) |
-| 0x18C | uint32 | FPS numerator |
+| 0x18C | uint32 | Format variant field. **0x08 for interlaced standards (1080i50, 1080i5994, 1080i60), 0x18 for all progressive standards.** Confirmed by hex analysis of K-Watch reference files (1080i50 = 0x08, 1080p50 = 0x18). Previously documented as "FPS numerator / always 0x18" -- this was incorrect and caused interlaced files to be misidentified as progressive on the Kahuna desk. |
 | 0x190 | uint32 | Width in pixels |
 | 0x194 | uint32 | Height in pixels |
 | 0x198 | uint32 | Height again |
@@ -160,11 +160,24 @@ Older Sony MVS desks that do not support 50P require interlaced TGA sequences. I
 
 | Code | Standard |
 |------|----------|
-| 0x00004923 | 1080i25, 1080p50 |
-| 0x00004921 | 1080i29.97 |
-| 0x00004925 | 1080p25 |
-| 0x00004817 | 720p50 |
-| 0x00004816 | 720p59.94 |
+| 0x00004923 | 1080i50, 1080p50 -- **confirmed** by hex analysis of K-Watch reference files |
+| 0x00004921 | 1080i29.97 -- estimated |
+| 0x00004925 | 1080p25 -- estimated |
+| 0x00004817 | 720p50 -- estimated |
+| 0x00004816 | 720p59.94 -- estimated |
+
+> **WARNING -- UNVERIFIED STANDARDS:** Only 1080i50 and 1080p50 have been confirmed against real K-Watch reference files and tested on a live Kahuna. All other standards (1080i29.97, 1080p25, 720p50, 720p59.94) use estimated values that have not been verified on hardware. Do not treat these as confirmed until tested. The format variant field (0x18C) pattern of 0x08=interlaced / 0x18=progressive is assumed to apply to all standards but has only been confirmed for 1080i50 and 1080p50.
+
+### Format Variant Field (offset 0x18C)
+
+**Confirmed by hex analysis of K-Watch reference files (2026-05-08):**
+
+| Value | Meaning |
+|-------|---------|
+| 0x08 | Interlaced standard (1080i50, 1080i5994, 1080i60) -- confirmed |
+| 0x18 | Progressive standard (all others) -- confirmed for 1080p50 |
+
+Previously documented as "FPS numerator, always 0x18". This was wrong -- the field encodes scan type, not frame rate. Using 0x18 for interlaced files caused the Kahuna to misidentify them as progressive (displayed as "1080p/50 A" rather than "1080i/50"). Fixed in v1.5.5.
 
 ### Playback Flags (offset 0x188, low byte)
 
@@ -173,7 +186,15 @@ Older Sony MVS desks that do not support 50P require interlaced TGA sequences. I
 | 2 | 0x04 | Auto Play |
 | 3 | 0x08 | Loop Play |
 
-### v210 Encoding
+### ffmpeg Process Tracking and Kill
+
+Added in v1.5.7. A global `_current_ffmpeg_proc` reference and `_ffmpeg_proc_lock` thread lock track the active ffmpeg subprocess. `_run_ffmpeg()` wraps `subprocess.Popen`, registers the process, and clears it on completion. `_kill_current_ffmpeg()` kills the process if one is running.
+
+Both Stop (watch folder) and Cancel Batch call `_kill_current_ffmpeg()`. This stops the current conversion immediately for long files (MOVs). For rapid TGA floods, the watch folder scan thread may have already queued additional files before Stop is pressed -- those will still convert. This is an acceptable limitation for the current use case.
+
+Note: killing ffmpeg mid-conversion raises `subprocess.CalledProcessError` with SIGKILL (returncode -9). The WatchService `_scan()` catches this as a general exception and logs it -- this is correct behaviour, not a bug.
+
+
 ffmpeg outputs v210 as little-endian 32-bit words. The Kahuna expects big-endian. Every 4-byte word must be byte-swapped after conversion via _byteswap_v210().
 
 ### Colour Space

@@ -113,9 +113,11 @@ Converted .SWS files are written here. The folder is created automatically if it
 | Auto play | Sets the Auto Play flag in the SWS header. The Kahuna will begin playback automatically when the clip is loaded. |
 | Loop play | Sets the Loop Play flag in the SWS header. The Kahuna will loop the clip continuously. |
 
-### 3.4 Start Watching / Stop
+### 3.4 Start Watching / Stop / Cancel Batch
 
-The Start Watching button launches the Watch Folder service. MacHuna monitors the Watch Folder in the background and converts files as they arrive. Click Stop to end the service.
+The Start Watching button launches the Watch Folder service. MacHuna monitors the Watch Folder in the background and converts files as they arrive. Click Stop to end the service -- this also kills any ffmpeg process currently running, stopping the current conversion immediately.
+
+The Cancel Batch button appears in the main button row and is enabled automatically when a batch conversion is running via Open Files. Clicking it kills the current ffmpeg process and stops the batch after that file. The conversion log is not written if the batch is cancelled.
 
 > **NOTE** The service continues running until Stop is clicked or the application is quit. Quitting MacHuna while the service is running will stop the service cleanly.
 

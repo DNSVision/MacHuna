@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.4"
+VERSION = "1.5.7"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -71,6 +71,9 @@ VIDEO_STANDARDS = {
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
+
+_current_ffmpeg_proc = None
+_ffmpeg_proc_lock = __import__('threading').Lock()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -153,8 +156,9 @@ def build_sws_header(source_filename: str,
     # 0x188  Video standard code (uint32 big-endian)
     struct.pack_into('>I', hdr, 0x188, std_code)
 
-    # 0x18C  Format variant field — always 0x18 (24) regardless of fps
-    struct.pack_into('>I', hdr, 0x18C, 0x18)
+    _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
+    _fmt_variant = 0x08 if video_standard in _interlaced_standards else 0x18
+    struct.pack_into('>I', hdr, 0x18C, _fmt_variant)
 
     # 0x190  Width (uint32 BE)
     struct.pack_into('>I', hdr, 0x190, width)
@@ -220,6 +224,28 @@ def _get_ffmpeg_path(binary: str = 'ffmpeg') -> str:
             return bundled
     return binary
 
+
+def _run_ffmpeg(cmd, capture_output=True, check=False):
+    import subprocess as _sp
+    global _current_ffmpeg_proc
+    with _ffmpeg_proc_lock:
+        proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE)
+        _current_ffmpeg_proc = proc
+    stdout, stderr = proc.communicate()
+    with _ffmpeg_proc_lock:
+        _current_ffmpeg_proc = None
+    result = _sp.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    if check and proc.returncode != 0:
+        raise _sp.CalledProcessError(proc.returncode, cmd, stdout, stderr)
+    return result
+
+def _kill_current_ffmpeg():
+    global _current_ffmpeg_proc
+    with _ffmpeg_proc_lock:
+        proc = _current_ffmpeg_proc
+    if proc is not None:
+        try: proc.kill()
+        except Exception: pass
 
 def check_ffmpeg():
     """Raise if ffmpeg is not found."""
@@ -298,7 +324,7 @@ def convert_to_v210(input_path: str, output_path: str,
         cmd_fill += ['-vf', f'scale={width}:{height},{vf_fill}']
     cmd_fill += ['-colorspace', 'bt709', '-color_range', 'tv', '-f', 'rawvideo', '-vcodec', 'v210', output_path]
 
-    subprocess.run(cmd_fill, capture_output=True, check=True)
+    _run_ffmpeg(cmd_fill, check=True)
     _byteswap_v210(output_path)
 
     if extract_alpha:
@@ -2246,10 +2272,14 @@ def launch_gui():
     frm4.pack(fill='x', **pad)
 
     service_ref = [None]
-    run_btn = ttk.Button(frm4, text="▶  Start Watching")
-    stop_btn = ttk.Button(frm4, text="⏹  Stop", state='disabled')
+    batch_cancel_event = threading.Event()  # set to request batch cancellation
+
+    run_btn    = ttk.Button(frm4, text="▶  Start Watching")
+    stop_btn   = ttk.Button(frm4, text="⏹  Stop", state='disabled')
+    cancel_btn = ttk.Button(frm4, text="✕  Cancel Batch", state='disabled')
     run_btn.pack(side='left', **pad)
     stop_btn.pack(side='left', **pad)
+    cancel_btn.pack(side='left', **pad)
 
     # ── Open Files / Batch Convert row ──
     frm5 = ttk.LabelFrame(root, text="Batch Convert")
@@ -2328,7 +2358,12 @@ def launch_gui():
             return
 
         def convert_dropped():
+            batch_cancel_event.clear()
+            root.after(0, lambda: cancel_btn.config(state='normal'))
             for i, path in enumerate(sorted(valid)):
+                if batch_cancel_event.is_set():
+                    log("Batch conversion cancelled.")
+                    break
                 fnum = start_num + i
                 ext = Path(path).suffix.lower()
                 try:
@@ -2358,6 +2393,7 @@ def launch_gui():
                     import traceback
                     log(f"  ERROR converting {Path(path).name}: {e}")
                     log(f"  {traceback.format_exc()}")
+            root.after(0, lambda: cancel_btn.config(state='disabled'))
 
         threading.Thread(target=convert_dropped, daemon=True).start()
 
@@ -2402,8 +2438,15 @@ def launch_gui():
             return
 
         def convert_batch():
+            batch_cancel_event.clear()
+            root.after(0, lambda: cancel_btn.config(state='normal'))
             results = []
+            cancelled = False
             for i, path in enumerate(valid):
+                if batch_cancel_event.is_set():
+                    log("Batch conversion cancelled.")
+                    cancelled = True
+                    break
                 fnum = start_num + i
                 ext = Path(path).suffix.lower()
                 try:
@@ -2429,8 +2472,10 @@ def launch_gui():
                     log(f"  {traceback.format_exc()}")
                     results.append((fnum, Path(path).stem, f'ERROR: {e}'))
 
+            root.after(0, lambda: cancel_btn.config(state='disabled'))
+
             # Write conversion log to destination folder
-            if results:
+            if results and not cancelled:
                 from datetime import datetime as dt
                 date_str = dt.now().strftime('%d-%m-%Y')
                 log_filename = f"MacHuna_Log_{date_str}.txt"
@@ -2455,6 +2500,13 @@ def launch_gui():
         threading.Thread(target=convert_batch, daemon=True).start()
 
     open_btn.config(command=open_files)
+
+    def cancel_batch():
+        batch_cancel_event.set()
+        log("Cancelling batch -- current file will complete before stopping.")
+        cancel_btn.config(state='disabled')
+
+    cancel_btn.config(command=cancel_batch)
 
     def start_watching():
         w = watch_var.get().strip()
@@ -2484,6 +2536,7 @@ def launch_gui():
         if service_ref[0]:
             service_ref[0].stop()
             service_ref[0] = None
+        _kill_current_ffmpeg()
         run_btn.config(state='normal')
         stop_btn.config(state='disabled')
         log("Service stopped.")

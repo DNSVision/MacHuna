@@ -4,6 +4,23 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.7 — 2026-05-08
+
+### Fixed
+- Stop button now kills the currently running ffmpeg process immediately, rather than waiting for the current file to complete. Effective for long MOV conversions; for rapid TGA floods the watch folder scan thread may have already queued additional files which will still complete.
+
+### Added
+- Cancel Batch button added to the main button row. Disabled by default, enables automatically when a batch conversion starts via Open Files. Kills the current ffmpeg process and stops after the current file. Conversion log is not written if the batch is cancelled.
+
+---
+
+## v1.5.5 — 2026-05-08
+
+### Fixed
+- Format variant field at header offset 0x18C now correctly set to 0x08 for interlaced standards (1080i50, 1080i5994, 1080i60) and 0x18 for progressive standards. Previously hardcoded to 0x18 regardless of standard, causing interlaced files to be identified as progressive on the Kahuna desk. Confirmed by hex analysis of K-Watch reference files.
+
+---
+
 ## v1.5.4 — 2026-05-07
 
 ### Fixed

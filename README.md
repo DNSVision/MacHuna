@@ -21,7 +21,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Built-in Hula SWS Extractor -- converts .SWS files back to Kayenne MOV, Kayenne TGA, or Sony MVS TGA format, launched directly from the MacHuna window
-- Batch convert with file picker and auto-incrementing file numbers
+- Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
 - Watch folder service runs in background
 - Settings remembered between sessions
@@ -76,7 +76,8 @@ MacHuna will convert files automatically as they appear and log progress in the 
 2. Set your start number in the Batch Convert section
 3. Click Open Files and select MOV, MP4 or still image files
 4. Files are converted in alphabetical order with auto-incrementing numbers
-5. A conversion log is written to the destination folder after each batch
+5. Click Cancel Batch at any time to stop after the current file completes
+6. A conversion log is written to the destination folder after each completed batch
 
 For TGA sequences, use the Watch Folder service -- batch convert does not support sequences.
 
