@@ -365,16 +365,21 @@ def convert_to_v210(input_path: str, output_path: str,
     if extract_alpha:
         alpha_path = output_path + '.alpha.raw'
         # Extract alpha, convert to clean limited-range luma (64=black, 940=white)
-        # Use scale2ref to map 0-255 alpha to 64-940 luma range
+        # vf_extra (e.g. tinterlace) must be appended so key frame count matches fill.
+        vf_key = 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv'
+        if vf_extra:
+            vf_key += f',{vf_extra}'
         cmd_key = [ffmpeg, '-y', '-i', input_path,
-                   '-vf', 'alphaextract,format=yuv420p,colorspace=bt709,'
-                          'scale=out_range=tv',
+                   '-vf', vf_key,
                    '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
         result = _run_ffmpeg(cmd_key)
         if result.returncode != 0 or not os.path.exists(alpha_path) or os.path.getsize(alpha_path) == 0:
             # Simpler fallback
+            vf_key_fallback = 'alphaextract'
+            if vf_extra:
+                vf_key_fallback += f',{vf_extra}'
             cmd_key = [ffmpeg, '-y', '-i', input_path,
-                       '-vf', 'alphaextract',
+                       '-vf', vf_key_fallback,
                        '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
             _run_ffmpeg(cmd_key, check=True)
         _byteswap_v210(alpha_path)
@@ -724,6 +729,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             actual_key = os.path.join(tmp, 'key.v210')
             _generate_white_key(fill_raw, actual_key)
 
+        # v210 plane_size is exact from dimensions: ceil(width/6)*16*height
+        # Derive actual frame count from file size -- more reliable than ffprobe estimate,
+        # especially after tinterlace which may output a different count than frame_count//2.
+        plane_size         = ((w + 5) // 6) * 16 * h
+        output_frame_count = os.path.getsize(fill_raw) // plane_size
+
         # Extract audio if requested and present
         if will_include_audio:
             audio_path = os.path.join(tmp, 'audio.pcm')
@@ -733,8 +744,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             else:
                 log(f"  Audio extraction failed -- writing without audio")
 
-        plane_size = os.path.getsize(fill_raw) // output_frame_count
-        src_name   = os.path.basename(input_path)
+        src_name = os.path.basename(input_path)
         clip_name  = Path(input_path).stem  # use filename stem as clip name
 
         hdr = build_sws_header(

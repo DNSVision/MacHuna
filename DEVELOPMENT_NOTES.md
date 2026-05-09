@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.5.17
-**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.17: Interlaced standard codes corrected (0xc923 for all interlaced, 0x8000 = interlaced flag). v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
+**Current version:** v1.5.18
+**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.18: P→I transcoding via tinterlace (TFF, unconfirmed on 1080i hardware). v1.5.17: Interlaced standard codes corrected (0xc923 for all interlaced, 0x8000 = interlaced flag). v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -288,30 +288,29 @@ Note: The Audio Spec.pdf was written before full hex analysis and incorrectly st
 ## Format Transcoding (Progressive → Interlaced)
 
 ### Status
-Not yet implemented. All analysis complete. One hardware confirmation needed before coding begins.
+Implemented in v1.5.18. Field order TFF — consistent with SMPTE spec for 1080i HD, unconfirmed on a 1080i Kahuna setup. Tested on 1080P Kahuna only (see Hardware Test below).
 
 ### What it does
-Allows a progressive source (e.g. 1080p/50 MOV) to be correctly converted to an interlaced SWS (e.g. 1080i/50) rather than just storing progressive data in an interlaced wrapper (which plays at double speed on the Kahuna).
+When a progressive source is converted to an interlaced standard, MacHuna uses the ffmpeg `tinterlace` filter to weave pairs of progressive frames into genuine interlaced frames rather than storing progressive data in an interlaced wrapper (which played at double speed on the Kahuna).
 
 ### How it works
-ffmpeg `tinterlace` filter weaves pairs of progressive frames into a single interlaced frame:
-- Two progressive frames (e.g. frame 1 and frame 2) → one interlaced frame with alternating fields
-- Source frame count halves: a 50-frame 1080p/50 clip becomes 25-frame 1080i/50
+- `tinterlace=mode=interleave_top` (TFF): odd lines from frame N, even lines from frame N+1
+- Frame count halves: 60 frames at 50fps → 30 frames at 25fps for 1080i/50
+- plane_size derived from width/height formula `((w+5)//6)*16*h` — more reliable than ffprobe frame count estimate
+- Actual output_frame_count derived from fill file size after conversion — accounts for any ffprobe inaccuracy
+- Key extraction (alpha channel) also applies tinterlace — both fill and key must match frame count
 
-The ffmpeg flag is either:
-- `-vf tinterlace=mode=interleave_top` for Top Field First (TFF)
-- `-vf tinterlace=mode=interleave_bottom` for Bottom Field First (BFF)
+### Hardware test (2026-05-09, 1080P Kahuna)
+- File loaded in normal time (~30 seconds, vs 8+ minutes with the mismatched key bug)
+- Playback showed tell-tale interlacing on a 1080P output — expected, not an error
+- Pausing mid-clip showed dithering between fields — confirms the two fields are genuinely temporally distinct (correct tinterlace behaviour, not a progressive wrapper)
+- **Field order TFF unconfirmed** — cannot assess TFF vs BFF on a 1080P Kahuna. Needs test on a 1080i setup: wrong field order shows as motion going the wrong direction on moving content.
 
-### The last unknown: field order
-BFF vs TFF must be confirmed on a live Kahuna before implementing. Wrong field order produces "comb teeth" artefacts on the desk rather than clean interlacing. PAL HD interlaced (SMPTE) is typically TFF, but Kahuna-specific behaviour must be verified. The confirmation test is: convert a short known-progressive clip with MacHuna using tinterlace, play on the Kahuna, observe whether it looks clean (correct) or combed (wrong order).
+### To confirm field order
+Load the MacHuna P→I output on a Kahuna running in 1080i/50. Play content with clear horizontal motion. Clean motion = TFF correct. Motion artefacts/reversed = switch to `interleave_bottom` (one-character change in `convert_clip`).
 
-### Implementation scope (~50–80 lines)
-The current P-to-I mismatch warning in `build_sws_header` is already the hook:
-1. Replace warning with actual conversion: add the tinterlace filter to the ffmpeg call when source is progressive and output standard is interlaced
-2. Calculate frame count from woven output (source_frames ÷ 2)
-3. Header fields use the target standard's std_code and fmt_variant as normal
-
-No architectural change needed. The interlaced detection via ffprobe `field_order` (added in v1.5.8) is already in place.
+### Key implementation bug fixed in v1.5.18
+When source has an alpha channel (`has_alpha=True`), the key extraction command in `convert_to_v210` has its own `-vf alphaextract,...` chain. The tinterlace filter must be appended to this chain too — otherwise fill=30 frames but key=60 frames, producing a 497MB file instead of 332MB and causing the Kahuna to load slowly or fail. Both the primary and fallback key extraction paths now include `vf_extra`.
 
 ---
 

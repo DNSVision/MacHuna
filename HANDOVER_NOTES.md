@@ -95,7 +95,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.17
+- **MacHuna:** v1.5.18
 - **Hula:** v0.1.1
 
 ---
@@ -273,7 +273,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ## Roadmap
 
 ### MacHuna
-- **Format transcoding (P→I):** Convert progressive source to genuine interlaced SWS via ffmpeg `tinterlace` filter. All analysis done (see DEVELOPMENT_NOTES.md "Format Transcoding" section). Implementation is ~50-80 lines. The one remaining unknown is field order (BFF vs TFF) — must be confirmed on a live Kahuna before coding. Test: convert a short known-progressive clip with MacHuna using tinterlace, play on desk, observe clean vs combed image. Once confirmed, the mismatch warning is replaced with real conversion.
+- **Format transcoding (P→I) field order confirmation:** Implemented in v1.5.18 using TFF (SMPTE standard for 1080i HD). Tested on a 1080P Kahuna — file loaded correctly, genuine interlaced fields confirmed. Field order TFF vs BFF cannot be assessed on a 1080P desk. Next test: load MacHuna P→I output on a 1080i/50 Kahuna and check for clean motion. If motion artefacts, change `interleave_top` → `interleave_bottom` in `convert_clip` (one word). See DEVELOPMENT_NOTES.md "Format Transcoding" section.
 - Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
 - Ignore Alpha behaviour for TGA sequences - fixed in v1.5.11
 - TGA in Batch Convert - clarify single-frame only, or detect sequences and warn
