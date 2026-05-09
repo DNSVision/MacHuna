@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.7"
+VERSION = "1.5.9"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -51,23 +51,21 @@ SWS_COPYRIGHT   = b'Copyright (c) : Grass Valley 2021'
 SWS_HEADER_SIZE = 512
 
 # Video standard codes (offset 0x188 in header)
-# Both 1080i50 and 1080p50 confirmed as 0x4923
-# FPS field at 0x18C is always 0x18 (24) regardless of actual frame rate
+# Video standard codes confirmed by hex analysis of K-Watch reference files (2026-05-09).
+# Both 0x188 (standard code) and 0x18C (format variant) confirmed for all listed standards.
+# 1080i/59.94 uniquely uses 0xc923 -- the 0x8000 bit appears to flag drop-frame timing.
+# Unverified standards (1080p29.97, 1080p30, 2160p variants) removed from dropdown pending
+# confirmation against K-Watch reference files. See DEVELOPMENT_NOTES.md roadmap.
 VIDEO_STANDARDS = {
-    '1080i50':   0x4923,   # confirmed
-    '1080i5994': 0x4923,   # estimated
-    '1080i60':   0x4923,   # estimated
-    '1080p25':   0x4923,   # estimated
-    '1080p50':   0x4923,   # confirmed
-    '1080p2997': 0x4923,   # estimated
-    '1080p30':   0x4923,   # estimated
-    '1080p5994': 0x4923,   # estimated
-    '1080p60':   0x4923,   # estimated
-    '720p50':    0x4813,   # estimated
-    '720p5994':  0x4814,   # estimated
-    '2160p25':   0x5923,   # estimated
-    '2160p50':   0x5923,   # estimated
-    '2160p2997': 0x5923,   # estimated
+    '1080i50':   0x4923,   # confirmed -- 0x18C = 0x08
+    '1080i5994': 0xc923,   # confirmed -- 0x18C = 0x05
+    '1080i60':   0x4923,   # confirmed -- 0x18C = 0x04
+    '1080p25':   0x4923,   # confirmed -- 0x18C = 0x13
+    '1080p50':   0x4923,   # confirmed -- 0x18C = 0x18
+    '1080p5994': 0x4923,   # confirmed -- 0x18C = 0x17
+    '1080p60':   0x4923,   # confirmed -- 0x18C = 0x16
+    '720p50':    0x4923,   # confirmed -- 0x18C = 0x10
+    '720p5994':  0x4923,   # confirmed -- 0x18C = 0x0f
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -268,7 +266,7 @@ def get_video_info(input_path: str) -> dict:
     import json
     data = json.loads(result.stdout)
 
-    info = {'width': 0, 'height': 0, 'fps': 25.0, 'frame_count': 1, 'has_alpha': False, 'has_audio': False}
+    info = {'width': 0, 'height': 0, 'fps': 25.0, 'frame_count': 1, 'has_alpha': False, 'has_audio': False, 'is_interlaced': False}
 
     for stream in data.get('streams', []):
         if stream.get('codec_type') == 'video':
@@ -296,6 +294,10 @@ def get_video_info(input_path: str) -> dict:
             info['has_alpha'] = 'a' in pix_fmt or pix_fmt in (
                 'rgba', 'bgra', 'yuva420p', 'yuva422p', 'yuva444p'
             )
+
+            # Interlace detection
+            field_order = stream.get('field_order', 'progressive')
+            info['is_interlaced'] = field_order not in ('progressive', 'unknown', '')
             # TGA files always have alpha in our use case
             if input_path.lower().endswith('.tga'):
                 info['has_alpha'] = True
@@ -586,6 +588,12 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
     log(f"Converting still: {os.path.basename(input_path)}")
     info = get_video_info(input_path)
     w, h = info['width'], info['height']
+    _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
+    if video_standard in _interlaced_standards and not info['is_interlaced']:
+        log(f"  WARNING: Source is progressive but {video_standard} is an interlaced standard.")
+        log(f"  The header will be correct but the video data will remain progressive.")
+        log(f"  On the Kahuna this will play back at double speed.")
+        log(f"  For correct interlaced output, use a native interlaced source or convert via K-Watch.")
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_raw = os.path.join(tmp, 'fill.v210')
@@ -647,6 +655,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     info = get_video_info(input_path)
     w, h, fps = info['width'], info['height'], info['fps']
     frame_count = info['frame_count']
+    _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
+    if video_standard in _interlaced_standards and not info['is_interlaced']:
+        log(f"  WARNING: Source is progressive but {video_standard} is an interlaced standard.")
+        log(f"  The header will be correct but the video data will remain progressive.")
+        log(f"  On the Kahuna this will play back at double speed.")
+        log(f"  For correct interlaced output, use a native interlaced source or convert via K-Watch.")
 
     has_alpha = info['has_alpha'] and not ignore_alpha
     will_include_audio = include_audio and info['has_audio']
