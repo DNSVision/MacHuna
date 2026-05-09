@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.10 — 2026-05-09
+
+### Fixed
+- Format variant field (0x18C) now uses a confirmed per-standard lookup table (`FORMAT_VARIANTS`) instead of the simple interlaced/progressive logic from v1.5.5. The v1.5.8 analysis had confirmed the correct values for all nine standards but the code was not updated at that time. Standards affected: 1080i/59.94 (0x05), 1080i/60 (0x04), 1080p/25 (0x13), 1080p/59.94 (0x17), 1080p/60 (0x16), 720p/50 (0x10), 720p/59.94 (0x0f). Values for 1080i/50 (0x08) and 1080p/50 (0x18) were already correct.
+
+---
+
 ## v1.5.9 — 2026-05-09
 
 ### Changed

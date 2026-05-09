@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.9"
+VERSION = "1.5.10"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -57,15 +57,29 @@ SWS_HEADER_SIZE = 512
 # Unverified standards (1080p29.97, 1080p30, 2160p variants) removed from dropdown pending
 # confirmation against K-Watch reference files. See DEVELOPMENT_NOTES.md roadmap.
 VIDEO_STANDARDS = {
-    '1080i50':   0x4923,   # confirmed -- 0x18C = 0x08
-    '1080i5994': 0xc923,   # confirmed -- 0x18C = 0x05
-    '1080i60':   0x4923,   # confirmed -- 0x18C = 0x04
-    '1080p25':   0x4923,   # confirmed -- 0x18C = 0x13
-    '1080p50':   0x4923,   # confirmed -- 0x18C = 0x18
-    '1080p5994': 0x4923,   # confirmed -- 0x18C = 0x17
-    '1080p60':   0x4923,   # confirmed -- 0x18C = 0x16
-    '720p50':    0x4923,   # confirmed -- 0x18C = 0x10
-    '720p5994':  0x4923,   # confirmed -- 0x18C = 0x0f
+    '1080i50':   0x4923,   # confirmed
+    '1080i5994': 0xc923,   # confirmed -- 0x8000 bit flags drop-frame timing
+    '1080i60':   0x4923,   # confirmed
+    '1080p25':   0x4923,   # confirmed
+    '1080p50':   0x4923,   # confirmed
+    '1080p5994': 0x4923,   # confirmed
+    '1080p60':   0x4923,   # confirmed
+    '720p50':    0x4923,   # confirmed
+    '720p5994':  0x4923,   # confirmed
+}
+
+# Format variant field (0x18C) -- Kahuna internal standard index, confirmed by
+# hex analysis of K-Watch reference files (2026-05-09). Not a flags field.
+FORMAT_VARIANTS = {
+    '1080i50':   0x08,   # confirmed
+    '1080i5994': 0x05,   # confirmed
+    '1080i60':   0x04,   # confirmed
+    '1080p25':   0x13,   # confirmed
+    '1080p50':   0x18,   # confirmed
+    '1080p5994': 0x17,   # confirmed
+    '1080p60':   0x16,   # confirmed
+    '720p50':    0x10,   # confirmed
+    '720p5994':  0x0f,   # confirmed
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -154,9 +168,7 @@ def build_sws_header(source_filename: str,
     # 0x188  Video standard code (uint32 big-endian)
     struct.pack_into('>I', hdr, 0x188, std_code)
 
-    _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
-    _fmt_variant = 0x08 if video_standard in _interlaced_standards else 0x18
-    struct.pack_into('>I', hdr, 0x18C, _fmt_variant)
+    struct.pack_into('>I', hdr, 0x18C, FORMAT_VARIANTS.get(video_standard, 0x18))
 
     # 0x190  Width (uint32 BE)
     struct.pack_into('>I', hdr, 0x190, width)
