@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.11 — 2026-05-09
+
+### Fixed
+- `convert_tga_sequence`: Ignore alpha/key option now correctly omits the key plane entirely when ticked, matching the behaviour of `convert_still` and `convert_clip`. Previously, ticking Ignore alpha on a TGA sequence would still generate a white key plane. Header fields 0x1A8 and 0x1B4 are now correctly zeroed when no key plane is written.
+
+---
+
 ## v1.5.10 — 2026-05-09
 
 ### Fixed

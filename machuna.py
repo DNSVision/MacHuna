@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.10"
+VERSION = "1.5.11"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -767,7 +767,10 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         # Key/alpha
         actual_key = None
-        if has_alpha:
+        if ignore_alpha:
+            # No key plane written at all -- matches K-Watch behaviour
+            actual_key = None
+        elif has_alpha:
             key_raw = os.path.join(tmp, 'key.v210')
             cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                        '-i', concat_file,
@@ -804,6 +807,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
+            has_key=(actual_key is not None),
             auto_play=auto_play,
             loop_play=loop_play,
         )
