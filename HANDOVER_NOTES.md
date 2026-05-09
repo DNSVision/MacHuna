@@ -6,27 +6,24 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Recent Session Notes (May 2026)
 
-### Development Workflow Discussion
-David's current workflow (describe → Claude writes code → patch via terminal script → test via `python3.12 machuna.py --gui`) was questioned by friends who suggested VS Code, Claude Code, Cursor or Zed as alternatives. Key points:
+### Development Workflow (updated)
+David now uses Claude Code CLI directly. Claude has full file system access and can read, edit, and commit files without patch scripts. The old patch script workaround is no longer needed. Test command remains `python3.12 ~/Developer/MacHuna/machuna.py --gui`.
 
-- BennyWebb's argument: integrated workspace with direct file access, no copy/paste, auto GitHub commits is a genuine workflow improvement
-- jeem suggested Claude Code in terminal as lowest-friction upgrade - keeps simplicity, gains file/system access
-- **Action deferred - to be revisited**
-- **Immediate free win regardless of tooling: rename HANDOVER_NOTES.md to CLAUDE.md and save in repo root** - agentic tools pick this up automatically after each session
+### Code Review Fixes (v1.5.10-v1.5.13, May 2026)
+A comprehensive code review was conducted at the start of this session. Four bugs were found and fixed:
 
-**Important note on file delivery:** Downloads from Claude sessions do not always land reliably in ~/Downloads on David's Mac due to iCloud Drive behaviour. The reliable approach is to deliver changes as terminal patch scripts (python3.12 << 'PATCHSCRIPT' ... PATCHSCRIPT) that modify the file in place. This has been tested and works. Do not rely on file downloads.
+1. **Format variant (0x18C) wrong for 7 of 9 standards - fixed in v1.5.10.** The v1.5.8 reverse engineering confirmed the correct per-standard values but the code was never updated - it still used the v1.5.5 simple interlaced/progressive logic. A `FORMAT_VARIANTS` dict now maps each standard to its confirmed value. A `FORMAT_VARIANT_FPS` reverse lookup was also added (used by fixes 3 and 4 below).
 
-### Independent Code Review (May 2026)
-A code review was conducted (MacHuna_Code_Review.pdf). Key findings:
+2. **Ignore alpha not respected for TGA sequences - fixed in v1.5.11.** `convert_tga_sequence` was always generating a white key plane when `ignore_alpha=True` instead of omitting the key plane entirely. Also fixed the missing `has_key` argument in its `build_sws_header` call.
 
-**High priority - addressed:**
-1. Video standard codes - format variant field at 0x18C was wrong for interlaced (fixed in v1.5.5 - see below)
-2. Ignore Alpha behaviour for TGA sequences - may generate a white key plane when Ignore Alpha is enabled, rather than omitting the key plane entirely. **Not yet fixed - still needs investigation.**
+3. **Stop/Cancel could not kill ffmpeg during audio extraction or TGA sequence conversion - fixed in v1.5.12.** Several ffmpeg calls were using `subprocess.run` directly instead of the `_run_ffmpeg` wrapper, making them invisible to `_kill_current_ffmpeg()`. All ffmpeg calls now go through the wrapper.
 
-**Medium priority:**
-3. Batch Convert allows .tga selection - technically valid for single-frame stills but could confuse operators trying to process sequences. Options: clarify in UI, detect probable sequences and warn, or restrict entirely.
-4. SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix for now.
-5. Single-file architecture - machuna.py contains conversion engine, header builder, GUI, watch service, audio, SWS Player, Hula, settings, CLI. Suggested future modularisation: sws.py, player.py, hula.py, audio.py, gui.py. Not urgent.
+4. **SWSPlayer and Hula reported wrong fps for most standards - fixed in v1.5.13.** Both header parsers were looking up fps from the standard code (0x188), but eight standards share code 0x4923 so the lookup was ambiguous. Both now read the format variant (0x18C) first and use `FORMAT_VARIANT_FPS` for an unambiguous lookup, with the old standard code lookup retained as fallback for third-party files.
+
+**Remaining medium priority items from the review:**
+- Batch Convert allows .tga selection - technically valid for single-frame stills but could confuse operators trying to process sequences. Options: clarify in UI, detect probable sequences and warn, or restrict entirely.
+- SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix for now.
+- Single-file architecture - machuna.py contains conversion engine, header builder, GUI, watch service, audio, SWS Player, Hula, settings, CLI. Suggested future modularisation: sws.py, player.py, hula.py, audio.py, gui.py. Not urgent.
 
 **Positive findings:** Header builder, split-file streaming, audio channel mapping and pan filter all specifically praised.
 
@@ -104,7 +101,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.9
+- **MacHuna:** v1.5.13
 - **Hula:** v0.1.1
 
 ---
@@ -274,7 +271,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 - PortAudio AUHAL errors in terminal when running as script on macOS 26 beta - harmless, invisible in built .app
 - macOS 26 beta / Homebrew PortAudio instability - not worth investigating until macOS 26 goes final
 - Auto Play / Loop flags - do not trigger on hardware, but K-Watch files also fail - not a MacHuna bug
-- Ignore Alpha / TGA sequences - may generate white key plane rather than omitting key entirely. Needs investigation.
+- Ignore Alpha / TGA sequences - fixed in v1.5.11. Now correctly omits key plane when Ignore Alpha is ticked.
 - Stop during rapid TGA flood - kills current ffmpeg but already-queued files may still convert. Acceptable limitation.
 
 ---
@@ -284,7 +281,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ### MacHuna
 - Genuine interlaced output via ffmpeg `tinterlace` filter - converts progressive source to proper interlaced pixel data when an interlaced standard is selected. Field order almost certainly BFF for PAL/50Hz but must be confirmed on hardware before implementing.
 - Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
-- Ignore Alpha behaviour for TGA sequences - revalidate and fix if needed (code review high priority item, still open)
+- Ignore Alpha behaviour for TGA sequences - fixed in v1.5.11
 - TGA in Batch Convert - clarify single-frame only, or detect sequences and warn
 - HLG Rec.2020 colour space option (requires a real HLG .SWS file to verify)
 - Split file support in SWS Preview Player
