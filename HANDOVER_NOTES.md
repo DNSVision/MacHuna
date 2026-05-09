@@ -95,7 +95,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.18
+- **MacHuna:** v1.5.19
 - **Hula:** v0.1.1
 
 ---
