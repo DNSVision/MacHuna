@@ -33,7 +33,25 @@ A code review was conducted (MacHuna_Code_Review.pdf). Key findings:
 ### Auto Play / Loop Flags
 Tested on real Kahuna hardware - Auto Play and Auto Play & Loop flags do not trigger expected behaviour. Crucially, the same files converted by K-Watch also fail to trigger the behaviour. Conclusion: MacHuna is correctly matching K-Watch output. The operational purpose of these flags is unclear - may require GPI trigger, specific store configuration, or particular firmware. Parked pending further investigation.
 
-### Format Standards - 0x18C Fix (v1.5.5)
+### Video Standard Codes - Full Verification (v1.5.8/v1.5.9, May 2026)
+This was a major reverse engineering session. All nine supported video standards were verified by running K-Watch on Parallels and hex-dumping the output headers. Key findings:
+
+- Both 0x188 (standard code) AND 0x18C (format variant) must be set correctly - we previously only knew 0x188
+- 0x18C is NOT a simple interlaced/progressive flag - it is an index into the Kahuna's internal standard table
+- 1080i/59.94 uniquely uses standard code 0xc923 (not 0x4923) - the 0x8000 bit appears to flag drop-frame timing
+- Full confirmed table in DEVELOPMENT_NOTES.md
+
+**How to verify a new standard:** Convert any file in K-Watch with the target standard. Run `xxd -l 512 output.SWS` and read 0x188 (4 bytes) and 0x18C (4 bytes).
+
+**K-Watch behaviour notes:**
+- K-Watch can transcode from any source standard to any output standard
+- K-Watch requires a full restart when changing output standards - otherwise conversions fail or error
+- K-Watch is unreliable with still images (TGA stills often fail to convert)
+- K-Watch on Parallels on M1 takes several minutes per 60-frame clip
+
+**Unverified standards removed from dropdown (v1.5.9):** 1080p/29.97, 1080p/30, 2160p variants. These need K-Watch reference files before being added back.
+
+**Progressive-to-interlaced warning (v1.5.8):** MacHuna now detects source scan type via ffprobe `field_order` field and logs a warning if a progressive source is converted to an interlaced standard. The file will load on the Kahuna but play at double speed. Genuine interlaced output requires the ffmpeg `tinterlace` filter - deferred to roadmap.
 **Critical discovery confirmed by hex analysis of K-Watch reference files:**
 
 - Offset 0x18C (format variant field) was previously hardcoded to 0x18 in MacHuna
@@ -86,7 +104,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.7
+- **MacHuna:** v1.5.9
 - **Hula:** v0.1.1
 
 ---
@@ -208,7 +226,8 @@ git push
 - Batch Convert - file picker for MOVs and stills
 - Cancel Batch button - kills current ffmpeg and stops batch after current file
 - Stop button - stops watch folder service AND kills current ffmpeg immediately
-- Video standards: 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94
+- Video standards: all nine confirmed by K-Watch hex analysis -- 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94
+- Progressive-to-interlaced mismatch warning logged automatically
 - Input formats: MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG
 - Fill and key planes encoded as v210 big-endian
 - Ignore alpha/key option
@@ -263,10 +282,10 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ## Roadmap
 
 ### MacHuna
+- Genuine interlaced output via ffmpeg `tinterlace` filter - converts progressive source to proper interlaced pixel data when an interlaced standard is selected. Field order almost certainly BFF for PAL/50Hz but must be confirmed on hardware before implementing.
+- Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
 - Ignore Alpha behaviour for TGA sequences - revalidate and fix if needed (code review high priority item, still open)
 - TGA in Batch Convert - clarify single-frame only, or detect sequences and warn
-- Progressive/interlaced mismatch warning popup (ffprobe data already available - if source is progressive but interlaced standard selected, warn user)
-- Verify video standard codes for non-1080p50/1080i50 standards against hardware
 - HLG Rec.2020 colour space option (requires a real HLG .SWS file to verify)
 - Split file support in SWS Preview Player
 
@@ -306,11 +325,22 @@ David has discussed potentially rewriting MacHuna as a native Swift/SwiftUI app 
 - Audio detection: use aud_offset > 0 AND aud_fmt == 0x03000000. Do NOT use 0x1C2 - unreliable.
 - Full header reference in DEVELOPMENT_NOTES.md
 
-### Header Field 0x18C (Format Variant)
-- **0x08 = interlaced** (confirmed for 1080i50 by K-Watch hex analysis)
-- **0x18 = progressive** (confirmed for 1080p50 by K-Watch hex analysis)
-- All other standards assumed to follow same pattern but unverified on hardware
-- Previously documented as "always 0x18" - this was wrong and caused interlaced files to show as progressive on Kahuna
+### Video Standard Codes - All Confirmed
+Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
+
+| Standard | 0x188 | 0x18C |
+|---|---|---|
+| 1080i/50 | `0x4923` | `0x08` |
+| 1080i/59.94 | `0xc923` | `0x05` |
+| 1080i/60 | `0x4923` | `0x04` |
+| 1080p/25 | `0x4923` | `0x13` |
+| 1080p/50 | `0x4923` | `0x18` |
+| 1080p/59.94 | `0x4923` | `0x17` |
+| 1080p/60 | `0x4923` | `0x16` |
+| 720p/50 | `0x4923` | `0x10` |
+| 720p/59.94 | `0x4923` | `0x0f` |
+
+0x18C is a Kahuna internal standard index, not a flags field. Do not assume values for unverified standards.
 
 ### v210 Decode
 - ffmpeg 7.x has a confirmed bug decoding v210 from raw files (returncode 69). Never use ffmpeg for v210 decode.

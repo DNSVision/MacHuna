@@ -40,7 +40,7 @@ MacHuna also includes two built-in tools accessible from the main window:
 |---|---|
 | macOS | Apple Silicon (M-series). macOS 12 or later. |
 | ffmpeg | Bundled inside the .app. No separate installation required. |
-| Video standards | 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and others |
+| Video standards | 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all confirmed against K-Watch reference files |
 | Input formats | MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG stills |
 | Output format | .SWS (Grass Valley Kahuna native) |
 
@@ -105,7 +105,7 @@ Converted .SWS files are written here. The folder is created automatically if it
 
 | Setting | Description |
 |---|---|
-| Video Standard | Select the target video standard. 1080i50 is the most common for UK/European broadcast. This must match the Kahuna's operating standard. |
+| Video Standard | Select the target video standard. 1080p/50 is the most common for UK/European broadcast. All listed standards have been confirmed against K-Watch reference files. If you select an interlaced standard with a progressive source, MacHuna will log a warning -- see Progressive to Interlaced note below. |
 | Split >4GB (FAT32) | Enabled by default. Files larger than 4GB are automatically split into 2GB chunks in the K-Watch split file format. Required for FAT32-formatted USB drives. |
 | Delete source after conversion | If ticked, the source file is deleted after a successful conversion. Off by default. |
 | Ignore alpha/key | If ticked, no key plane is written. The .SWS file contains fill only, with header fields zeroed to match K-Watch no-alpha behaviour. Use for fill-only content. |
@@ -120,6 +120,8 @@ The Start Watching button launches the Watch Folder service. MacHuna monitors th
 The Cancel Batch button appears in the main button row and is enabled automatically when a batch conversion is running via Open Files. Clicking it kills the current ffmpeg process and stops the batch after that file. The conversion log is not written if the batch is cancelled.
 
 > **NOTE** The service continues running until Stop is clicked or the application is quit. Quitting MacHuna while the service is running will stop the service cleanly.
+
+> **NOTE — Progressive to Interlaced Conversion:** MacHuna can write an interlaced header for any source file, but it cannot currently produce genuine interlaced pixel data from a progressive source. If you select an interlaced standard (1080i/50, 1080i/59.94, 1080i/60) and the source is progressive, MacHuna will log a warning and continue. The resulting file will load on the Kahuna but will play back at double speed. For correct interlaced output, use a native interlaced source file or convert via K-Watch.
 
 ---
 

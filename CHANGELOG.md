@@ -4,6 +4,26 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.9 — 2026-05-09
+
+### Changed
+- Video standards dropdown now shows only confirmed standards. Unverified standards (1080p29.97, 1080p30, 2160p variants) removed pending verification against K-Watch reference files.
+
+---
+
+## v1.5.8 — 2026-05-09
+
+### Fixed
+- Video standard codes (0x188) and format variant values (0x18C) fully confirmed by hex analysis of K-Watch reference files for all nine supported standards. Previous values for 1080i59.94, 1080i60, 1080p25, 1080p59.94, 1080p60, 720p50, and 720p59.94 were estimated and have now been replaced with confirmed values.
+- 1080i/59.94 correctly uses standard code 0xc923 (not 0x4923) -- the 0x8000 bit appears to flag drop-frame timing.
+- Format variant field (0x18C) is now a full confirmed lookup table rather than a simple interlaced/progressive flag.
+
+### Added
+- Progressive-to-interlaced mismatch warning. When an interlaced output standard is selected but the source file is detected as progressive, MacHuna logs a clear warning explaining that the video data will remain progressive and will play back at double speed on the Kahuna. Recommends using a native interlaced source or K-Watch for correct interlaced output.
+- Interlaced source detection via ffprobe `field_order` field added to `get_video_info()`.
+
+---
+
 ## v1.5.7 — 2026-05-08
 
 ### Fixed

@@ -22,7 +22,8 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Built-in Hula SWS Extractor -- converts .SWS files back to Kayenne MOV, Kayenne TGA, or Sony MVS TGA format, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
-- Supports 1080i50, 1080i29.97, 1080p25, 1080p50, 720p50, 720p59.94 and more
+- Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
+- Warning logged if a progressive source is converted to an interlaced standard
 - Watch folder service runs in background
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required

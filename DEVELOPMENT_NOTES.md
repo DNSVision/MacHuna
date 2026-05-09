@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.5.7
-**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.7: Stop button now kills ffmpeg immediately; Cancel Batch button added for Open Files batches. v1.5.5: Format variant field (0x18C) fixed -- 0x08 for interlaced, 0x18 for progressive. Previously hardcoded to 0x18, causing interlaced files to show as progressive on the Kahuna. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
+**Current version:** v1.5.9
+**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) fixed. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -141,7 +141,7 @@ Older Sony MVS desks that do not support 50P require interlaced TGA sequences. I
 | 0x148 | string | Creation timestamp |
 | 0x168 | string | Modified timestamp |
 | 0x188 | uint32 | Video standard code (includes playback flags -- see below) |
-| 0x18C | uint32 | Format variant field. **0x08 for interlaced standards (1080i50, 1080i5994, 1080i60), 0x18 for all progressive standards.** Confirmed by hex analysis of K-Watch reference files (1080i50 = 0x08, 1080p50 = 0x18). Previously documented as "FPS numerator / always 0x18" -- this was incorrect and caused interlaced files to be misidentified as progressive on the Kahuna desk. |
+| 0x18C | uint32 | Format variant field. This is an index into the Kahuna's internal standard table, not a flags field. All values confirmed by hex analysis of K-Watch reference files (2026-05-09). See Format Variant Field section below. |
 | 0x190 | uint32 | Width in pixels |
 | 0x194 | uint32 | Height in pixels |
 | 0x198 | uint32 | Height again |
@@ -156,28 +156,27 @@ Older Sony MVS desks that do not support 50P require interlaced TGA sequences. I
 | 0x1E8 | uint32 | Audio data offset / 32 (0 if no audio) |
 | 0x1EC | uint32 | Audio format flag: 0x03000000 (0 if no audio) |
 
-### Video Standard Codes (offset 0x188)
+### Video Standard Codes (offset 0x188) and Format Variant (offset 0x18C)
 
-| Code | Standard |
-|------|----------|
-| 0x00004923 | 1080i50, 1080p50 -- **confirmed** by hex analysis of K-Watch reference files |
-| 0x00004921 | 1080i29.97 -- estimated |
-| 0x00004925 | 1080p25 -- estimated |
-| 0x00004817 | 720p50 -- estimated |
-| 0x00004816 | 720p59.94 -- estimated |
+All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Nine standards verified.
 
-> **WARNING -- UNVERIFIED STANDARDS:** Only 1080i50 and 1080p50 have been confirmed against real K-Watch reference files and tested on a live Kahuna. All other standards (1080i29.97, 1080p25, 720p50, 720p59.94) use estimated values that have not been verified on hardware. Do not treat these as confirmed until tested. The format variant field (0x18C) pattern of 0x08=interlaced / 0x18=progressive is assumed to apply to all standards but has only been confirmed for 1080i50 and 1080p50.
+| Standard | 0x188 | 0x18C | Notes |
+|---|---|---|---|
+| 1080i/50 | `0x4923` | `0x08` | confirmed |
+| 1080i/59.94 | `0xc923` | `0x05` | confirmed -- unique 0x8000 bit, possibly drop-frame flag |
+| 1080i/60 | `0x4923` | `0x04` | confirmed |
+| 1080p/25 | `0x4923` | `0x13` | confirmed |
+| 1080p/50 | `0x4923` | `0x18` | confirmed |
+| 1080p/59.94 | `0x4923` | `0x17` | confirmed |
+| 1080p/60 | `0x4923` | `0x16` | confirmed |
+| 720p/50 | `0x4923` | `0x10` | confirmed |
+| 720p/59.94 | `0x4923` | `0x0f` | confirmed |
 
-### Format Variant Field (offset 0x18C)
+> **NOTE:** 0x18C values are not a flags field -- they are an index into the Kahuna's internal standard table. The simple 0x08=interlaced / 0x18=progressive theory was incorrect. Each standard has its own specific value which must be confirmed against K-Watch output.
 
-**Confirmed by hex analysis of K-Watch reference files (2026-05-08):**
+> **UNVERIFIED STANDARDS:** 1080p/29.97, 1080p/30, and 2160p variants have been removed from the MacHuna dropdown pending verification. Do not add them back without confirmed K-Watch reference files. SD standards (625/50, 525/59.94) and sF (segmented frame) variants are supported by K-Watch but not implemented in MacHuna.
 
-| Value | Meaning |
-|-------|---------|
-| 0x08 | Interlaced standard (1080i50, 1080i5994, 1080i60) -- confirmed |
-| 0x18 | Progressive standard (all others) -- confirmed for 1080p50 |
-
-Previously documented as "FPS numerator, always 0x18". This was wrong -- the field encodes scan type, not frame rate. Using 0x18 for interlaced files caused the Kahuna to misidentify them as progressive (displayed as "1080p/50 A" rather than "1080i/50"). Fixed in v1.5.5.
+> **HOW TO VERIFY A NEW STANDARD:** Convert any file in K-Watch with the target standard selected. Run `xxd -l 512 output.SWS` and read offset 0x188 (4 bytes) and 0x18C (4 bytes). Both values are needed.
 
 ### Playback Flags (offset 0x188, low byte)
 
