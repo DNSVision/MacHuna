@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.17"
+VERSION = "1.5.18"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -337,20 +337,26 @@ def get_video_info(input_path: str) -> dict:
 
 def convert_to_v210(input_path: str, output_path: str,
                     extract_alpha: bool = False,
-                    width: int = 0, height: int = 0):
+                    width: int = 0, height: int = 0,
+                    vf_extra: str = ''):
     """Convert input to raw v210 using ffmpeg, then byte-swap to big-endian.
-    
+
     ffmpeg outputs v210 as little-endian 32-bit words.
     Kahuna expects big-endian 32-bit words.
     We swap each 4-byte word after conversion.
+    vf_extra: additional ffmpeg video filter appended to the chain (e.g. tinterlace=...)
     """
-    vf_fill = 'null'
-    vf_key  = 'alphaextract,format=gray'
+    vf_key = 'alphaextract,format=gray'
 
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     cmd_fill = [ffmpeg, '-y', '-i', input_path]
+    vf_parts = []
     if width and height:
-        cmd_fill += ['-vf', f'scale={width}:{height},{vf_fill}']
+        vf_parts.append(f'scale={width}:{height}')
+    if vf_extra:
+        vf_parts.append(vf_extra)
+    if vf_parts:
+        cmd_fill += ['-vf', ','.join(vf_parts)]
     cmd_fill += ['-colorspace', 'bt709', '-color_range', 'tv', '-f', 'rawvideo', '-vcodec', 'v210', output_path]
 
     _run_ffmpeg(cmd_fill, check=True)
@@ -682,12 +688,21 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     info = get_video_info(input_path)
     w, h, fps = info['width'], info['height'], info['fps']
     frame_count = info['frame_count']
+
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
-    if video_standard in _interlaced_standards and not info['is_interlaced']:
-        log(f"  WARNING: Source is progressive but {video_standard} is an interlaced standard.")
-        log(f"  The header will be correct but the video data will remain progressive.")
-        log(f"  On the Kahuna this will play back at double speed.")
-        log(f"  For correct interlaced output, use a native interlaced source or convert via K-Watch.")
+    do_p_to_i = video_standard in _interlaced_standards and not info['is_interlaced']
+    if do_p_to_i:
+        # Weave pairs of progressive frames into interlaced frames (TFF best-guess).
+        # Frame count halves; fps halves (e.g. 50p -> 25fps for 1080i/50).
+        # Field order TFF is SMPTE standard for 1080i HD -- confirm on Kahuna hardware.
+        vf_tinterlace  = 'tinterlace=mode=interleave_top'
+        output_frame_count = frame_count // 2
+        output_fps         = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
+    else:
+        vf_tinterlace      = ''
+        output_frame_count = frame_count
+        output_fps         = fps
 
     has_alpha = info['has_alpha'] and not ignore_alpha
     will_include_audio = include_audio and info['has_audio']
@@ -698,7 +713,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         actual_key = None
         audio_raw  = None
 
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
+        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace)
         if ignore_alpha:
             # No key plane written at all -- matches K-Watch behaviour
             actual_key = None
@@ -712,13 +727,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # Extract audio if requested and present
         if will_include_audio:
             audio_path = os.path.join(tmp, 'audio.pcm')
-            if extract_audio(input_path, audio_path, frame_count, fps):
+            if extract_audio(input_path, audio_path, output_frame_count, output_fps):
                 audio_raw = audio_path
                 log(f"  Audio extracted: {os.path.getsize(audio_raw):,} bytes")
             else:
                 log(f"  Audio extraction failed -- writing without audio")
 
-        plane_size = os.path.getsize(fill_raw) // frame_count
+        plane_size = os.path.getsize(fill_raw) // output_frame_count
         src_name   = os.path.basename(input_path)
         clip_name  = Path(input_path).stem  # use filename stem as clip name
 
@@ -726,11 +741,11 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             source_filename=src_name,
             clip_name=clip_name,
             width=w, height=h,
-            frame_count=frame_count,
+            frame_count=output_frame_count,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
-            fps=fps,
+            fps=output_fps,
             has_audio=(audio_raw is not None),
             has_key=(actual_key is not None),
             auto_play=auto_play,
@@ -739,7 +754,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32,
-                  frame_count=frame_count, audio_raw=audio_raw, log=log)
+                  frame_count=output_frame_count, audio_raw=audio_raw, log=log)
 
     if delete_source:
         os.remove(input_path)

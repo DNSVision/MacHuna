@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.18 — 2026-05-09
+
+### Added
+- Progressive-to-interlaced transcoding. When a progressive source is converted to an interlaced standard (1080i/50, 1080i/59.94, 1080i/60), MacHuna now weaves pairs of progressive frames into genuine interlaced frames using the ffmpeg `tinterlace=mode=interleave_top` filter. Frame count halves (e.g. 60 frames at 50fps → 30 frames at 25fps for 1080i/50). Field order is Top Field First (TFF) — SMPTE standard for 1080i HD — pending hardware confirmation on a live Kahuna. The previous "source is progressive" warning is replaced with a log message describing the transcode.
+
+---
+
 ## v1.5.17 — 2026-05-09
 
 ### Fixed
