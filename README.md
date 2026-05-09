@@ -92,9 +92,8 @@ Click the Hula button in the Batch Convert row to open the Hula extractor. Conve
 
 - **Kayenne MOV** -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store
 - **Kayenne TGA** -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
-- **Sony MVS TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
-
-Hula is also available as a standalone app at [DNSVision/Hula](https://github.com/DNSVision/Hula) for use without MacHuna.
+- **Sony MVS TGA (50p)** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store (progressive)
+- **Sony MVS TGA (25i)** -- field-woven interlaced TGA sequence for older Sony MVS desks that don't support 50P; includes BFF/TFF field order toggle
 
 ### Large Files (>4GB)
 
@@ -107,14 +106,9 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 ## Roadmap
 
 - P→I field order hardware confirmation -- TFF field order is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
+- Sony MVS 25i field order hardware confirmation -- BFF is assumed for PAL/50Hz; flip the toggle in Hula if motion artefacts appear
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
-- Sony MVS 50i TGA output in Hula (convert 50P SWS to genuine 50i TGA sequences for older MVS desks)
-- Hula SWS metadata display -- show standard, frame count, and duration for each loaded SWS file
-
-## Related Projects
-
-- **[Hula](https://github.com/DNSVision/Hula)** -- standalone SWS extractor for use without MacHuna
 
 ## Licence
 

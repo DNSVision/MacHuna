@@ -87,16 +87,16 @@ Claude Code CLI has direct file system access and edits machuna.py directly usin
 
 **MacHuna** (`DNSVision/MacHuna`) is a macOS application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It is a Mac-native alternative to the Windows-only K-Watch application. Built by David Steer (DNS Vision Limited) and Claude (Anthropic) using AI-assisted development with no prior coding background on David's part.
 
-**Hula** (`DNSVision/Hula`) is a companion app that converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS vision mixing desks. Built in the same session and integrated into MacHuna as a built-in tool.
+**Hula** is MacHuna's built-in SWS extractor — converts `.SWS` files back to standard media formats for Kayenne and Sony MVS desks. Originally built as a standalone app (`DNSVision/Hula`), now fully integrated into MacHuna. The standalone repo is **archived and no longer maintained** — MacHuna's integrated Hula has far outstripped it in features.
 
-Both repos are currently **private**.
+MacHuna repo is currently **private**.
 
 ---
 
 ## Current Versions
 
 - **MacHuna:** v1.5.21
-- **Hula:** v0.1.1
+- **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
 
 ---
 
@@ -107,10 +107,7 @@ Both repos are currently **private**.
 | MacHuna source | `~/Developer/MacHuna/machuna.py` |
 | MacHuna built app | `~/Developer/MacHuna/dist/MacHuna.app` |
 | MacHuna repo | `https://github.com/DNSVision/MacHuna` |
-| Hula source | `~/Developer/Hula/hula.py` |
-| Hula built app | `~/Developer/Hula/dist/Hula.app` |
-| Hula repo | `https://github.com/DNSVision/Hula` |
-| MacHuna/Hula settings | `~/.kwatch_settings.json` |
+| Settings | `~/.kwatch_settings.json` |
 | PDF generation template | `~/Developer/MacHuna/manual_template.html` |
 
 ---
@@ -142,20 +139,6 @@ cd ~/Developer/MacHuna && python3.12 -m PyInstaller \
   ~/Developer/MacHuna/machuna.py
 ```
 
-### Hula
-
-```bash
-cd ~/Developer/Hula && python3.12 -m PyInstaller \
-  --onedir \
-  --windowed \
-  --name "Hula" \
-  --icon ~/Developer/Hula/Hula_Icon.icns \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg:." \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffprobe:." \
-  --noconfirm \
-  ~/Developer/Hula/hula.py
-```
-
 ### User Manual PDF
 
 ```bash
@@ -171,7 +154,7 @@ Then open in Safari and File > Print > Save as PDF.
 ## GitHub Push Workflow
 
 ```bash
-cd ~/Developer/MacHuna   # or ~/Developer/Hula
+cd ~/Developer/MacHuna
 git add .
 git commit -m "Description"
 git push
@@ -192,20 +175,6 @@ git push
 ├── manual_template.html    # Pandoc template for PDF generation
 ├── DEVELOPMENT_NOTES.md    # Engineering continuity document
 ├── CHANGELOG.md            # Version history
-└── .gitignore
-```
-
----
-
-## Hula Repo Contents
-
-```
-~/Developer/Hula/
-├── hula.py                 # Main source
-├── Hula_Icon.icns          # App icon
-├── README.md
-├── DEVELOPMENT_NOTES.md
-├── CHANGELOG.md
 └── .gitignore
 ```
 
@@ -234,12 +203,14 @@ git push
 
 ## Hula Feature Summary
 
-- Converts .SWS to three output targets:
+- Converts .SWS to four output targets:
   - Kayenne MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present
   - Kayenne TGA: 32-bit RGBA, frames 0001.tga onwards, subfolder per SWS
-  - Sony MVS TGA: 32-bit RGBA, frames XXXX0000.tga onwards (clip name prefix then frame number), subfolder per SWS
+  - Sony MVS TGA (50p): 32-bit RGBA progressive, frames XXXX0000.tga (4-char clip name prefix)
+  - Sony MVS TGA (25i): field-woven interlaced from 1080p50 source, BFF/TFF toggle, frame count halved
 - Batch conversion supported
-- Standalone app also available at DNSVision/Hula
+- Source guard: Sony MVS 25i rejects non-1080p50 input with a clear error message
+- Per-file metadata shown at load time: standard, frame count, duration
 
 ---
 
@@ -280,16 +251,15 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 - HLG Rec.2020 colour space option (requires a real HLG .SWS file to verify)
 - Split file support in SWS Preview Player
 
-### Hula (both standalone and integrated)
-- Live hardware test on Kayenne and Sony MVS - Sony MVS naming fix (v0.1.1) unverified on hardware
-- Sony MVS 50i TGA output - convert 50P SWS to genuine 50i TGA sequences for older MVS desks that don't support 50P. Requires field weaving (numpy slice ops). Field order almost certainly BFF for PAL/50Hz but MUST be confirmed on real hardware before implementing. Full technical notes in Hula DEVELOPMENT_NOTES.md.
-- SWS file metadata display - show standard (e.g. 1080i/50), frame count, and duration (frame_count / fps) in the Hula file list. HulaSWSHeader already parses all required fields -- purely a UI addition.
+### Hula (integrated in MacHuna only — standalone DNSVision/Hula archived)
+- Live hardware test on Kayenne and Sony MVS — Sony MVS clip naming unverified on hardware
+- Sony MVS 25i field order confirmation — BFF assumed for PAL/50Hz; flip toggle in Hula if motion artefacts appear on a real desk
 
 ### Future consideration
 - Windows port - the core Python code has no Mac-specific dependencies. Main changes needed: ffmpeg path handling, macOS menu bar code conditionally skipped, PyInstaller build on Windows machine. Someone with a Windows machine could fork and port without needing to redo any of the reverse engineering. Worth adding "Windows port contributions welcome" to README when repos go public.
 
 ### Going public
-- Recommendation: do live hardware test on Kayenne and Sony MVS first to confirm v1.5.7 / v0.1.1 is solid, then make both repos public.
+- Recommendation: do live hardware test on Kayenne and Sony MVS first, then make MacHuna repo public.
 
 ---
 

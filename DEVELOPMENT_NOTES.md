@@ -71,14 +71,15 @@ git push
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
 - Split file support in SWS Player (requires virtual multi-file stream abstraction and frame cap)
-- Sony MVS 50i TGA output in Hula -- see Hula Integration section below
+- Sony MVS 25i field order confirmation -- BFF assumed for PAL/50Hz; needs live hardware test on a Sony MVS desk
+- ~~Sony MVS 50i TGA output in Hula~~ -- DONE (v1.5.20/v1.5.21 as Sony MVS TGA 25i with BFF/TFF toggle and source guard)
 - ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
 
 ---
 
 ## Hula Integration (v1.5.0)
 
-Hula is an SWS extractor -- the reverse of MacHuna. It converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS desks. It was developed first as a standalone app (`DNSVision/Hula`) then folded into MacHuna following the same pattern as SWS Player.
+Hula is an SWS extractor -- the reverse of MacHuna. It converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS desks. It was developed first as a standalone app (`DNSVision/Hula`, last version v0.1.1) then folded into MacHuna following the same pattern as SWS Player. **The standalone repo is archived and no longer maintained** — MacHuna's integrated Hula has far outstripped it in features.
 
 ### How it works in MacHuna
 
