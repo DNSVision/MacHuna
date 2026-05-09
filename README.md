@@ -23,7 +23,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Built-in Hula SWS Extractor -- converts .SWS files back to Kayenne MOV, Kayenne TGA, or Sony MVS TGA format, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
-- Warning logged if a progressive source is converted to an interlaced standard
+- Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
 - Watch folder service runs in background
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
@@ -106,6 +106,7 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 ## Roadmap
 
+- P→I field order hardware confirmation -- TFF field order is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
 - Sony MVS 50i TGA output in Hula (convert 50P SWS to genuine 50i TGA sequences for older MVS desks)
