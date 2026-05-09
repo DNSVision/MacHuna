@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.19"
+VERSION = "1.5.20"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1880,9 +1880,11 @@ class SWSPlayer(tk.Toplevel):
 #  or Sony MVS TGA format.
 # ─────────────────────────────────────────────────────────────
 
-HULA_TARGET_KAYENNE_MOV = "Kayenne MOV"
-HULA_TARGET_KAYENNE_TGA = "Kayenne TGA"
-HULA_TARGET_SONY_MVS    = "Sony MVS TGA"
+HULA_TARGET_KAYENNE_MOV  = "Kayenne MOV"
+HULA_TARGET_KAYENNE_TGA  = "Kayenne TGA"
+HULA_TARGET_SONY_MVS_50P = "Sony MVS TGA (50p)"
+HULA_TARGET_SONY_MVS_25I = "Sony MVS TGA (25i)"
+_HULA_SONY_TARGETS = {HULA_TARGET_SONY_MVS_50P, HULA_TARGET_SONY_MVS_25I}
 
 # Header field offsets for SWS read side (Hula uses read only)
 _HULA_OFF_STD_CODE = 0x188
@@ -2017,13 +2019,79 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
             ])
             if target == HULA_TARGET_KAYENNE_TGA:
                 filename = f"{i + 1:04d}.tga"
-            else:
+            else:  # Sony MVS 50p
                 cn = clip_name.upper()[:4].ljust(4)
                 filename = f"{cn}{i:04d}.tga"
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
                 log(f"  Frame {i + 1}/{header.frame_count}")
     log(f"  Done → {dest_dir}  ({header.frame_count} TGA files)")
+    return dest_dir
+
+
+def _hula_convert_tga_25i(sws_path: str, dest_parent: str,
+                          clip_name: str = 'WIPE', field_order: str = 'BFF',
+                          log=print):
+    """Convert one 50P SWS to a 25i TGA sequence by field-weaving pairs of frames.
+
+    Each pair of consecutive 50P frames is woven into one interlaced frame.
+    field_order: 'BFF' (default, typical PAL/50Hz Sony MVS) or 'TFF'.
+    Output frame count = input frame count // 2.
+    """
+    stem     = Path(sws_path).stem
+    dest_dir = os.path.join(dest_parent, stem)
+    os.makedirs(dest_dir, exist_ok=True)
+    header   = HulaSWSHeader(sws_path)
+    log(f"  {header}")
+    n         = header.frame_count
+    out_count = n // 2
+    if n % 2:
+        log(f"  Warning: odd frame count ({n}) — last source frame skipped")
+    fill_off = SWS_HEADER_SIZE
+    key_off  = SWS_HEADER_SIZE + header.plane_size * n
+    log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
+    cn = clip_name.upper()[:4].ljust(4)
+    with open(sws_path, 'rb') as f:
+        for i in range(out_count):
+            # Decode pair A (temporally first) and B (temporally second)
+            f.seek(fill_off + (2 * i) * header.plane_size)
+            fill_a = f.read(header.plane_size)
+            f.seek(fill_off + (2 * i + 1) * header.plane_size)
+            fill_b = f.read(header.plane_size)
+            key_a = key_b = None
+            if header.has_key:
+                f.seek(key_off + (2 * i) * header.plane_size)
+                key_a = f.read(header.plane_size)
+                f.seek(key_off + (2 * i + 1) * header.plane_size)
+                key_b = f.read(header.plane_size)
+            rgb_a, alpha_a = _hula_decode_frame(fill_a, key_a,
+                                                header.width, header.height)
+            rgb_b, alpha_b = _hula_decode_frame(fill_b, key_b,
+                                                header.width, header.height)
+            rgb_out   = np.empty_like(rgb_a)
+            alpha_out = np.empty_like(alpha_a)
+            if field_order == 'TFF':
+                # Even lines (top field) from A, odd lines (bottom field) from B
+                rgb_out[0::2]   = rgb_a[0::2]
+                rgb_out[1::2]   = rgb_b[1::2]
+                alpha_out[0::2] = alpha_a[0::2]
+                alpha_out[1::2] = alpha_b[1::2]
+            else:  # BFF — typical for PAL/50Hz Sony MVS
+                # Odd lines (bottom field) from A, even lines (top field) from B
+                rgb_out[1::2]   = rgb_a[1::2]
+                rgb_out[0::2]   = rgb_b[0::2]
+                alpha_out[1::2] = alpha_a[1::2]
+                alpha_out[0::2] = alpha_b[0::2]
+            rgba_img = Image.merge('RGBA', [
+                Image.fromarray(rgb_out[:, :, 0], 'L'),
+                Image.fromarray(rgb_out[:, :, 1], 'L'),
+                Image.fromarray(rgb_out[:, :, 2], 'L'),
+                Image.fromarray(alpha_out, 'L'),
+            ])
+            rgba_img.save(os.path.join(dest_dir, f"{cn}{i:04d}.tga"), format='TGA')
+            if (i + 1) % 10 == 0 or i + 1 == out_count:
+                log(f"  Frame {i + 1}/{out_count}")
+    log(f"  Done → {dest_dir}  ({out_count} TGA files)")
     return dest_dir
 
 
@@ -2082,7 +2150,8 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
 
 
 def _hula_run_batch(sws_paths: list, dest_dir: str, target: str,
-                    clip_name: str = 'WIPE', log=print):
+                    clip_name: str = 'WIPE', field_order: str = 'BFF',
+                    log=print):
     """Convert a list of SWS files. Called from HulaWindow worker thread."""
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
@@ -2091,6 +2160,10 @@ def _hula_run_batch(sws_paths: list, dest_dir: str, target: str,
         try:
             if target == HULA_TARGET_KAYENNE_MOV:
                 _hula_convert_mov(path, dest_dir, idx, log=log)
+            elif target == HULA_TARGET_SONY_MVS_25I:
+                _hula_convert_tga_25i(path, dest_dir,
+                                      clip_name=clip_name,
+                                      field_order=field_order, log=log)
             else:
                 _hula_convert_tga(path, dest_dir, target,
                                   clip_name=clip_name, log=log)
@@ -2140,7 +2213,8 @@ class HulaWindow(tk.Toplevel):
             value=s.get('hula_target', HULA_TARGET_KAYENNE_MOV))
         for label in (HULA_TARGET_KAYENNE_MOV,
                       HULA_TARGET_KAYENNE_TGA,
-                      HULA_TARGET_SONY_MVS):
+                      HULA_TARGET_SONY_MVS_50P,
+                      HULA_TARGET_SONY_MVS_25I):
             tk.Radiobutton(tgt_frame, text=label,
                            variable=self._target_var, value=label,
                            command=self._on_target_change
@@ -2160,6 +2234,17 @@ class HulaWindow(tk.Toplevel):
                  text="(all clips share this name — they will merge on import)",
                  font=('Helvetica', 10), fg='#888888'
                  ).pack(side='left', padx=(8, 0))
+
+        # Field order toggle (25i only)
+        self._field_order_frame = tk.Frame(tgt_frame)
+        self._field_order_frame.pack(side='left', padx=(PAD * 2, 0))
+        tk.Label(self._field_order_frame, text="Field order:").pack(side='left')
+        self._field_order_var = tk.StringVar(
+            value=s.get('hula_field_order', 'BFF'))
+        for fo in ('BFF', 'TFF'):
+            tk.Radiobutton(self._field_order_frame, text=fo,
+                           variable=self._field_order_var, value=fo
+                           ).pack(side='left')
 
         # Files
         files_frame = ttk.LabelFrame(self, text="SWS Files")
@@ -2230,8 +2315,14 @@ class HulaWindow(tk.Toplevel):
         self._file_listbox.config(state='disabled')
 
     def _on_target_change(self):
-        is_sony = self._target_var.get() == HULA_TARGET_SONY_MVS
+        tgt = self._target_var.get()
+        is_sony = tgt in _HULA_SONY_TARGETS
+        is_25i  = tgt == HULA_TARGET_SONY_MVS_25I
         self._clip_entry.config(state='normal' if is_sony else 'disabled')
+        if is_25i:
+            self._field_order_frame.pack(side='left', padx=(16, 0))
+        else:
+            self._field_order_frame.pack_forget()
 
     def _log(self, msg: str):
         def _append():
@@ -2253,7 +2344,7 @@ class HulaWindow(tk.Toplevel):
             messagebox.showerror("Hula", "Please select at least one SWS file.",
                                  parent=self)
             return
-        if tgt == HULA_TARGET_SONY_MVS and len(cname) != 4:
+        if tgt in _HULA_SONY_TARGETS and len(cname) != 4:
             messagebox.showerror("Hula",
                                  "Sony MVS clip name must be exactly 4 characters.",
                                  parent=self)
@@ -2264,16 +2355,19 @@ class HulaWindow(tk.Toplevel):
             messagebox.showerror("Hula", str(e), parent=self)
             return
         # Persist settings
-        self._settings['hula_dest']   = dest
-        self._settings['hula_target'] = tgt
-        self._settings['hula_clip']   = cname
+        field_order = self._field_order_var.get()
+        self._settings['hula_dest']        = dest
+        self._settings['hula_target']      = tgt
+        self._settings['hula_clip']        = cname
+        self._settings['hula_field_order'] = field_order
         self._save_cb()
         self._convert_btn.config(state='disabled')
 
         def worker():
             try:
                 _hula_run_batch(list(self._selected), dest, tgt,
-                                clip_name=cname, log=self._log)
+                                clip_name=cname, field_order=field_order,
+                                log=self._log)
             finally:
                 self.after(0, lambda: self._convert_btn.config(state='normal'))
 

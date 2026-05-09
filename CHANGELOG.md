@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.20 — 2026-05-09
+
+### Added
+- Hula: Sony MVS TGA target split into two options — **Sony MVS TGA (50p)** (straight progressive, existing behaviour) and **Sony MVS TGA (25i)** (new field-woven interlaced output for older MVS desks that don't support 50P).
+- Sony MVS TGA (25i) weaves pairs of consecutive 50P frames into interlaced frames via numpy line-interleaving, halving the frame count. Includes a **BFF/TFF field order toggle** (defaults to BFF, typical for PAL/50Hz Sony MVS desks). Field order can be flipped on-site if motion artefacts appear.
+
+---
+
 ## v1.5.19 — 2026-05-09
 
 ### Changed
