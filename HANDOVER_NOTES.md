@@ -283,6 +283,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ### Hula (both standalone and integrated)
 - Live hardware test on Kayenne and Sony MVS - Sony MVS naming fix (v0.1.1) unverified on hardware
 - Sony MVS 50i TGA output - convert 50P SWS to genuine 50i TGA sequences for older MVS desks that don't support 50P. Requires field weaving (numpy slice ops). Field order almost certainly BFF for PAL/50Hz but MUST be confirmed on real hardware before implementing. Full technical notes in Hula DEVELOPMENT_NOTES.md.
+- SWS file metadata display - show standard (e.g. 1080i/50), frame count, and duration (frame_count / fps) in the Hula file list. HulaSWSHeader already parses all required fields -- purely a UI addition.
 
 ### Future consideration
 - Windows port - the core Python code has no Mac-specific dependencies. Main changes needed: ffmpeg path handling, macOS menu bar code conditionally skipped, PyInstaller build on Windows machine. Someone with a Windows machine could fork and port without needing to redo any of the reverse engineering. Worth adding "Windows port contributions welcome" to README when repos go public.

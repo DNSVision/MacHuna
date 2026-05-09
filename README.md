@@ -110,6 +110,7 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
 - Sony MVS 50i TGA output in Hula (convert 50P SWS to genuine 50i TGA sequences for older MVS desks)
+- Hula SWS metadata display -- show standard, frame count, and duration for each loaded SWS file
 
 ## Related Projects
 
