@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.15"
+VERSION = "1.5.16"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2352,6 +2352,9 @@ def launch_gui():
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
 
+    ttk.Label(frm5, text="MOV, MP4, MXF, PNG, BMP, JPG only. For TGA sequences use the Watch Folder.",
+              foreground='#888888').pack(side='left', **pad)
+
     ttk.Button(frm5, text="SWS Player",
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
     ttk.Button(frm5, text="Hula",
@@ -2471,9 +2474,9 @@ def launch_gui():
             return
 
         supported_types = [
-            ('Video & Image files', '*.mov *.mp4 *.avi *.mxf *.tga *.png *.bmp *.jpg *.jpeg'),
+            ('Video & Image files', '*.mov *.mp4 *.avi *.mxf *.png *.bmp *.jpg *.jpeg'),
             ('Video files', '*.mov *.mp4 *.avi *.mxf'),
-            ('Image files', '*.tga *.png *.bmp *.jpg *.jpeg'),
+            ('Image files', '*.png *.bmp *.jpg *.jpeg'),
             ('All files', '*.*'),
         ]
         paths = filedialog.askopenfilenames(

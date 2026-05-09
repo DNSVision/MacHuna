@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.16 — 2026-05-09
+
+### Changed
+- TGA files removed from the Batch Convert file picker. Batch Convert handles MOV, MP4, MXF, MKV, AVI, PNG, BMP, and JPG only. TGA sequences must use the Watch Folder service. A hint label in the Batch Convert row makes this explicit.
+
+---
+
 ## v1.5.15 — 2026-05-09
 
 ### Fixed
