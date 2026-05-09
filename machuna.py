@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.20"
+VERSION = "1.5.21"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2042,6 +2042,12 @@ def _hula_convert_tga_25i(sws_path: str, dest_parent: str,
     dest_dir = os.path.join(dest_parent, stem)
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
+    if header.fps != 50.0:
+        std = header.standard.replace('/', '')
+        raise ValueError(
+            f"{Path(sws_path).name} is {std} ({header.fps:.4g}fps) — "
+            f"Sony MVS 25i requires a 1080p50 source."
+        )
     log(f"  {header}")
     n         = header.frame_count
     out_count = n // 2

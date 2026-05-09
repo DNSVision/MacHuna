@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.21 — 2026-05-09
+
+### Added
+- Hula Sony MVS 25i: source guard rejects non-1080p50 files before converting, with a clear error message naming the file and its actual standard. Prevents silently producing bad output when the wrong SWS is loaded.
+
+---
+
 ## v1.5.20 — 2026-05-09
 
 ### Added
