@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.14"
+VERSION = "1.5.15"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1778,14 +1778,21 @@ class SWSPlayer(tk.Toplevel):
         idx       = self._current_frame
         loop      = self._cache.header.loop_play
 
+        # Use absolute origin time so sleep overshoot in one frame is
+        # automatically recovered in the next, preventing drift accumulation.
+        t_origin  = time.perf_counter()
+        frame_num = 0
+
         while not self._stop_event.is_set():
-            t_start = time.perf_counter()
             captured = idx
             self.after(0, lambda i=captured: self._show_frame(i))
             idx += 1
+            frame_num += 1
             if idx >= n_frames:
                 if loop:
                     idx = 0
+                    t_origin  = time.perf_counter()
+                    frame_num = 0
                     if self._audio_player:
                         self._audio_player.stop()
                         self._audio_player = PlayerAudio(
@@ -1798,8 +1805,7 @@ class SWSPlayer(tk.Toplevel):
                     self._playing = False
                     self.after(0, self._on_playback_ended)
                     return
-            elapsed = time.perf_counter() - t_start
-            sleep = frame_dur - elapsed
+            sleep = (t_origin + frame_num * frame_dur) - time.perf_counter()
             if sleep > 0:
                 time.sleep(sleep)
 

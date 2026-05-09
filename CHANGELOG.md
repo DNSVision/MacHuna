@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.15 — 2026-05-09
+
+### Fixed
+- SWS Player playback loop now uses absolute timing to prevent frame jitter. Previously, any sleep overshoot in one frame carried into the next and accumulated. The loop now calculates sleep relative to an absolute start time so drift self-corrects each frame.
+
+---
+
 ## v1.5.14 — 2026-05-09
 
 ### Fixed
