@@ -24,9 +24,10 @@ A comprehensive code review was conducted at the start of this session. Six bugs
 
 6. **SWSPlayer playback jitter - fixed in v1.5.15.** The playback loop was sleeping relative to each frame's start time, so sleep overshoot accumulated as drift. The loop now sleeps to an absolute target time derived from a fixed origin, so any overshoot self-corrects on the next frame.
 
-**Remaining medium priority items from the review:**
-- Batch Convert allows .tga selection - technically valid for single-frame stills but could confuse operators trying to process sequences. Options: clarify in UI, detect probable sequences and warn, or restrict entirely.
-- SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix for now.
+7. **Batch Convert TGA ambiguity - fixed in v1.5.16.** TGA files removed from the Batch Convert file picker entirely. Batch Convert now accepts MOV, MP4, MXF, MKV, AVI, PNG, BMP, and JPG only. A hint label in the Batch Convert row directs TGA sequence users to the Watch Folder.
+
+**Remaining items from the review (no action needed):**
+- SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix.
 - Single-file architecture - machuna.py contains conversion engine, header builder, GUI, watch service, audio, SWS Player, Hula, settings, CLI. Suggested future modularisation: sws.py, player.py, hula.py, audio.py, gui.py. Not urgent.
 
 **Positive findings:** Header builder, split-file streaming, audio channel mapping and pan filter all specifically praised.
@@ -105,7 +106,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.15
+- **MacHuna:** v1.5.16
 - **Hula:** v0.1.1
 
 ---
