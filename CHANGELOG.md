@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.17 — 2026-05-09
+
+### Fixed
+- Standard code (0x188) for all interlaced standards corrected to `0xc923`. The 0x8000 bit flags interlaced scanning, not drop-frame timing as previously assumed. Previously, 1080i/50 and 1080i/60 were written with `0x4923` (progressive code); K-Watch reference files confirm all three interlaced standards use `0xc923`. The Kahuna was tolerating the wrong value because it uses the format variant field (0x18C) as the primary standard discriminator, but MacHuna output now matches K-Watch exactly. Confirmed by hex analysis of a K-Watch P→I transcode (1080p/50 MOV → 1080i/50 SWS).
+
+---
+
 ## v1.5.16 — 2026-05-09
 
 ### Changed

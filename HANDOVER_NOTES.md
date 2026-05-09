@@ -40,7 +40,7 @@ This was a major reverse engineering session. All nine supported video standards
 
 - Both 0x188 (standard code) AND 0x18C (format variant) must be set correctly - we previously only knew 0x188
 - 0x18C is NOT a simple interlaced/progressive flag - it is an index into the Kahuna's internal standard table
-- 1080i/59.94 uniquely uses standard code 0xc923 (not 0x4923) - the 0x8000 bit appears to flag drop-frame timing
+- All interlaced standards use standard code 0xc923 -- the 0x8000 bit flags interlaced scanning (not drop-frame). Confirmed by P→I transcode analysis (2026-05-09)
 - Full confirmed table in DEVELOPMENT_NOTES.md
 
 **How to verify a new standard:** Convert any file in K-Watch with the target standard. Run `xxd -l 512 output.SWS` and read 0x188 (4 bytes) and 0x18C (4 bytes).
@@ -95,7 +95,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.16
+- **MacHuna:** v1.5.17
 - **Hula:** v0.1.1
 
 ---
@@ -321,9 +321,9 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 
 | Standard | 0x188 | 0x18C |
 |---|---|---|
-| 1080i/50 | `0x4923` | `0x08` |
+| 1080i/50 | `0xc923` | `0x08` |
 | 1080i/59.94 | `0xc923` | `0x05` |
-| 1080i/60 | `0x4923` | `0x04` |
+| 1080i/60 | `0xc923` | `0x04` |
 | 1080p/25 | `0x4923` | `0x13` |
 | 1080p/50 | `0x4923` | `0x18` |
 | 1080p/59.94 | `0x4923` | `0x17` |

@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.16"
+VERSION = "1.5.17"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -53,13 +53,14 @@ SWS_HEADER_SIZE = 512
 # Video standard codes (offset 0x188 in header)
 # Video standard codes confirmed by hex analysis of K-Watch reference files (2026-05-09).
 # Both 0x188 (standard code) and 0x18C (format variant) confirmed for all listed standards.
-# 1080i/59.94 uniquely uses 0xc923 -- the 0x8000 bit appears to flag drop-frame timing.
+# The 0x8000 bit flags interlaced scanning -- all interlaced standards use 0xc923,
+# all progressive standards use 0x4923. Confirmed by P->I transcode analysis (2026-05-09).
 # Unverified standards (1080p29.97, 1080p30, 2160p variants) removed from dropdown pending
 # confirmation against K-Watch reference files. See DEVELOPMENT_NOTES.md roadmap.
 VIDEO_STANDARDS = {
-    '1080i50':   0x4923,   # confirmed
-    '1080i5994': 0xc923,   # confirmed -- 0x8000 bit flags drop-frame timing
-    '1080i60':   0x4923,   # confirmed
+    '1080i50':   0xc923,   # confirmed -- 0x8000 = interlaced flag
+    '1080i5994': 0xc923,   # confirmed -- 0x8000 = interlaced flag
+    '1080i60':   0xc923,   # confirmed by pattern -- 0x8000 = interlaced flag
     '1080p25':   0x4923,   # confirmed
     '1080p50':   0x4923,   # confirmed
     '1080p5994': 0x4923,   # confirmed

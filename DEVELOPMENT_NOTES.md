@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS watch folder application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.5.16
-**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
+**Current version:** v1.5.17
+**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.17: Interlaced standard codes corrected (0xc923 for all interlaced, 0x8000 = interlaced flag). v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -162,9 +162,9 @@ All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Ni
 
 | Standard | 0x188 | 0x18C | Notes |
 |---|---|---|---|
-| 1080i/50 | `0x4923` | `0x08` | confirmed |
-| 1080i/59.94 | `0xc923` | `0x05` | confirmed -- 0x8000 bit is unique to this standard; confirmed NOT set for 1080p/50 (see K-Watch analysis below) |
-| 1080i/60 | `0x4923` | `0x04` | confirmed |
+| 1080i/50 | `0xc923` | `0x08` | confirmed -- 0x8000 = interlaced flag |
+| 1080i/59.94 | `0xc923` | `0x05` | confirmed -- 0x8000 = interlaced flag |
+| 1080i/60 | `0xc923` | `0x04` | confirmed by pattern -- 0x8000 = interlaced flag |
 | 1080p/25 | `0x4923` | `0x13` | confirmed |
 | 1080p/50 | `0x4923` | `0x18` | confirmed |
 | 1080p/59.94 | `0x4923` | `0x17` | confirmed |
@@ -182,10 +182,16 @@ All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Ni
 
 Two K-Watch reference files were hex-analysed to investigate a potential std_code discrepancy and to understand interlaced frame storage.
 
-**50.SWS — 1080p/50 fresh K-Watch session:**
+**50.SWS (first) — 1080p/50 fresh K-Watch session:**
 - std_code: `0x4923` ✓ matches table
 - fmt_variant: `0x18` ✓ matches table
-- Conclusion: VIDEO_STANDARDS table is correct for 1080p/50. The 0x8000 bit is NOT universally set by K-Watch. It is confirmed unique to 1080i/59.94.
+
+**50.SWS (second) — 1080p/50 MOV transcoded to 1080i/50 via K-Watch (P→I transcode):**
+- std_code: `0xc923` -- interlaced flag confirmed (matches 201.SWS, two independent sessions)
+- fmt_variant: `0x08` ✓ matches table
+- frame_count: 30 (source was 60 frames at 50p → halved to 30 frames at 25fps)
+- **Confirms tinterlace approach: K-Watch weaves pairs of progressive frames, halving frame count**
+- **Confirms 0x8000 = interlaced flag, not drop-frame flag. All interlaced standards use `0xc923`.**
 
 **201.SWS — 1080i/50 fresh K-Watch session (TNTS201_30_0030.tga, 30-frame TGA sequence):**
 - std_code: `0xc923` (unexpected — our table says `0x4923` for 1080i/50)
@@ -194,7 +200,7 @@ Two K-Watch reference files were hex-analysed to investigate a potential std_cod
 - File size verified: 512 + 5,529,600 × 30 × 2 = 331,776,512 bytes ✓
 - Anomaly: user confirmed fresh K-Watch session, cause unknown — likely a K-Watch glitch on that conversion. The std_code mismatch is not consistent with 50.SWS and is considered an isolated outlier.
 
-**Key finding for transcoding:** K-Watch stores full frames for interlaced content. For 1080i/50, frame_count matches the source TGA frame count (30 frames = 25fps). This confirms FORMAT_VARIANT_FPS uses frame rates (25fps for 1080i/50), not field rates (50fps).
+**Key finding:** 201.SWS source TGAs were already interlaced frames (Kayenne output), so frame_count matching the TGA count is expected. The P→I transcoding confirmation came from the second 50.SWS analysis (see above).
 
 ### Playback Flags (offset 0x188, low byte)
 
