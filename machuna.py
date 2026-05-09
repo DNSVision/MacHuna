@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.11"
+VERSION = "1.5.12"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -349,13 +349,13 @@ def convert_to_v210(input_path: str, output_path: str,
                    '-vf', 'alphaextract,format=yuv420p,colorspace=bt709,'
                           'scale=out_range=tv',
                    '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
-        result = subprocess.run(cmd_key, capture_output=True)
+        result = _run_ffmpeg(cmd_key)
         if result.returncode != 0 or not os.path.exists(alpha_path) or os.path.getsize(alpha_path) == 0:
             # Simpler fallback
             cmd_key = [ffmpeg, '-y', '-i', input_path,
                        '-vf', 'alphaextract',
                        '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
-            subprocess.run(cmd_key, capture_output=True, check=True)
+            _run_ffmpeg(cmd_key, check=True)
         _byteswap_v210(alpha_path)
         return alpha_path
     return None
@@ -415,7 +415,7 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
            '-ar', '48000',
            '-f', 's16le',
            output_path]
-    result = subprocess.run(cmd, capture_output=True)
+    result = _run_ffmpeg(cmd)
 
     if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         return False
@@ -763,7 +763,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                '-i', concat_file,
                '-frames:v', str(frame_count),
                '-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
-        subprocess.run(cmd, capture_output=True, check=True)
+        _run_ffmpeg(cmd, check=True)
 
         # Key/alpha
         actual_key = None
@@ -777,14 +777,14 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                        '-frames:v', str(frame_count),
                        '-vf', 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv',
                        '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
-            result = subprocess.run(cmd_key, capture_output=True)
+            result = _run_ffmpeg(cmd_key)
             if result.returncode != 0 or not os.path.exists(key_raw) or os.path.getsize(key_raw) == 0:
                 cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                            '-i', concat_file,
                            '-frames:v', str(frame_count),
                            '-vf', 'alphaextract',
                            '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
-                subprocess.run(cmd_key, capture_output=True, check=True)
+                _run_ffmpeg(cmd_key, check=True)
             _byteswap_v210(key_raw)
             actual_key = key_raw
         else:

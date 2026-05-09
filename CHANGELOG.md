@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.12 — 2026-05-09
+
+### Fixed
+- Stop and Cancel Batch now correctly kill ffmpeg during audio extraction, TGA sequence conversion, and alpha extraction fallback. These paths were using `subprocess.run` directly instead of the `_run_ffmpeg` wrapper, making them invisible to the kill mechanism introduced in v1.5.7.
+
+---
+
 ## v1.5.11 — 2026-05-09
 
 ### Fixed
