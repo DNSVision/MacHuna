@@ -163,7 +163,7 @@ All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Ni
 | Standard | 0x188 | 0x18C | Notes |
 |---|---|---|---|
 | 1080i/50 | `0x4923` | `0x08` | confirmed |
-| 1080i/59.94 | `0xc923` | `0x05` | confirmed -- unique 0x8000 bit, possibly drop-frame flag |
+| 1080i/59.94 | `0xc923` | `0x05` | confirmed -- 0x8000 bit is unique to this standard; confirmed NOT set for 1080p/50 (see K-Watch analysis below) |
 | 1080i/60 | `0x4923` | `0x04` | confirmed |
 | 1080p/25 | `0x4923` | `0x13` | confirmed |
 | 1080p/50 | `0x4923` | `0x18` | confirmed |
@@ -177,6 +177,24 @@ All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Ni
 > **UNVERIFIED STANDARDS:** 1080p/29.97, 1080p/30, and 2160p variants have been removed from the MacHuna dropdown pending verification. Do not add them back without confirmed K-Watch reference files. SD standards (625/50, 525/59.94) and sF (segmented frame) variants are supported by K-Watch but not implemented in MacHuna.
 
 > **HOW TO VERIFY A NEW STANDARD:** Convert any file in K-Watch with the target standard selected. Run `xxd -l 512 output.SWS` and read offset 0x188 (4 bytes) and 0x18C (4 bytes). Both values are needed.
+
+### K-Watch Reference File Analysis (2026-05-09)
+
+Two K-Watch reference files were hex-analysed to investigate a potential std_code discrepancy and to understand interlaced frame storage.
+
+**50.SWS — 1080p/50 fresh K-Watch session:**
+- std_code: `0x4923` ✓ matches table
+- fmt_variant: `0x18` ✓ matches table
+- Conclusion: VIDEO_STANDARDS table is correct for 1080p/50. The 0x8000 bit is NOT universally set by K-Watch. It is confirmed unique to 1080i/59.94.
+
+**201.SWS — 1080i/50 fresh K-Watch session (TNTS201_30_0030.tga, 30-frame TGA sequence):**
+- std_code: `0xc923` (unexpected — our table says `0x4923` for 1080i/50)
+- fmt_variant: `0x08` ✓ matches table
+- frame_count: 30 (matches source TGA count — confirms K-Watch stores full frames, NOT separate fields)
+- File size verified: 512 + 5,529,600 × 30 × 2 = 331,776,512 bytes ✓
+- Anomaly: user confirmed fresh K-Watch session, cause unknown — likely a K-Watch glitch on that conversion. The std_code mismatch is not consistent with 50.SWS and is considered an isolated outlier.
+
+**Key finding for transcoding:** K-Watch stores full frames for interlaced content. For 1080i/50, frame_count matches the source TGA frame count (30 frames = 25fps). This confirms FORMAT_VARIANT_FPS uses frame rates (25fps for 1080i/50), not field rates (50fps).
 
 ### Playback Flags (offset 0x188, low byte)
 
@@ -258,6 +276,36 @@ Not observed in the reference file and almost certainly not supported given the 
 - TGA sequence audio is out of scope
 
 Note: The Audio Spec.pdf was written before full hex analysis and incorrectly states 24-bit PCM. The actual format is 16-bit. The spec PDF can be disregarded -- the implementation in extract_audio() is correct.
+
+---
+
+## Format Transcoding (Progressive → Interlaced)
+
+### Status
+Not yet implemented. All analysis complete. One hardware confirmation needed before coding begins.
+
+### What it does
+Allows a progressive source (e.g. 1080p/50 MOV) to be correctly converted to an interlaced SWS (e.g. 1080i/50) rather than just storing progressive data in an interlaced wrapper (which plays at double speed on the Kahuna).
+
+### How it works
+ffmpeg `tinterlace` filter weaves pairs of progressive frames into a single interlaced frame:
+- Two progressive frames (e.g. frame 1 and frame 2) → one interlaced frame with alternating fields
+- Source frame count halves: a 50-frame 1080p/50 clip becomes 25-frame 1080i/50
+
+The ffmpeg flag is either:
+- `-vf tinterlace=mode=interleave_top` for Top Field First (TFF)
+- `-vf tinterlace=mode=interleave_bottom` for Bottom Field First (BFF)
+
+### The last unknown: field order
+BFF vs TFF must be confirmed on a live Kahuna before implementing. Wrong field order produces "comb teeth" artefacts on the desk rather than clean interlacing. PAL HD interlaced (SMPTE) is typically TFF, but Kahuna-specific behaviour must be verified. The confirmation test is: convert a short known-progressive clip with MacHuna using tinterlace, play on the Kahuna, observe whether it looks clean (correct) or combed (wrong order).
+
+### Implementation scope (~50–80 lines)
+The current P-to-I mismatch warning in `build_sws_header` is already the hook:
+1. Replace warning with actual conversion: add the tinterlace filter to the ffmpeg call when source is progressive and output standard is interlaced
+2. Calculate frame count from woven output (source_frames ÷ 2)
+3. Header fields use the target standard's std_code and fmt_variant as normal
+
+No architectural change needed. The interlaced detection via ffprobe `field_order` (added in v1.5.8) is already in place.
 
 ---
 

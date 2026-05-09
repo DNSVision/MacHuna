@@ -53,7 +53,7 @@ This was a major reverse engineering session. All nine supported video standards
 
 **Unverified standards removed from dropdown (v1.5.9):** 1080p/29.97, 1080p/30, 2160p variants. These need K-Watch reference files before being added back.
 
-**Progressive-to-interlaced warning (v1.5.8):** MacHuna now detects source scan type via ffprobe `field_order` field and logs a warning if a progressive source is converted to an interlaced standard. The file will load on the Kahuna but play at double speed. Genuine interlaced output requires the ffmpeg `tinterlace` filter - deferred to roadmap.
+**Progressive-to-interlaced warning (v1.5.8):** MacHuna detects source scan type via ffprobe `field_order` and logs a warning if a progressive source is converted to an interlaced standard. The file loads on the Kahuna but plays at double speed. Genuine interlaced output is the next major feature - see Roadmap.
 **Critical discovery confirmed by hex analysis of K-Watch reference files:**
 
 - Offset 0x18C (format variant field) was previously hardcoded to 0x18 in MacHuna
@@ -78,19 +78,8 @@ This was a major reverse engineering session. All nine supported video standards
 - Killing ffmpeg raises `subprocess.CalledProcessError` with SIGKILL (-9) - this is caught by WatchService `_scan()` exception handler and logged. This is correct behaviour, not a bug.
 - Conversion log is not written if batch is cancelled
 
-### File Delivery Method (Important)
-Due to iCloud Drive interfering with downloads on David's Mac, the reliable way to deliver code changes is via terminal patch scripts:
-```bash
-python3.12 << 'PATCHSCRIPT'
-with open('/Users/davidsteer/Developer/MacHuna/machuna.py', 'r') as f:
-    src = f.read()
-src = src.replace('OLD', 'NEW')
-with open('/Users/davidsteer/Developer/MacHuna/machuna.py', 'w') as f:
-    f.write(src)
-print("Done")
-PATCHSCRIPT
-```
-Always verify with grep after patching. Always test with `python3.12 ~/Developer/MacHuna/machuna.py --gui` before building.
+### File Delivery Method
+Claude Code CLI has direct file system access and edits machuna.py directly using the Edit tool. No patch scripts needed. Always test with `python3.12 ~/Developer/MacHuna/machuna.py --gui` before building.
 
 ---
 
@@ -284,7 +273,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ## Roadmap
 
 ### MacHuna
-- Genuine interlaced output via ffmpeg `tinterlace` filter - converts progressive source to proper interlaced pixel data when an interlaced standard is selected. Field order almost certainly BFF for PAL/50Hz but must be confirmed on hardware before implementing.
+- **Format transcoding (P→I):** Convert progressive source to genuine interlaced SWS via ffmpeg `tinterlace` filter. All analysis done (see DEVELOPMENT_NOTES.md "Format Transcoding" section). Implementation is ~50-80 lines. The one remaining unknown is field order (BFF vs TFF) — must be confirmed on a live Kahuna before coding. Test: convert a short known-progressive clip with MacHuna using tinterlace, play on desk, observe clean vs combed image. Once confirmed, the mismatch warning is replaced with real conversion.
 - Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
 - Ignore Alpha behaviour for TGA sequences - fixed in v1.5.11
 - TGA in Batch Convert - clarify single-frame only, or detect sequences and warn
@@ -372,7 +361,7 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 - Metric measurements unless otherwise requested
 - No Chrome, no Google products
 - Version bumps: patch version (x.x.X) for bugfixes, minor version (x.X.0) for new features
-- Deliver code changes as terminal patch scripts, not file downloads (iCloud Drive interferes with downloads)
+- Deliver code changes via Claude Code CLI (direct file edit), not patch scripts or file downloads
 
 ---
 
