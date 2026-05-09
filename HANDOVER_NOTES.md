@@ -9,8 +9,8 @@ Paste this document into a new Claude session to resume development. Read carefu
 ### Development Workflow (updated)
 David now uses Claude Code CLI directly. Claude has full file system access and can read, edit, and commit files without patch scripts. The old patch script workaround is no longer needed. Test command remains `python3.12 ~/Developer/MacHuna/machuna.py --gui`.
 
-### Code Review Fixes (v1.5.10-v1.5.13, May 2026)
-A comprehensive code review was conducted at the start of this session. Four bugs were found and fixed:
+### Code Review Fixes (v1.5.10-v1.5.15, May 2026)
+A comprehensive code review was conducted at the start of this session. Six bugs were found and fixed:
 
 1. **Format variant (0x18C) wrong for 7 of 9 standards - fixed in v1.5.10.** The v1.5.8 reverse engineering confirmed the correct per-standard values but the code was never updated - it still used the v1.5.5 simple interlaced/progressive logic. A `FORMAT_VARIANTS` dict now maps each standard to its confirmed value. A `FORMAT_VARIANT_FPS` reverse lookup was also added (used by fixes 3 and 4 below).
 
@@ -19,6 +19,10 @@ A comprehensive code review was conducted at the start of this session. Four bug
 3. **Stop/Cancel could not kill ffmpeg during audio extraction or TGA sequence conversion - fixed in v1.5.12.** Several ffmpeg calls were using `subprocess.run` directly instead of the `_run_ffmpeg` wrapper, making them invisible to `_kill_current_ffmpeg()`. All ffmpeg calls now go through the wrapper.
 
 4. **SWSPlayer and Hula reported wrong fps for most standards - fixed in v1.5.13.** Both header parsers were looking up fps from the standard code (0x188), but eight standards share code 0x4923 so the lookup was ambiguous. Both now read the format variant (0x18C) first and use `FORMAT_VARIANT_FPS` for an unambiguous lookup, with the old standard code lookup retained as fallback for third-party files.
+
+5. **SWSPlayer played interlaced files at double speed - fixed in v1.5.14.** `FORMAT_VARIANT_FPS` was returning the field rate (50/59.94/60) for interlaced standards instead of the frame rate (25/29.97/30). Each SWS frame is a full frame, not a field. Confirmed on hardware with a 1080i/50 wipe.
+
+6. **SWSPlayer playback jitter - fixed in v1.5.15.** The playback loop was sleeping relative to each frame's start time, so sleep overshoot accumulated as drift. The loop now sleeps to an absolute target time derived from a fixed origin, so any overshoot self-corrects on the next frame.
 
 **Remaining medium priority items from the review:**
 - Batch Convert allows .tga selection - technically valid for single-frame stills but could confuse operators trying to process sequences. Options: clarify in UI, detect probable sequences and warn, or restrict entirely.
@@ -101,7 +105,7 @@ Both repos are currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.13
+- **MacHuna:** v1.5.15
 - **Hula:** v0.1.1
 
 ---
