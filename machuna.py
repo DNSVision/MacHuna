@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.18"
+VERSION = "1.5.19"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -95,6 +95,13 @@ FORMAT_VARIANT_FPS = {
     0x16: 60.0,    # 1080p60
     0x10: 50.0,    # 720p50
     0x0f: 59.94,   # 720p5994
+}
+
+# Human-readable standard names for display, keyed by format variant (0x18C).
+FORMAT_VARIANT_DISPLAY = {
+    0x08: '1080i/50',   0x05: '1080i/59.94', 0x04: '1080i/60',
+    0x13: '1080p/25',   0x18: '1080p/50',    0x17: '1080p/59.94',
+    0x16: '1080p/60',   0x10: '720p/50',     0x0f: '720p/59.94',
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -1133,6 +1140,21 @@ PANEL_W = 480
 PANEL_H = 270
 
 
+def _fmt_timecode(frame_count: int, fps: float) -> str:
+    """Return compact wall-clock duration, omitting leading zero HH: or HH:MM: sections."""
+    if not fps:
+        return "--"
+    total = frame_count / fps
+    hh = int(total // 3600)
+    mm = int((total % 3600) // 60)
+    ss = total % 60
+    if hh:
+        return f"{hh:02d}:{mm:02d}:{ss:05.2f}s"
+    if mm:
+        return f"{mm:02d}:{ss:05.2f}s"
+    return f"{ss:.2f}s"
+
+
 class SWSHeader:
     """Parsed SWS file header (player read side)."""
 
@@ -1163,6 +1185,7 @@ class SWSHeader:
         self.audio_offset = aud_offset_div32 * 32 if self.has_audio else 0
         fmt_variant       = struct.unpack_from('>I', raw, OFF_FMT_VARIANT)[0]
         self.fps          = self._get_fps(self.std_code, fmt_variant)
+        self.standard     = FORMAT_VARIANT_DISPLAY.get(fmt_variant, f'0x{fmt_variant:02x}')
         self.auto_play    = bool(self.std_code & 0x04)
         self.loop_play    = bool(self.std_code & 0x08)
 
@@ -1596,9 +1619,10 @@ class SWSPlayer(tk.Toplevel):
         if header.auto_play:  flags.append("Auto Play")
         if header.loop_play:  flags.append("Loop Play")
         flags_str = f"  [{', '.join(flags)}]" if flags else ""
+        std = header.standard.replace('/', '')
+        tc = _fmt_timecode(header.frame_count, header.fps)
         self._info_var.set(
-            f"{header.width}×{header.height}  {header.fps:.2f}fps  "
-            f"{header.frame_count} frames  "
+            f"{std}  {header.frame_count}frms  {tc}  "
             f"Key: {'Yes' if header.has_key else 'No'}  "
             f"Audio: {'Yes' if header.has_audio else 'No'}"
             f"{flags_str}"
@@ -1900,8 +1924,9 @@ class HulaSWSHeader:
         self.has_audio   = (aud_off_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_off_div32 * 32 if self.has_audio else 0
         std_code         = struct.unpack_from('>I', raw, _HULA_OFF_STD_CODE)[0]
-        fmt_variant      = struct.unpack_from('>I', raw, _HULA_OFF_FMT_VARIANT)[0]
-        self.fps         = self._get_fps(std_code, fmt_variant)
+        self.fmt_variant = struct.unpack_from('>I', raw, _HULA_OFF_FMT_VARIANT)[0]
+        self.fps         = self._get_fps(std_code, self.fmt_variant)
+        self.standard    = FORMAT_VARIANT_DISPLAY.get(self.fmt_variant, f'0x{self.fmt_variant:02x}')
 
     @staticmethod
     def _get_fps(std_code: int, fmt_variant: int = 0) -> float:
@@ -2139,12 +2164,18 @@ class HulaWindow(tk.Toplevel):
         # Files
         files_frame = ttk.LabelFrame(self, text="SWS Files")
         files_frame.pack(fill='x', **pad)
-        self._files_var = tk.StringVar(value="No files selected.")
-        tk.Label(files_frame, textvariable=self._files_var,
-                 font=('Helvetica', 11), anchor='w'
-                 ).pack(side='left', fill='x', expand=True)
+        list_frame = tk.Frame(files_frame)
+        list_frame.pack(side='left', fill='both', expand=True)
+        self._file_listbox = tk.Listbox(
+            list_frame, font=('Menlo', 11), height=4,
+            activestyle='none', selectmode='browse', state='disabled')
+        self._file_listbox.pack(side='left', fill='both', expand=True)
+        sb = ttk.Scrollbar(list_frame, orient='vertical',
+                           command=self._file_listbox.yview)
+        sb.pack(side='left', fill='y')
+        self._file_listbox.config(yscrollcommand=sb.set)
         ttk.Button(files_frame, text="Open Files…",
-                   command=self._open_files).pack(side='left', padx=(PAD, 0))
+                   command=self._open_files).pack(side='left', padx=(PAD, 0), anchor='n')
 
         # Buttons
         btn_frame = tk.Frame(self)
@@ -2181,10 +2212,22 @@ class HulaWindow(tk.Toplevel):
         paths = filedialog.askopenfilenames(
             title="Select SWS files", parent=self,
             filetypes=[('SWS files', '*.SWS *.sws'), ('All files', '*.*')])
-        if paths:
-            self._selected = sorted(paths)
-            n = len(self._selected)
-            self._files_var.set(f"{n} file{'s' if n != 1 else ''} selected.")
+        if not paths:
+            return
+        self._selected = sorted(paths)
+        self._file_listbox.config(state='normal')
+        self._file_listbox.delete(0, 'end')
+        for path in self._selected:
+            name = os.path.basename(path)
+            try:
+                h = HulaSWSHeader(path)
+                std = h.standard.replace('/', '')
+                tc = _fmt_timecode(h.frame_count, h.fps)
+                meta = f"{std}  {h.frame_count}frms  {tc}"
+            except Exception:
+                meta = "unknown format"
+            self._file_listbox.insert('end', f"{name:<20}  {meta}")
+        self._file_listbox.config(state='disabled')
 
     def _on_target_change(self):
         is_sony = self._target_var.get() == HULA_TARGET_SONY_MVS

@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.19 — 2026-05-09
+
+### Changed
+- SWS Player and Hula file list now display compact broadcast-style metadata: standard (e.g. `1080i50`), frame count (e.g. `30frms`), and wall-clock duration (e.g. `1.20s`). Replaces the previous `width×height  fps  frames` format.
+- Duration display omits leading zero sections — clips under a minute show seconds only (`1.20s`), longer clips show `MM:SS.xxs` or `HH:MM:SS.xxs`.
+- SWS Player standard name now derived from the format variant byte (same as Hula), ensuring consistent labelling across both tools.
+
+---
+
 ## v1.5.18 — 2026-05-09
 
 ### Added
