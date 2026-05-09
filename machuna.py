@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.12"
+VERSION = "1.5.13"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -80,6 +80,20 @@ FORMAT_VARIANTS = {
     '1080p60':   0x16,   # confirmed
     '720p50':    0x10,   # confirmed
     '720p5994':  0x0f,   # confirmed
+}
+
+# Reverse lookup: format variant value -> fps. All variant values are unique so
+# this gives an unambiguous fps reading. Used by SWSHeader and HulaSWSHeader.
+FORMAT_VARIANT_FPS = {
+    0x08: 50.0,    # 1080i50
+    0x05: 59.94,   # 1080i5994
+    0x04: 60.0,    # 1080i60
+    0x13: 25.0,    # 1080p25
+    0x18: 50.0,    # 1080p50
+    0x17: 59.94,   # 1080p5994
+    0x16: 60.0,    # 1080p60
+    0x10: 50.0,    # 720p50
+    0x0f: 59.94,   # 720p5994
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -1065,9 +1079,10 @@ import numpy as np
 from PIL import Image, ImageTk
 
 # Header field offsets (player read side -- matches build_sws_header write side)
-OFF_MAGIC    = 0x000
-OFF_STD_CODE = 0x188
-OFF_WIDTH    = 0x190
+OFF_MAGIC       = 0x000
+OFF_STD_CODE    = 0x188
+OFF_FMT_VARIANT = 0x18C
+OFF_WIDTH       = 0x190
 OFF_HEIGHT   = 0x194
 OFF_PLANE_SZ = 0x1A0
 OFF_FRAMES   = 0x1A4
@@ -1120,12 +1135,16 @@ class SWSHeader:
         # checking aud_frame_size == 0x1680, which varies between workflows.
         self.has_audio    = (aud_offset_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_offset_div32 * 32 if self.has_audio else 0
-        self.fps          = self._get_fps(self.std_code)
+        fmt_variant       = struct.unpack_from('>I', raw, OFF_FMT_VARIANT)[0]
+        self.fps          = self._get_fps(self.std_code, fmt_variant)
         self.auto_play    = bool(self.std_code & 0x04)
         self.loop_play    = bool(self.std_code & 0x08)
 
     @staticmethod
-    def _get_fps(std_code: int) -> float:
+    def _get_fps(std_code: int, fmt_variant: int = 0) -> float:
+        if fmt_variant in FORMAT_VARIANT_FPS:
+            return FORMAT_VARIANT_FPS[fmt_variant]
+        # Fallback for third-party files with unrecognised format variant
         low16 = std_code & 0xFFFF
         if low16 in STD_CODE_FPS:
             return STD_CODE_FPS[low16]
@@ -1815,9 +1834,10 @@ _HULA_OFF_WIDTH    = 0x190
 _HULA_OFF_HEIGHT   = 0x194
 _HULA_OFF_PLANE_SZ = 0x1A0
 _HULA_OFF_FRAMES   = 0x1A4
-_HULA_OFF_PLAY_CNT = 0x1A8
-_HULA_OFF_AUD_OFF  = 0x1E8
-_HULA_OFF_AUD_FMT  = 0x1EC
+_HULA_OFF_PLAY_CNT    = 0x1A8
+_HULA_OFF_FMT_VARIANT = 0x18C
+_HULA_OFF_AUD_OFF     = 0x1E8
+_HULA_OFF_AUD_FMT     = 0x1EC
 
 # FPS lookup (same as SWSHeader in player section -- kept separate for clarity)
 _HULA_STD_CODE_FPS = {
@@ -1848,10 +1868,14 @@ class HulaSWSHeader:
         self.has_audio   = (aud_off_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_off_div32 * 32 if self.has_audio else 0
         std_code         = struct.unpack_from('>I', raw, _HULA_OFF_STD_CODE)[0]
-        self.fps         = self._get_fps(std_code)
+        fmt_variant      = struct.unpack_from('>I', raw, _HULA_OFF_FMT_VARIANT)[0]
+        self.fps         = self._get_fps(std_code, fmt_variant)
 
     @staticmethod
-    def _get_fps(std_code: int) -> float:
+    def _get_fps(std_code: int, fmt_variant: int = 0) -> float:
+        if fmt_variant in FORMAT_VARIANT_FPS:
+            return FORMAT_VARIANT_FPS[fmt_variant]
+        # Fallback for third-party files with unrecognised format variant
         low16 = std_code & 0xFFFF
         if low16 in _HULA_STD_CODE_FPS:
             return _HULA_STD_CODE_FPS[low16]

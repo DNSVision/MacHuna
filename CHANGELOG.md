@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.13 — 2026-05-09
+
+### Fixed
+- SWS Player and Hula now determine fps by reading the format variant field (0x18C) rather than the standard code (0x188). Since eight standards share the same standard code (0x4923), the old lookup returned 50fps for everything including 1080p/25 (should be 25fps) and 60fps standards (should be 60fps). The format variant values are all unique so the new lookup is unambiguous. The standard code lookup is retained as a fallback for third-party files.
+
+---
+
 ## v1.5.12 — 2026-05-09
 
 ### Fixed
