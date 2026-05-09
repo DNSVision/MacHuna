@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.14 — 2026-05-09
+
+### Fixed
+- SWS Player now plays interlaced files at the correct speed. 1080i/50, 1080i/59.94, and 1080i/60 were playing at double speed because the fps lookup was returning the field rate (50/59.94/60) rather than the frame rate (25/29.97/30). Each stored SWS frame is a full frame, not a field.
+
+---
+
 ## v1.5.13 — 2026-05-09
 
 ### Fixed

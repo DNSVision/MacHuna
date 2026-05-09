@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.13"
+VERSION = "1.5.14"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -85,9 +85,9 @@ FORMAT_VARIANTS = {
 # Reverse lookup: format variant value -> fps. All variant values are unique so
 # this gives an unambiguous fps reading. Used by SWSHeader and HulaSWSHeader.
 FORMAT_VARIANT_FPS = {
-    0x08: 50.0,    # 1080i50
-    0x05: 59.94,   # 1080i5994
-    0x04: 60.0,    # 1080i60
+    0x08: 25.0,    # 1080i50   -- 25 frames/sec (50 fields/sec)
+    0x05: 29.97,   # 1080i5994 -- 29.97 frames/sec (59.94 fields/sec)
+    0x04: 30.0,    # 1080i60   -- 30 frames/sec (60 fields/sec)
     0x13: 25.0,    # 1080p25
     0x18: 50.0,    # 1080p50
     0x17: 59.94,   # 1080p5994
