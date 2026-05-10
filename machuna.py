@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.24"
+VERSION = "1.5.25"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -634,11 +634,8 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
     info = get_video_info(input_path)
     w, h = info['width'], info['height']
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
-    if video_standard in _interlaced_standards and not info['is_interlaced']:
-        log(f"  WARNING: Source is progressive but {video_standard} is an interlaced standard.")
-        log(f"  The header will be correct but the video data will remain progressive.")
-        log(f"  On the Kahuna this will play back at double speed.")
-        log(f"  For correct interlaced output, use a native interlaced source or convert via K-Watch.")
+    if video_standard in _interlaced_standards:
+        log(f"  Note: still image stored as progressive data in an interlaced ({video_standard}) wrapper — normal for graphics.")
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_raw = os.path.join(tmp, 'fill.v210')
@@ -999,6 +996,7 @@ class WatchService:
                  include_audio: bool = True,
                  auto_play: bool = False,
                  loop_play: bool = False,
+                 slot_override: int = 0,
                  log=print):
         self.watch_dir      = watch_dir
         self.dest_dir       = dest_dir
@@ -1009,10 +1007,13 @@ class WatchService:
         self.include_audio  = include_audio
         self.auto_play      = auto_play
         self.loop_play      = loop_play
+        self.slot_override  = slot_override
         self.log            = log
         self._stop_event    = threading.Event()
-        self._seen           = set()
-        self._pending_seqs: dict = {}  # file_num -> {seq -> path}
+        self._seen          = set()
+        self._pending_seqs: dict = {}   # filename_fnum -> {seq -> path}
+        self._slot_map: dict     = {}   # filename_fnum -> actual output slot
+        self._next_slot: int     = slot_override if slot_override > 0 else 1
 
         os.makedirs(dest_dir, exist_ok=True)
 
@@ -1086,6 +1087,11 @@ class WatchService:
         fnum  = meta['file_num']
         total = meta['total']
 
+        # Assign override slot on first encounter of this filename number.
+        if self.slot_override > 0 and fnum not in self._slot_map:
+            self._slot_map[fnum] = self._next_slot
+            self._next_slot += 1
+
         if fnum not in self._pending_seqs:
             self._pending_seqs[fnum] = {}
         self._pending_seqs[fnum][meta['seq']] = fpath
@@ -1093,7 +1099,10 @@ class WatchService:
         if len(self._pending_seqs[fnum]) == total:
             frames = [self._pending_seqs[fnum][i+1] for i in range(total)]
             del self._pending_seqs[fnum]
-            convert_tga_sequence(frames, fnum, self.dest_dir,
+            actual_fnum = self._slot_map.get(fnum, fnum) if self.slot_override > 0 else fnum
+            if self.slot_override > 0:
+                self.log(f"  Slot override: filename slot {fnum} → output slot {actual_fnum}")
+            convert_tga_sequence(frames, actual_fnum, self.dest_dir,
                                  self.video_standard, self.split_fat32,
                                  self.delete_source, self.log,
                                  ignore_alpha=self.ignore_alpha,
@@ -2562,7 +2571,7 @@ def launch_gui():
                     'include_audio': include_audio_var.get(),
                     'auto_play': auto_play_var.get(),
                     'loop_play': loop_play_var.get(),
-                    'start_num': start_num_var.get(),
+                    'start_num':     start_num_var.get(),
                     'hula_dest':        s.get('hula_dest', ''),
                     'hula_target':      s.get('hula_target', HULA_TARGET_KAYENNE_MOV),
                     'hula_standard':    s.get('hula_standard', '1080p50'),
@@ -2579,9 +2588,9 @@ def launch_gui():
         root = tk.Tk()
     root.title(f"MacHuna v{VERSION}")
     root.resizable(True, True)
-    root.minsize(620, 340)
+    root.minsize(620, 380)
     # Restore saved window geometry, or use a sensible default
-    _saved_geo = load_settings().get('window_geometry', '1121x592')
+    _saved_geo = load_settings().get('window_geometry', '960x460')
     root.geometry(_saved_geo)
 
     # ── Style ──
@@ -2630,24 +2639,36 @@ def launch_gui():
     frm3 = ttk.LabelFrame(root, text="Settings")
     frm3.pack(fill='x', **pad)
 
-    ttk.Label(frm3, text="Video Standard:").pack(side='left', **pad)
+    # Row 1: standard + slot override
+    frm3_row1 = tk.Frame(frm3)
+    frm3_row1.pack(fill='x', anchor='w')
+    ttk.Label(frm3_row1, text="Video Standard:").pack(side='left', **pad)
     std_var = tk.StringVar(value='1080i50')
-    std_cb  = ttk.Combobox(frm3, textvariable=std_var, width=12,
+    std_cb  = ttk.Combobox(frm3_row1, textvariable=std_var, width=12,
                             values=list(VIDEO_STANDARDS.keys()), state='readonly')
     std_cb.pack(side='left', **pad)
+    ttk.Label(frm3_row1, text="Slot override:").pack(side='left', **pad)
+    slot_override_var = tk.IntVar(value=0)
+    ttk.Spinbox(frm3_row1, textvariable=slot_override_var, from_=0, to=9999,
+                width=5).pack(side='left', **pad)
+    ttk.Label(frm3_row1, text="(0 = use filename)",
+              font=('Helvetica', 10), foreground='#888888').pack(side='left')
 
+    # Row 2: conversion options
+    frm3_row2 = tk.Frame(frm3)
+    frm3_row2.pack(fill='x', anchor='w')
     split_var         = tk.BooleanVar(value=True)
     delete_var        = tk.BooleanVar(value=False)
     ignore_alpha_var  = tk.BooleanVar(value=False)
     include_audio_var = tk.BooleanVar(value=True)
     auto_play_var     = tk.BooleanVar(value=False)
     loop_play_var     = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frm3, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
     start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
@@ -2690,13 +2711,13 @@ def launch_gui():
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
 
-    ttk.Label(frm5, text="MOV, MP4, MXF, PNG, BMP, JPG only. For TGA sequences use the Watch Folder.",
-              foreground='#888888').pack(side='left', **pad)
-
     ttk.Button(frm5, text="SWS Player",
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
     ttk.Button(frm5, text="Hula",
                command=lambda: HulaWindow(root, s, save_settings)).pack(side='right', **pad)
+
+    ttk.Label(frm5, text="MOV, MP4, MXF, PNG, BMP, JPG only. TGA → Watch Folder.",
+              foreground='#888888').pack(side='left', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
@@ -2926,6 +2947,7 @@ def launch_gui():
                            include_audio=include_audio_var.get(),
                            auto_play=auto_play_var.get(),
                            loop_play=loop_play_var.get(),
+                           slot_override=slot_override_var.get(),
                            log=log)
         svc.start()
         service_ref[0] = svc

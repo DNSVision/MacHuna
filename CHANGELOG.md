@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.25 — 2026-05-10
+
+### Added
+- **Slot override** field in the Settings row. Set to any number to override the SWS slot derived from the TGA filename; subsequent sequences auto-increment from there. Defaults to 0 (use filename) and resets to 0 on every launch.
+
+### Changed
+- Settings row split into two lines — standard/slot override on row 1, conversion options (Split, Delete, Ignore alpha, Include audio, Auto play, Loop play) on row 2.
+- Hula and SWS Player buttons in the Batch Convert row now always visible regardless of window width (packing order fixed).
+- Default window size updated to 960×460 to better fit the new two-row settings layout.
+- Batch Convert hint text shortened to "MOV, MP4, MXF, PNG, BMP, JPG only. TGA → Watch Folder."
+- Fixed misleading "plays at double speed" warning in `convert_still` — a single still stored progressive in an interlaced wrapper is normal for graphics.
+
+---
+
 ## v1.5.24 — 2026-05-10
 
 ### Fixed
