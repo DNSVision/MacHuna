@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.28"
+VERSION = "1.5.29"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -785,7 +785,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          log=print,
                          ignore_alpha: bool = False,
                          auto_play: bool = False,
-                         loop_play: bool = False):
+                         loop_play: bool = False,
+                         write_log: bool = True):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
@@ -881,24 +882,23 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
     log(f"  Done → {dest_path}")
 
-    # Write conversion log to destination folder
-    # Sequence identifier = everything before the first underscore in the first TGA filename
-    first_name = Path(tga_files[0]).stem
-    seq_id = first_name.split('_')[0] if '_' in first_name else first_name
-    date_str = datetime.now().strftime('%d-%m-%Y')
-    log_filename = f"MacHuna_Log_{file_number}_{seq_id}_{date_str}.txt"
-    log_path = os.path.join(dest_dir, log_filename)
-    try:
-        with open(log_path, 'w') as lf:
-            lf.write(f"MacHuna Conversion Log\n")
-            lf.write(f"{'=' * 40}\n")
-            lf.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
-            lf.write(f"Standard: {video_standard}\n")
-            lf.write(f"{'=' * 40}\n\n")
-            lf.write(f"{file_number:4d}  {seq_id}  [OK]\n")
-        log(f"  Conversion log saved: {log_filename}")
-    except Exception as e:
-        log(f"  Could not write log file: {e}")
+    if write_log:
+        first_name = Path(tga_files[0]).stem
+        seq_id = first_name.split('_')[0] if '_' in first_name else first_name
+        date_str = datetime.now().strftime('%d-%m-%Y')
+        log_filename = f"MacHuna_Log_{file_number}_{seq_id}_{date_str}.txt"
+        log_path = os.path.join(dest_dir, log_filename)
+        try:
+            with open(log_path, 'w') as lf:
+                lf.write(f"MacHuna Conversion Log\n")
+                lf.write(f"{'=' * 40}\n")
+                lf.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
+                lf.write(f"Standard: {video_standard}\n")
+                lf.write(f"{'=' * 40}\n\n")
+                lf.write(f"{file_number:4d}  {seq_id}  [OK]\n")
+            log(f"  Conversion log saved: {log_filename}")
+        except Exception as e:
+            log(f"  Could not write log file: {e}")
 
     return dest_path
 
@@ -997,7 +997,8 @@ class WatchService:
                  auto_play: bool = False,
                  loop_play: bool = False,
                  slot_override: int = 0,
-                 log=print):
+                 log=print,
+                 on_batch_complete=None):
         self.watch_dir      = watch_dir
         self.dest_dir       = dest_dir
         self.video_standard = video_standard
@@ -1009,11 +1010,13 @@ class WatchService:
         self.loop_play      = loop_play
         self.slot_override  = slot_override
         self.log            = log
-        self._stop_event    = threading.Event()
-        self._seen          = set()
-        self._pending_seqs: dict = {}   # filename_fnum -> {seq -> path}
-        self._slot_map: dict     = {}   # filename_fnum -> actual output slot
+        self._stop_event         = threading.Event()
+        self._seen               = set()
+        self._pending_seqs: dict = {}   # file_num -> {seq -> path}
+        self._slot_map: dict     = {}   # file_num -> actual output slot
         self._next_slot: int     = slot_override if slot_override > 0 else 1
+        self._tga_results: list  = []   # (fnum, seq_id, status) per completed sequence
+        self._on_batch_complete  = on_batch_complete
 
         os.makedirs(dest_dir, exist_ok=True)
 
@@ -1038,6 +1041,8 @@ class WatchService:
             entries = sorted(os.listdir(self.watch_dir))
         except OSError:
             return
+
+        new_tga_this_scan = False
 
         for fname in entries:
             fpath = os.path.join(self.watch_dir, fname)
@@ -1074,13 +1079,19 @@ class WatchService:
                                   auto_play=self.auto_play,
                                   loop_play=self.loop_play)
 
-                elif meta['type'] == 'tga_seq' and meta['is_fill']:
-                    self._accumulate_seq(fname, fpath, meta, entries)
+                elif meta['type'] == 'tga_seq':
+                    new_tga_this_scan = True
+                    if meta['is_fill']:
+                        self._accumulate_seq(fname, fpath, meta, entries)
 
             except Exception as e:
                 import traceback
                 self.log(f"  ERROR converting {fname}: {e}")
                 self.log(f"  {traceback.format_exc()}")
+
+        # Batch complete: results accumulated, no incomplete sequences, quiet scan
+        if self._tga_results and not self._pending_seqs and not new_tga_this_scan:
+            self._finish_tga_batch()
 
     def _accumulate_seq(self, fname, fpath, meta, all_entries):
         """Collect all TGA frames for a sequence then convert when complete."""
@@ -1102,12 +1113,42 @@ class WatchService:
             actual_fnum = self._slot_map.get(fnum, fnum) if self.slot_override > 0 else fnum
             if self.slot_override > 0:
                 self.log(f"  Slot override: filename slot {fnum} → output slot {actual_fnum}")
-            convert_tga_sequence(frames, actual_fnum, self.dest_dir,
-                                 self.video_standard, self.split_fat32,
-                                 self.delete_source, self.log,
-                                 ignore_alpha=self.ignore_alpha,
-                                 auto_play=self.auto_play,
-                                 loop_play=self.loop_play)
+            first_name = Path(frames[0]).stem
+            seq_id = first_name.split('_')[0] if '_' in first_name else first_name
+            try:
+                convert_tga_sequence(frames, actual_fnum, self.dest_dir,
+                                     self.video_standard, self.split_fat32,
+                                     self.delete_source, self.log,
+                                     ignore_alpha=self.ignore_alpha,
+                                     auto_play=self.auto_play,
+                                     loop_play=self.loop_play,
+                                     write_log=False)
+                self._tga_results.append((actual_fnum, seq_id, 'OK'))
+            except Exception as e:
+                self._tga_results.append((actual_fnum, seq_id, f'ERROR: {e}'))
+                raise
+
+    def _finish_tga_batch(self):
+        results = self._tga_results[:]
+        self._tga_results.clear()
+        date_str = datetime.now().strftime('%d-%m-%Y')
+        log_filename = f"MacHuna_Log_{date_str}.txt"
+        log_path = os.path.join(self.dest_dir, log_filename)
+        try:
+            max_len = max(len(seq_id) for _, seq_id, _ in results)
+            with open(log_path, 'w') as f:
+                f.write("MacHuna Conversion Log\n")
+                f.write(f"{'=' * 40}\n")
+                f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
+                f.write(f"Standard: {self.video_standard}\n")
+                f.write(f"{'=' * 40}\n\n")
+                for fnum, seq_id, status in results:
+                    f.write(f"{fnum:4d}  {seq_id:<{max_len}}  [{status}]\n")
+            self.log(f"Conversion log saved: {log_filename}")
+        except Exception as e:
+            self.log(f"  Could not write log file: {e}")
+        if self._on_batch_complete:
+            self._on_batch_complete()
 
     @staticmethod
     def _file_stable(path: str, wait: float = 0.5) -> bool:
@@ -3275,13 +3316,18 @@ def launch_gui():
             log(f"ERROR: {e}")
             return
         save_settings()
+        def on_batch_complete():
+            root.after(0, lambda: log("Batch complete — watch stopped automatically."))
+            root.after(0, stop_watching)
+
         svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(),
                            ignore_alpha=ignore_alpha_var.get(),
                            include_audio=include_audio_var.get(),
                            auto_play=auto_play_var.get(),
                            loop_play=loop_play_var.get(),
                            slot_override=slot_override_var.get(),
-                           log=log)
+                           log=log,
+                           on_batch_complete=on_batch_complete)
         svc.start()
         service_ref[0] = svc
         run_btn.config(state='disabled')

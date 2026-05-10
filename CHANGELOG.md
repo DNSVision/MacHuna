@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.29 — 2026-05-10
+
+### Added
+- **Single batch log for Watch Folder TGA conversions.** When a set of TGA sequences is processed via the Watch Folder, MacHuna now waits until all sequences in the batch are complete before writing one combined log file (e.g. `MacHuna_Log_10-05-2026.txt`) listing every slot, sequence name, and status. Previously a separate log was written per sequence.
+- **Watch Folder auto-stops after TGA batch completes.** Once all detected TGA sequences have been converted and no new TGA files arrive in the next scan cycle, the Watch service stops itself automatically and logs "Batch complete — watch stopped automatically."
+
+---
+
 ## v1.5.28 — 2026-05-10
 
 ### Fixed
