@@ -4,6 +4,24 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.22 — 2026-05-10
+
+### Changed
+- **Hula GUI redesigned:** Output target consolidated to three options — **Kayenne MOV**, **Kayenne TGA**, **Sony TGA**. When a TGA target is selected, a **Standard** dropdown (matching the main MacHuna standard picker — 1080i50, 1080p50, 720p50, etc.) appears. Interlaced standards trigger field-weaving automatically; progressive standards extract frames directly. Field order (BFF/TFF) shows only when an interlaced standard is selected. This replaces the old fixed "Sony MVS 25i" and "Sony MVS 50p" radio buttons.
+- **Hula now accepts MOV input** as well as SWS. The file picker accepts `.sws` and `.mov`. MOV → TGA uses ffmpeg frame extraction (progressive) or PIL field-weaving (interlaced), matching the SWS path. MOV input is not valid for the Kayenne MOV target.
+- `_hula_convert_tga_25i` renamed to `_hula_convert_tga_interlaced` and updated to support both Kayenne TGA and Sony TGA naming conventions.
+- `_hula_run_batch` renamed `sws_paths` parameter to `input_paths` and added `standard` parameter (replaces `fmt`).
+- Window title updated to "Hula — SWS / MOV Extractor".
+
+### Added
+- New `_hula_convert_mov_to_tga()` function handles MOV → TGA for all supported standards and both targets.
+- `hula_standard` and `hula_field_order` now persisted in saved settings.
+
+### Notes
+- **Kayenne TGA output parameters are UNCONFIRMED** pending hardware verification. Contact engineering to confirm before relying on Kayenne TGA output in production.
+
+---
+
 ## v1.5.21 — 2026-05-09
 
 ### Added

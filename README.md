@@ -20,7 +20,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
-- Built-in Hula SWS Extractor -- converts .SWS files back to Kayenne MOV, Kayenne TGA, or Sony MVS TGA format, launched directly from the MacHuna window
+- Built-in Hula SWS / MOV Extractor -- converts .SWS or .MOV files to Kayenne MOV, Kayenne TGA, or Sony TGA format across all supported video standards, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
@@ -86,14 +86,15 @@ For TGA sequences, use the Watch Folder service -- batch convert does not suppor
 
 Click the SWS Player button in the Batch Convert row to open any .SWS file in the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls.
 
-### Hula SWS Extractor
+### Hula SWS / MOV Extractor
 
-Click the Hula button in the Batch Convert row to open the Hula extractor. Converts .SWS files back to standard formats for use on other vision mixing desks:
+Click the Hula button in the Batch Convert row to open the Hula extractor. Accepts **.SWS** or **.MOV** input files and converts to standard formats for use on other vision mixing desks:
 
-- **Kayenne MOV** -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store
-- **Kayenne TGA** -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
-- **Sony MVS TGA (50p)** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store (progressive)
-- **Sony MVS TGA (25i)** -- field-woven interlaced TGA sequence for older Sony MVS desks that don't support 50P; includes BFF/TFF field order toggle
+- **Kayenne MOV** -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store (SWS input only)
+- **Kayenne TGA** *(UNCONFIRMED — awaiting hardware verification)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
+- **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
+
+For TGA targets, choose the **Standard** from the same dropdown used by the main converter (1080i50, 1080p50, 720p50, etc.). Interlaced standards automatically field-weave pairs of progressive frames into interlaced output; a **BFF/TFF field order** toggle appears for interlaced selections. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import).
 
 ### Large Files (>4GB)
 
@@ -106,7 +107,8 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 ## Roadmap
 
 - P→I field order hardware confirmation -- TFF field order is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
-- Sony MVS 25i field order hardware confirmation -- BFF is assumed for PAL/50Hz; flip the toggle in Hula if motion artefacts appear
+- Hula 25i field order hardware confirmation -- BFF is assumed for PAL/50Hz; flip the toggle in Hula if motion artefacts appear
+- Kayenne TGA output parameters hardware confirmation -- pending verification against a live Kayenne system
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
 
