@@ -2445,7 +2445,7 @@ class HulaWindow(tk.Toplevel):
         self._clip_entry.config(state='normal' if is_sony else 'disabled')
 
         if is_interlaced:
-            self._field_order_frame.pack(side='left', padx=(PAD * 2, 0))
+            self._field_order_frame.pack(side='left', padx=(16, 0))
         else:
             self._field_order_frame.pack_forget()
 
