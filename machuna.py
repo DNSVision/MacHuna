@@ -2293,6 +2293,8 @@ class HulaWindow(tk.Toplevel):
             side='left', fill='x', expand=True)
         ttk.Button(dest_frame, text="Browse…",
                    command=self._browse_dest).pack(side='left', padx=(PAD, 0))
+        ttk.Button(dest_frame, text="Open in Finder",
+                   command=self._open_dest).pack(side='left', padx=(PAD, 0))
 
         # Output target
         tgt_frame = ttk.LabelFrame(self, text="Output Target")
@@ -2401,6 +2403,15 @@ class HulaWindow(tk.Toplevel):
                                     parent=self)
         if d:
             self._dest_var.set(d)
+
+    def _open_dest(self):
+        d = self._dest_var.get().strip()
+        if d and os.path.isdir(d):
+            subprocess.run(['open', d])
+        elif d:
+            messagebox.showwarning("Hula", f"Folder not found:\n{d}", parent=self)
+        else:
+            messagebox.showwarning("Hula", "No destination folder set.", parent=self)
 
     def _open_files(self):
         paths = filedialog.askopenfilenames(
