@@ -4,6 +4,18 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.27 — 2026-05-10
+
+### Added
+- **SWS Player now accepts TGA sequences and video files.** The "Open SWS..." button is now "Open..." and accepts `.SWS`, `.TGA` (picks the whole sequence from whichever frame you select), `.MOV`, `.MP4`, `.MXF`, `.MKV`, and `.AVI`. TGA sequences prompt for frame rate (23.976 / 25 / 29.97 / 30 / 50 / 59.94 / 60) before loading. Fill, Key, and Composite panels work for all formats; audio meters work for video files.
+- MOV/video files with an alpha channel (e.g. ProRes 4444) correctly populate the Key and Composite panels. Alpha is detected via the source pixel format (`yuva*`, `rgba`, etc.).
+- Audio extracted from video files is converted to the player's 16-channel PCM format (L→ch0, R→ch2) so the audio meters are active.
+
+### Known issue
+- SWS Player crashes when opening a second MOV/video file in the same session. SWS and TGA are unaffected. Fix scheduled for next session — suspected threading conflict between the audio extraction subprocess and the display reset on second open.
+
+---
+
 ## v1.5.26 — 2026-05-10
 
 ### Added

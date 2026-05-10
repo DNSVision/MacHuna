@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.26"
+VERSION = "1.5.27"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1347,6 +1347,19 @@ def _make_composite(fill_rgb: np.ndarray, key_gray: np.ndarray) -> np.ndarray:
     return composite.astype(np.uint8)
 
 
+class _PlayerHeader:
+    """Minimal header-like object for TGA sequences and video files."""
+    def __init__(self, fps: float, frame_count: int,
+                 has_key: bool = False, has_audio: bool = False, standard: str = ''):
+        self.fps         = fps
+        self.frame_count = frame_count
+        self.has_key     = has_key
+        self.has_audio   = has_audio
+        self.loop_play   = False
+        self.auto_play   = False
+        self.standard    = standard
+
+
 class PlayerFrameCache:
     """Loads and decodes all frames from an SWS file into memory."""
 
@@ -1411,6 +1424,165 @@ class PlayerFrameCache:
 
         if progress_cb:
             progress_cb(100, "Ready.")
+
+
+class _GenericFrameCache:
+    """Frame cache for TGA sequences and video files (non-SWS)."""
+    def __init__(self, path: str, header: _PlayerHeader):
+        self.path      = path   # folder for TGA sequences, file path for video
+        self.header    = header
+        self.frames    = []     # list of [fill_img, key_img, comp_img]
+        self.audio_pcm = None
+
+
+def _tga_sequence_files(first_tga: str) -> list:
+    """Return sorted list of all TGA paths in the same directory."""
+    folder = os.path.dirname(os.path.abspath(first_tga))
+    return sorted(
+        os.path.join(folder, f)
+        for f in os.listdir(folder)
+        if f.lower().endswith('.tga')
+    )
+
+
+def _load_tga_frames(tga_files: list, progress_cb=None):
+    """Load TGA sequence into (frames, has_key).
+    frames = list of [fill_img, key_img, comp_img] PIL Images at PANEL_W × PANEL_H.
+    """
+    n = len(tga_files)
+    frames  = []
+    has_key = False
+
+    for i, path in enumerate(tga_files):
+        if progress_cb:
+            progress_cb(int(i / n * 95), f"Loading frame {i + 1}/{n}...")
+        img = Image.open(path)
+        if img.mode not in ('RGBA', 'RGB', 'L', 'LA'):
+            img = img.convert('RGBA')
+        has_alpha = 'A' in img.getbands()
+        if has_alpha:
+            has_key = True
+
+        fill = img.convert('RGB').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+
+        if has_alpha:
+            alpha_arr = np.array(img.split()[3].resize((PANEL_W, PANEL_H), Image.BILINEAR))
+            key_img   = Image.fromarray(alpha_arr, 'L')
+            comp_img  = Image.fromarray(_make_composite(np.array(fill), alpha_arr), 'RGB')
+        else:
+            key_img  = None
+            comp_img = fill
+
+        frames.append([fill, key_img, comp_img])
+
+    if progress_cb:
+        progress_cb(100, "Ready.")
+    return frames, has_key
+
+
+def _load_video_frames(path: str, progress_cb=None):
+    """Extract frames from a video file via ffmpeg.
+    Returns (frames, fps, frame_count).
+    frames = list of [fill_img, None, fill_img] at PANEL_W × PANEL_H.
+    Uses subprocess directly (not _run_ffmpeg) so Stop/Cancel don't affect it.
+    """
+    import json
+    ffprobe = _get_ffmpeg_path('ffprobe')
+    ffmpeg  = _get_ffmpeg_path('ffmpeg')
+
+    if progress_cb:
+        progress_cb(2, "Reading file info...")
+
+    info_result = subprocess.run(
+        [ffprobe, '-v', 'error', '-select_streams', 'v:0',
+         '-show_entries', 'stream=r_frame_rate,width,height,nb_frames,pix_fmt',
+         '-of', 'json', path],
+        capture_output=True
+    )
+    info    = json.loads(info_result.stdout or b'{}')
+    streams = info.get('streams', [{}])
+    s       = streams[0] if streams else {}
+
+    rfr = s.get('r_frame_rate', '25/1')
+    try:
+        num, den = rfr.split('/')
+        fps = float(num) / float(den)
+    except Exception:
+        fps = 25.0
+
+    width    = int(s.get('width',  1920))
+    height   = int(s.get('height', 1080))
+    pix_fmt  = s.get('pix_fmt', '')
+    # yuva*, rgba, argb, bgra, ya8, etc. all contain 'a' indicating alpha channel
+    has_alpha_src = 'a' in pix_fmt
+
+    nb = s.get('nb_frames')
+    if nb and nb != 'N/A':
+        frame_count_hint = int(nb)
+    else:
+        cnt = subprocess.run(
+            [ffprobe, '-v', 'error', '-select_streams', 'v:0',
+             '-count_packets', '-show_entries', 'stream=nb_read_packets',
+             '-of', 'json', path],
+            capture_output=True
+        )
+        cnt_s = json.loads(cnt.stdout or b'{}').get('streams', [{}])
+        frame_count_hint = int(cnt_s[0].get('nb_read_packets', 0)) if cnt_s else 0
+
+    # Extract video frames — use rgba when source has alpha so key plane is preserved
+    out_pix_fmt     = 'rgba' if has_alpha_src else 'rgb24'
+    bytes_per_pixel = 4      if has_alpha_src else 3
+
+    if progress_cb:
+        progress_cb(5, f"Extracting frames ({width}×{height} @ {fps:.3f}fps)...")
+
+    proc = subprocess.Popen(
+        [ffmpeg, '-i', path, '-f', 'rawvideo', '-pix_fmt', out_pix_fmt, 'pipe:1'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+
+    frame_bytes = width * height * bytes_per_pixel
+    frames = []
+    while True:
+        raw = proc.stdout.read(frame_bytes)
+        if len(raw) < frame_bytes:
+            break
+        arr      = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, bytes_per_pixel)
+        fill_img = Image.fromarray(arr[:, :, :3], 'RGB').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+        if has_alpha_src:
+            alpha_rs = np.array(
+                Image.fromarray(arr[:, :, 3], 'L').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+            )
+            key_img  = Image.fromarray(alpha_rs, 'L')
+            comp_img = Image.fromarray(_make_composite(np.array(fill_img), alpha_rs), 'RGB')
+            frames.append([fill_img, key_img, comp_img])
+        else:
+            frames.append([fill_img, None, fill_img])
+        if progress_cb and frame_count_hint:
+            pct = 5 + int(len(frames) / frame_count_hint * 78)
+            progress_cb(min(pct, 83), f"Extracting frame {len(frames)}...")
+
+    proc.wait()
+
+    # Extract audio — convert to 16-channel 16-bit LE PCM at 48kHz (player format)
+    audio_pcm = None
+    if progress_cb:
+        progress_cb(86, "Extracting audio...")
+    audio_result = subprocess.run(
+        [ffmpeg, '-i', path, '-vn', '-ac', '2', '-ar', '48000', '-f', 's16le', 'pipe:1'],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    raw_stereo = audio_result.stdout
+    if raw_stereo:
+        stereo   = np.frombuffer(raw_stereo, dtype='<i2').reshape(-1, 2)
+        expanded = np.zeros((len(stereo), 16), dtype='<i2')
+        expanded[:, 0] = stereo[:, 0]   # L → ch0  (K-Watch mapping)
+        expanded[:, 2] = stereo[:, 1]   # R → ch2  (K-Watch mapping)
+        audio_pcm = expanded.tobytes()
+
+    if progress_cb:
+        progress_cb(100, "Ready.")
+    return frames, fps, len(frames), audio_pcm, has_alpha_src
 
 
 class PlayerAudio:
@@ -1597,13 +1769,13 @@ class SWSPlayer(tk.Toplevel):
         tk.Label(transport, textvariable=self._frame_var,
                  font=('Helvetica', 11)).pack(side='left', padx=12)
 
-        ttk.Button(transport, text="Open SWS...",
+        ttk.Button(transport, text="Open...",
                    command=self._open_file).pack(side='right', padx=4)
 
         # Status / progress
         status_frame = tk.Frame(self)
         status_frame.pack(fill='x', padx=pad, pady=(0, pad))
-        self._status_var = tk.StringVar(value="Open a .SWS file to begin.")
+        self._status_var = tk.StringVar(value="Open a .SWS, .MOV, .MP4, .MXF or .TGA file to begin.")
         tk.Label(status_frame, textvariable=self._status_var,
                  font=('Helvetica', 10), anchor='w').pack(side='left', fill='x', expand=True)
         self._progress = ttk.Progressbar(status_frame, length=200, mode='determinate')
@@ -1613,15 +1785,29 @@ class SWSPlayer(tk.Toplevel):
 
     def _open_file(self):
         path = filedialog.askopenfilename(
-            title="Open SWS File",
+            title="Open File",
             initialdir=self._initial_dir if self._initial_dir else None,
-            filetypes=[("Grass Valley SWS", "*.SWS *.sws"), ("All files", "*.*")]
+            filetypes=[
+                ("Supported files",
+                 "*.SWS *.sws *.tga *.TGA *.mov *.MOV *.mp4 *.MP4 "
+                 "*.mxf *.MXF *.mkv *.MKV *.avi *.AVI"),
+                ("Grass Valley SWS", "*.SWS *.sws"),
+                ("TGA sequence (pick any frame)", "*.tga *.TGA"),
+                ("Video files", "*.mov *.MOV *.mp4 *.MP4 *.mxf *.MXF *.mkv *.MKV *.avi *.AVI"),
+                ("All files", "*.*"),
+            ]
         )
         if not path:
             return
-        self._load_file(path)
+        ext = Path(path).suffix.lower()
+        if ext == '.sws':
+            self._load_sws(path)
+        elif ext == '.tga':
+            self._load_tga(path)
+        else:
+            self._load_video(path)
 
-    def _load_file(self, path: str):
+    def _reset_display(self):
         self._on_stop()
         self._photo_fill = []
         self._photo_key  = []
@@ -1632,6 +1818,9 @@ class SWSPlayer(tk.Toplevel):
         self._comp_canvas.itemconfigure(self._comp_item, image='')
         self._draw_meters(-80.0, -80.0)
         self._frame_var.set("Frame: --/--")
+
+    def _load_sws(self, path: str):
+        self._reset_display()
 
         try:
             header = SWSHeader(path)
@@ -1645,7 +1834,7 @@ class SWSPlayer(tk.Toplevel):
         if header.loop_play:  flags.append("Loop Play")
         flags_str = f"  [{', '.join(flags)}]" if flags else ""
         std = header.standard.replace('/', '')
-        tc = _fmt_timecode(header.frame_count, header.fps)
+        tc  = _fmt_timecode(header.frame_count, header.fps)
         self._info_var.set(
             f"{std}  {header.frame_count}frms  {tc}  "
             f"Key: {'Yes' if header.has_key else 'No'}  "
@@ -1677,12 +1866,108 @@ class SWSPlayer(tk.Toplevel):
 
         threading.Thread(target=load, daemon=True).start()
 
+    def _load_tga(self, path: str):
+        fps = self._ask_fps()
+        if fps is None:
+            return
+        self._reset_display()
+        tga_files = _tga_sequence_files(path)
+        n         = len(tga_files)
+        folder    = os.path.dirname(os.path.abspath(path))
+        self.title(f"SWS Preview Player — {Path(folder).name}")
+        self._info_var.set(f"TGA sequence  {n}frms  {fps}fps — loading...")
+        self._status_var.set("Loading TGA frames...")
+        self._progress['value'] = 0
+        self.update()
+
+        def load():
+            def progress(pct, msg):
+                self.after(0, lambda: self._on_progress(pct, msg))
+            try:
+                frames, has_key = _load_tga_frames(tga_files, progress)
+                hdr   = _PlayerHeader(fps=fps, frame_count=n, has_key=has_key)
+                cache = _GenericFrameCache(folder, hdr)
+                cache.frames = frames
+                self.after(0, lambda: self._on_load_complete(cache, hdr))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_load_error(m))
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _load_video(self, path: str):
+        self._reset_display()
+        self.title(f"SWS Preview Player — {Path(path).name}")
+        self._info_var.set("Video — loading...")
+        self._status_var.set("Extracting frames...")
+        self._progress['value'] = 0
+        self.update()
+
+        def load():
+            def progress(pct, msg):
+                self.after(0, lambda: self._on_progress(pct, msg))
+            try:
+                frames, fps, frame_count, audio_pcm, has_key = _load_video_frames(path, progress)
+                hdr   = _PlayerHeader(fps=fps, frame_count=frame_count,
+                                      has_key=has_key, has_audio=bool(audio_pcm))
+                cache = _GenericFrameCache(path, hdr)
+                cache.frames    = frames
+                cache.audio_pcm = audio_pcm
+                self.after(0, lambda: self._on_load_complete(cache, hdr))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_load_error(m))
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _ask_fps(self) -> Optional[float]:
+        """Show a small dialog to pick frame rate for a TGA sequence."""
+        result = [None]
+        dlg = tk.Toplevel(self)
+        dlg.title("Frame Rate")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Select frame rate for this TGA sequence:",
+                 font=('Helvetica', 12)).pack(padx=16, pady=(16, 8))
+
+        fps_var = tk.StringVar(value="25")
+        cb = ttk.Combobox(dlg, textvariable=fps_var, width=10,
+                          values=["23.976", "25", "29.97", "30", "50", "59.94", "60"],
+                          state='readonly')
+        cb.pack(padx=16, pady=8)
+
+        def ok():
+            try:
+                result[0] = float(fps_var.get())
+            except ValueError:
+                result[0] = 25.0
+            dlg.destroy()
+
+        def cancel():
+            dlg.destroy()
+
+        btn_row = tk.Frame(dlg)
+        btn_row.pack(pady=(0, 16))
+        ttk.Button(btn_row, text="OK",     command=ok).pack(side='left', padx=8)
+        ttk.Button(btn_row, text="Cancel", command=cancel).pack(side='left', padx=8)
+
+        dlg.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - dlg.winfo_width())  // 2
+        py = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{px}+{py}")
+
+        self.wait_window(dlg)
+        return result[0]
+
     def _on_progress(self, pct: int, msg: str):
         self._progress['value'] = pct
         self._status_var.set(msg)
         self.update_idletasks()
 
-    def _on_load_complete(self, cache: PlayerFrameCache, header: SWSHeader):
+    def _on_load_complete(self, cache, header):
         self._cache = cache
         self._current_frame = 0
         self._progress['value'] = 100
@@ -1699,10 +1984,31 @@ class SWSPlayer(tk.Toplevel):
             self._photo_key.append(ImageTk.PhotoImage(key_img) if key_img else None)
             self._photo_comp.append(ImageTk.PhotoImage(comp_img) if comp_img else None)
 
+        # Update info bar for TGA/video (SWS info already set before load thread)
+        if isinstance(header, _PlayerHeader):
+            tc      = _fmt_timecode(n, header.fps)
+            fps_str = f"{header.fps:.3f}".rstrip('0').rstrip('.')
+            self._info_var.set(
+                f"{fps_str}fps  {n}frms  {tc}  "
+                f"Key: {'Yes' if header.has_key else 'No'}  Audio: No"
+            )
+
+        if not header.has_key:
+            self._key_canvas.delete('nokey')
+            self._key_canvas.create_text(
+                PANEL_W // 2, PANEL_H // 2,
+                text="No key plane", fill='#555555',
+                font=('Helvetica', 14), tags='nokey'
+            )
+
         has_audio_str = "with audio" if cache.audio_pcm else "no audio"
+        try:
+            sz_mb    = os.path.getsize(cache.path) / 1024 / 1024
+            size_str = f"  ({sz_mb:.1f} MB)"
+        except OSError:
+            size_str = ""
         self._status_var.set(
-            f"Loaded {n} frame{'s' if n != 1 else ''}  {has_audio_str}  "
-            f"({os.path.getsize(self._cache.path) / 1024 / 1024:.1f} MB)"
+            f"Loaded {n} frame{'s' if n != 1 else ''}  {has_audio_str}{size_str}"
         )
         self._show_frame(0)
 
