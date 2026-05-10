@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.24 — 2026-05-10
+
+### Fixed
+- **TGA sequence P→I conversion was broken.** When converting a progressive TGA sequence to an interlaced standard (1080i50/59.94/60), two bugs were present: (1) no `tinterlace` filter was applied, so all 50 progressive frames were stored as-is in an interlaced SWS; (2) the frame count was not halved, so the SWS stored 50 frames at 25fps and played back at half speed. Both paths (fill and alpha/key) now apply `tinterlace=mode=interleave_top`, and the output frame count is derived from the actual file size after ffmpeg runs — matching the fix already in place for the MOV conversion path.
+
+---
+
 ## v1.5.23 — 2026-05-10
 
 ### Added

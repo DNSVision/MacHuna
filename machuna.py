@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.23"
+VERSION = "1.5.24"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -797,6 +797,15 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     frame_count = len(tga_files)
     has_alpha = info['has_alpha'] and not ignore_alpha
 
+    # TGA sequences are always progressive; apply field-weaving for interlaced targets.
+    _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
+    do_p_to_i = video_standard in _interlaced_standards
+    if do_p_to_i:
+        vf_tinterlace = 'tinterlace=mode=interleave_top'
+        log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+    else:
+        vf_tinterlace = None
+
     with tempfile.TemporaryDirectory() as tmp:
         # Build a concat demuxer file
         concat_file = os.path.join(tmp, 'concat.txt')
@@ -806,10 +815,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         fill_raw = os.path.join(tmp, 'fill.v210')
         ffmpeg = _get_ffmpeg_path('ffmpeg')
-        cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
-               '-i', concat_file,
-               '-frames:v', str(frame_count),
-               '-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
+        cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
+        if vf_tinterlace:
+            cmd += ['-vf', vf_tinterlace]
+        else:
+            cmd += ['-frames:v', str(frame_count)]
+        cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
         _run_ffmpeg(cmd, check=True)
 
         # Key/alpha
@@ -819,17 +830,20 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             actual_key = None
         elif has_alpha:
             key_raw = os.path.join(tmp, 'key.v210')
+            vf_key1 = 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv'
+            vf_key2 = 'alphaextract'
+            if vf_tinterlace:
+                vf_key1 += f',{vf_tinterlace}'
+                vf_key2 += f',{vf_tinterlace}'
             cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                        '-i', concat_file,
-                       '-frames:v', str(frame_count),
-                       '-vf', 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv',
+                       '-vf', vf_key1,
                        '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
             result = _run_ffmpeg(cmd_key)
             if result.returncode != 0 or not os.path.exists(key_raw) or os.path.getsize(key_raw) == 0:
                 cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                            '-i', concat_file,
-                           '-frames:v', str(frame_count),
-                           '-vf', 'alphaextract',
+                           '-vf', vf_key2,
                            '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
                 _run_ffmpeg(cmd_key, check=True)
             _byteswap_v210(key_raw)
@@ -840,17 +854,18 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         _byteswap_v210(fill_raw)
 
-        fill_file_size = os.path.getsize(fill_raw)
-        plane_size = fill_file_size // frame_count
-        log(f"  fill_raw size: {fill_file_size:,}  frame_count: {frame_count}  plane_size: {plane_size:,}")
-        src_name   = os.path.basename(tga_files[0])
-        clip_name  = Path(tga_files[0]).stem
+        # Derive actual output frame count from file size — reliable after tinterlace.
+        plane_size         = ((w + 5) // 6) * 16 * h
+        output_frame_count = os.path.getsize(fill_raw) // plane_size
+        log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
+        src_name  = os.path.basename(tga_files[0])
+        clip_name = Path(tga_files[0]).stem
 
         hdr = build_sws_header(
             source_filename=src_name,
             clip_name=clip_name,
             width=w, height=h,
-            frame_count=frame_count,
+            frame_count=output_frame_count,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
@@ -860,7 +875,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32, frame_count=frame_count, log=log)
+        write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32,
+                  frame_count=output_frame_count, log=log)
 
     if delete_source:
         for f in tga_files:
