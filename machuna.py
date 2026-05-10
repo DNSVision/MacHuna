@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.29"
+VERSION = "1.5.30"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -700,6 +700,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
 
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
     do_p_to_i = video_standard in _interlaced_standards and not info['is_interlaced']
+    do_i_to_p = info['is_interlaced'] and video_standard not in _interlaced_standards
+
     if do_p_to_i:
         # Weave pairs of progressive frames into interlaced frames (TFF best-guess).
         # Frame count halves; fps halves (e.g. 50p -> 25fps for 1080i/50).
@@ -708,6 +710,22 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         output_frame_count = frame_count // 2
         output_fps         = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
         log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
+    elif do_i_to_p:
+        # Deinterlace interlaced source to progressive output.
+        # The SWS format variant determines playback fps, so we must produce the
+        # correct number of frames for that fps — not the source frame rate.
+        target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        output_fps = target_fps
+        if target_fps > fps:
+            # Bob deinterlace: each field becomes a frame (doubles frame rate),
+            # then resample to exact target fps (handles cross-rate cases like i50→p60).
+            vf_tinterlace = f'yadif=mode=send_field,fps={target_fps}'
+            output_frame_count = int(round(frame_count * target_fps / fps))
+        else:
+            # Target fps ≤ source frame rate: simple deinterlace, same frame count.
+            vf_tinterlace = 'yadif=mode=send_frame'
+            output_frame_count = frame_count
+        log(f"  Transcoding interlaced→progressive: {frame_count} frames @ {fps:.2f}fps → ~{output_frame_count} frames @ {output_fps:.2f}fps")
     else:
         vf_tinterlace      = ''
         output_frame_count = frame_count
@@ -786,7 +804,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          ignore_alpha: bool = False,
                          auto_play: bool = False,
                          loop_play: bool = False,
-                         write_log: bool = True):
+                         write_log: bool = True,
+                         source_interlaced: bool = False):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
@@ -795,12 +814,18 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     frame_count = len(tga_files)
     has_alpha = info['has_alpha'] and not ignore_alpha
 
-    # TGA sequences are always progressive; apply field-weaving for interlaced targets.
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
-    do_p_to_i = video_standard in _interlaced_standards
+    # Apply field-weaving only when source frames are truly progressive.
+    # If source_interlaced is set, each TGA already contains a full interlaced
+    # frame (e.g. extracted from an existing SWS) — tinterlace would halve the
+    # frame count and cause double-speed playback.
+    do_p_to_i = video_standard in _interlaced_standards and not source_interlaced
     if do_p_to_i:
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+    elif source_interlaced and video_standard in _interlaced_standards:
+        vf_tinterlace = None
+        log(f"  Source frames already interlaced — passing through as {video_standard}")
     else:
         vf_tinterlace = None
 
@@ -997,18 +1022,20 @@ class WatchService:
                  auto_play: bool = False,
                  loop_play: bool = False,
                  slot_override: int = 0,
+                 source_interlaced: bool = False,
                  log=print,
                  on_batch_complete=None):
-        self.watch_dir      = watch_dir
-        self.dest_dir       = dest_dir
-        self.video_standard = video_standard
-        self.split_fat32    = split_fat32
-        self.delete_source  = delete_source
-        self.ignore_alpha   = ignore_alpha
-        self.include_audio  = include_audio
-        self.auto_play      = auto_play
-        self.loop_play      = loop_play
-        self.slot_override  = slot_override
+        self.watch_dir        = watch_dir
+        self.dest_dir         = dest_dir
+        self.video_standard   = video_standard
+        self.split_fat32      = split_fat32
+        self.delete_source    = delete_source
+        self.ignore_alpha     = ignore_alpha
+        self.include_audio    = include_audio
+        self.auto_play        = auto_play
+        self.loop_play        = loop_play
+        self.slot_override    = slot_override
+        self.source_interlaced = source_interlaced
         self.log            = log
         self._stop_event         = threading.Event()
         self._seen               = set()
@@ -1122,7 +1149,8 @@ class WatchService:
                                      ignore_alpha=self.ignore_alpha,
                                      auto_play=self.auto_play,
                                      loop_play=self.loop_play,
-                                     write_log=False)
+                                     write_log=False,
+                                     source_interlaced=self.source_interlaced)
                 self._tga_results.append((actual_fnum, seq_id, 'OK'))
             except Exception as e:
                 self._tga_results.append((actual_fnum, seq_id, f'ERROR: {e}'))
@@ -2939,6 +2967,7 @@ def launch_gui():
                     'include_audio': include_audio_var.get(),
                     'auto_play': auto_play_var.get(),
                     'loop_play': loop_play_var.get(),
+                    'source_interlaced': source_interlaced_var.get(),
                     'start_num':     start_num_var.get(),
                     'hula_dest':        s.get('hula_dest', ''),
                     'hula_target':      s.get('hula_target', HULA_TARGET_KAYENNE_MOV),
@@ -3025,18 +3054,20 @@ def launch_gui():
     # Row 2: conversion options
     frm3_row2 = tk.Frame(frm3)
     frm3_row2.pack(fill='x', anchor='w')
-    split_var         = tk.BooleanVar(value=True)
-    delete_var        = tk.BooleanVar(value=False)
-    ignore_alpha_var  = tk.BooleanVar(value=False)
-    include_audio_var = tk.BooleanVar(value=True)
-    auto_play_var     = tk.BooleanVar(value=False)
-    loop_play_var     = tk.BooleanVar(value=False)
+    split_var              = tk.BooleanVar(value=True)
+    delete_var             = tk.BooleanVar(value=False)
+    ignore_alpha_var       = tk.BooleanVar(value=False)
+    include_audio_var      = tk.BooleanVar(value=True)
+    auto_play_var          = tk.BooleanVar(value=False)
+    loop_play_var          = tk.BooleanVar(value=False)
+    source_interlaced_var  = tk.BooleanVar(value=False)
     ttk.Checkbutton(frm3_row2, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="TGA source already interlaced", variable=source_interlaced_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
     start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
@@ -3046,10 +3077,11 @@ def launch_gui():
     if s.get('standard'): std_var.set(s['standard'])
     if 'split'        in s: split_var.set(s['split'])
     if 'delete'       in s: delete_var.set(s['delete'])
-    if 'ignore_alpha'   in s: ignore_alpha_var.set(s['ignore_alpha'])
-    if 'include_audio'  in s: include_audio_var.set(s['include_audio'])
-    if 'auto_play'      in s: auto_play_var.set(s['auto_play'])
-    if 'loop_play'      in s: loop_play_var.set(s['loop_play'])
+    if 'ignore_alpha'       in s: ignore_alpha_var.set(s['ignore_alpha'])
+    if 'include_audio'      in s: include_audio_var.set(s['include_audio'])
+    if 'auto_play'          in s: auto_play_var.set(s['auto_play'])
+    if 'loop_play'          in s: loop_play_var.set(s['loop_play'])
+    if 'source_interlaced'  in s: source_interlaced_var.set(s['source_interlaced'])
     if 'start_num'      in s: start_num_var.set(s['start_num'])
     # Hula settings live in the same dict -- HulaWindow reads them directly
     # s is passed by reference so HulaWindow can update it in place
@@ -3326,6 +3358,7 @@ def launch_gui():
                            auto_play=auto_play_var.get(),
                            loop_play=loop_play_var.get(),
                            slot_override=slot_override_var.get(),
+                           source_interlaced=source_interlaced_var.get(),
                            log=log,
                            on_batch_complete=on_batch_complete)
         svc.start()

@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.30 — 2026-05-10
+
+### Fixed
+- **Interlaced→progressive conversion played at double speed (or faster).** When converting a 1080i/50 MOV to any progressive standard (1080p/50, 1080p/60, 720p/50 etc.), ffmpeg was passing through the source's 25 interlaced frames without deinterlacing. The SWS format variant tells the Kahuna (and SWSPlayer) to play at 50fps, so 25 frames played in half the expected time — double speed. Fix: MacHuna now detects interlaced→progressive conversions (`is_interlaced` source + progressive target), applies `yadif=mode=send_field` (bob deinterlace) to produce one output frame per input field, then resamples to the exact target fps. Frame count and audio timing are now both correct.
+- **TGA sequence → interlaced standard played at double speed when source frames were already interlaced.** When TGA files extracted from an existing 1080i/50 SWS were re-wrapped targeting 1080i/50, MacHuna incorrectly applied `tinterlace`, treating each TGA as a progressive frame and pairing them up — halving the frame count and causing double-speed playback. Fix: a new **"TGA source already interlaced"** checkbox in the options row tells MacHuna to skip `tinterlace` and pass the frames through directly. Leave unticked for progressive animations/graphics that need genuine interlace conversion.
+
+---
+
 ## v1.5.29 — 2026-05-10
 
 ### Added

@@ -24,6 +24,8 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
+- Interlaced-to-progressive transcoding -- MacHuna bob-deinterlaces interlaced sources to produce the correct number of progressive frames for the target standard (e.g. 1080i/50 → 1080p/50 produces 50fps output at the correct playback speed).
+- "TGA source already interlaced" option -- when re-wrapping TGA frames extracted from an existing interlaced SWS, tick this to pass frames through directly rather than applying field-weaving.
 - Watch folder service runs in background; automatically stops and writes a single combined conversion log once a TGA batch is complete
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
