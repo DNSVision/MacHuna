@@ -2987,7 +2987,7 @@ def launch_gui():
     root.resizable(True, True)
     root.minsize(620, 380)
     # Restore saved window geometry, or use a sensible default
-    _saved_geo = load_settings().get('window_geometry', '960x460')
+    _saved_geo = load_settings().get('window_geometry', '1085x460')
     root.geometry(_saved_geo)
 
     # ── Style ──
