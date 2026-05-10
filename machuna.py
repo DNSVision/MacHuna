@@ -2570,6 +2570,16 @@ def launch_gui():
     ttk.Entry(frm1, textvariable=watch_var, width=60).pack(side='left', fill='x', expand=True, **pad)
     ttk.Button(frm1, text="Browse…",
                command=lambda: watch_var.set(filedialog.askdirectory())).pack(side='left', **pad)
+    def _open_watch_folder():
+        w = watch_var.get().strip()
+        if w and os.path.isdir(w):
+            subprocess.run(['open', w])
+        elif w:
+            messagebox.showwarning("Watch Folder", f"Folder not found:\n{w}")
+        else:
+            messagebox.showwarning("Watch Folder", "No Watch Folder set.")
+    ttk.Button(frm1, text="Open in Finder",
+               command=_open_watch_folder).pack(side='left', **pad)
 
     # ── Destination folder row ──
     frm2 = ttk.LabelFrame(root, text="Destination Folder")
