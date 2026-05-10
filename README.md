@@ -24,7 +24,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
-- Watch folder service runs in background
+- Watch folder service runs in background; automatically stops and writes a single combined conversion log once a TGA batch is complete
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
 
@@ -69,7 +69,7 @@ The built app will appear in the `dist/` folder.
 5. Set playback options (Auto play, Loop play) as required
 6. Click Start Watching
 
-MacHuna will convert files automatically as they appear and log progress in the app window.
+MacHuna will convert files automatically as they appear and log progress in the app window. When a TGA sequence batch finishes, the service stops automatically and writes a single combined log file to the destination folder.
 
 ### Batch Convert
 
