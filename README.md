@@ -19,7 +19,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Include/exclude audio option
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
-- Built-in SWS Preview Player -- opens any .SWS file in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
+- Built-in SWS Preview Player -- opens .SWS, .TGA sequences, and video files (MOV, MP4, MXF, MKV, AVI) in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Built-in Hula SWS / MOV Extractor -- converts .SWS or .MOV files to Kayenne MOV, Kayenne TGA, or Sony TGA format across all supported video standards, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel Batch button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
@@ -84,7 +84,11 @@ For TGA sequences, use the Watch Folder service -- batch convert does not suppor
 
 ### SWS Preview Player
 
-Click the SWS Player button in the Batch Convert row to open any .SWS file in the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls.
+Click the SWS Player button in the Batch Convert row to open the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls. Accepts:
+
+- **.SWS** — full fill, key, composite, and audio meter display
+- **.TGA** (pick any frame from a sequence) — loads the whole sequence; prompts for frame rate (25fps default); fill, key, and composite shown if the TGAs have an alpha channel
+- **.MOV, .MP4, .MXF, .MKV, .AVI** — frames extracted via ffmpeg; alpha channel preserved for formats that carry it (e.g. ProRes 4444); audio meters active
 
 ### Hula SWS / MOV Extractor
 
