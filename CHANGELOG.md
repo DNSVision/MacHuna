@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.28 — 2026-05-10
+
+### Fixed
+- **SWS Player crash when opening or playing a second audio file (heap corruption).** Closing a PortAudio stream from the main thread while the audio thread was inside `write()` corrupted PortAudio's internal C buffers. The corruption was then detected by `libsystem_malloc` when CoreGraphics tried to allocate memory (typically when the Open file dialog was shown), causing a `SIGTRAP / memory corruption of free block` crash. Fix: `stop()` no longer touches the stream at all — it sets the stop event, joins the audio thread (which exits within one write-chunk, ~100ms), then clears the reference. The audio thread's own `finally` block closes the stream safely from the thread that owns it. `_play()` also now checks the stop event after its 50ms pre-start sleep so it won't open a stream that is already being torn down.
+
+---
+
 ## v1.5.27 — 2026-05-10
 
 ### Added

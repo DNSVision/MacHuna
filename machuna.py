@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.27"
+VERSION = "1.5.28"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1608,13 +1608,9 @@ class PlayerAudio:
 
     def stop(self):
         self._stop_event.set()
-        if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        self._stream = None
 
     def _play(self):
         if not HAS_AUDIO:
@@ -1634,6 +1630,8 @@ class PlayerAudio:
 
             self._stream = None
             time.sleep(0.05)
+            if self._stop_event.is_set():
+                return
             self._stream = sd.OutputStream(samplerate=48000, channels=2, dtype='float32')
             self._stream.start()
 
@@ -1990,7 +1988,7 @@ class SWSPlayer(tk.Toplevel):
             fps_str = f"{header.fps:.3f}".rstrip('0').rstrip('.')
             self._info_var.set(
                 f"{fps_str}fps  {n}frms  {tc}  "
-                f"Key: {'Yes' if header.has_key else 'No'}  Audio: No"
+                f"Key: {'Yes' if header.has_key else 'No'}  Audio: {'Yes' if header.has_audio else 'No'}"
             )
 
         if not header.has_key:

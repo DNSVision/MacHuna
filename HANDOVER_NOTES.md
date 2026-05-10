@@ -95,7 +95,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.27
+- **MacHuna:** v1.5.28
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
 
 ---
