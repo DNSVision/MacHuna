@@ -2588,6 +2588,16 @@ def launch_gui():
     ttk.Entry(frm2, textvariable=dest_var, width=60).pack(side='left', fill='x', expand=True, **pad)
     ttk.Button(frm2, text="Browse…",
                command=lambda: dest_var.set(filedialog.askdirectory())).pack(side='left', **pad)
+    def _open_dest_folder():
+        d = dest_var.get().strip()
+        if d and os.path.isdir(d):
+            subprocess.run(['open', d])
+        elif d:
+            messagebox.showwarning("Destination Folder", f"Folder not found:\n{d}")
+        else:
+            messagebox.showwarning("Destination Folder", "No Destination Folder set.")
+    ttk.Button(frm2, text="Open in Finder",
+               command=_open_dest_folder).pack(side='left', **pad)
 
     # ── Settings row ──
     frm3 = ttk.LabelFrame(root, text="Settings")
