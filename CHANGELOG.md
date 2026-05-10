@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.23 — 2026-05-10
+
+### Added
+- **Open in Finder** button added to the Watch Folder row, Destination Folder row, and Hula Destination Folder row. Opens the folder directly in Finder with one click — makes it practical to store folders anywhere on the machine without needing to remember their location. Warns if the folder is not set or does not exist.
+
+---
+
 ## v1.5.22 — 2026-05-10
 
 ### Changed
