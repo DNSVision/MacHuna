@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.25"
+VERSION = "1.5.26"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2539,6 +2539,29 @@ class HulaWindow(tk.Toplevel):
 #  Simple Tkinter GUI
 # ─────────────────────────────────────────────────────────────
 
+def _ask_confirm(parent, message: str) -> bool:
+    """Simple OK/Cancel dialog with no app icon."""
+    result = [False]
+    dlg = tk.Toplevel(parent)
+    dlg.title("")
+    dlg.resizable(False, False)
+    dlg.grab_set()
+    tk.Label(dlg, text=message, padx=20, pady=16).pack()
+    btn_frame = tk.Frame(dlg)
+    btn_frame.pack(pady=(0, 12))
+    ttk.Button(btn_frame, text="Cancel",
+               command=lambda: dlg.destroy()).pack(side='left', padx=8)
+    ttk.Button(btn_frame, text="OK",
+               command=lambda: (result.__setitem__(0, True), dlg.destroy())
+               ).pack(side='left', padx=8)
+    dlg.update_idletasks()
+    px = parent.winfo_x() + (parent.winfo_width()  - dlg.winfo_width())  // 2
+    py = parent.winfo_y() + (parent.winfo_height() - dlg.winfo_height()) // 2
+    dlg.geometry(f"+{px}+{py}")
+    parent.wait_window(dlg)
+    return result[0]
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -2848,6 +2871,12 @@ def launch_gui():
 
         start_num = start_num_var.get()
         valid = sorted(paths)  # alphabetical order
+
+        confirmed = _ask_confirm(
+            root,
+            f"Convert {len(valid)} file(s) starting at slot {start_num}?")
+        if not confirmed:
+            return
 
         log(f"Batch convert: {len(valid)} file(s) starting at number {start_num}")
         for i, p in enumerate(valid):

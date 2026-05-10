@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.26 — 2026-05-10
+
+### Added
+- **Batch Convert confirmation dialog.** Clicking Open Files now shows a "Convert N file(s) starting at slot X?" prompt before conversion begins. Uses a custom `_ask_confirm` Toplevel to avoid the macOS app icon that appears in standard `messagebox` dialogs.
+
+---
+
 ## v1.5.25 — 2026-05-10
 
 ### Added
