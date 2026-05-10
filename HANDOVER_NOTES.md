@@ -340,4 +340,4 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 
 Before making any changes to machuna.py, ask for the current version to be uploaded - the file is large (~110KB) and changes frequently. Do not work from a cached version.
 
-For Hula standalone changes, ask for the current hula.py to be uploaded.
+There is no standalone Hula repo to maintain — `DNSVision/Hula` is archived. All Hula development happens in `machuna.py`.

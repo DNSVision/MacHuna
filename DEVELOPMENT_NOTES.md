@@ -112,13 +112,13 @@ All Hula code lives in a clearly marked section just above `launch_gui()`:
 | Kayenne TGA | 32-bit RGBA TGA | `0001.tga` onwards, subfolder per SWS |
 | Sony MVS TGA | 32-bit RGBA TGA | `XXXX0000.tga` onwards (clip name prefix, then frame number), subfolder per SWS |
 
-### Sony MVS 50i -- future work
+### Sony MVS interlaced TGA -- implemented in v1.5.20+
 
-Older Sony MVS desks that do not support 50P require interlaced TGA sequences. In practice, productions often deliver 25P to these desks, which plays back with visible judder. Hula could optionally convert 50P SWS files to genuine 50i TGA sequences by interleaving lines from consecutive progressive frame pairs (field weaving). Field order is almost certainly BFF for PAL/50Hz but must be confirmed on real hardware before implementation. Full technical notes are in the Hula repo's `DEVELOPMENT_NOTES.md`.
+Interlaced TGA output was implemented in v1.5.20 via field-weaving (pairs of progressive frames interleaved by line). Available for all interlaced standards via the Standard dropdown. Field order toggle (BFF/TFF) present; BFF assumed for PAL/50Hz, unconfirmed on hardware.
 
 ### Standalone Hula repo
 
-`DNSVision/Hula` remains active as a standalone app for operators who need Hula without MacHuna. The two codebases should be kept in sync -- if the Hula converters are updated in MacHuna, the equivalent changes should be ported back to `hula.py` in the standalone repo, and vice versa.
+`DNSVision/Hula` is **archived and no longer maintained**. MacHuna's integrated Hula is the only active version. There is no sync obligation between the two — all future Hula development happens in `machuna.py` only.
 
 ---
 
