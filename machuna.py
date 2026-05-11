@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.30"
+VERSION = "1.5.31"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2614,12 +2614,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
             base_cmd += ['-c:a', 'pcm_s16le', '-ar', '48000']
         base_cmd.append(out_path)
         log("  Encoding ProRes 4444...")
-        result = subprocess.run(base_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"ffmpeg encode failed (rc={result.returncode}):\n"
-                f"{result.stderr[-2000:]}"
-            )
+        _run_ffmpeg(base_cmd, check=True)
     log(f"  Done → {out_path}")
     return out_path
 
@@ -2647,9 +2642,19 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
             elif target == HULA_TARGET_KAYENNE_MOV:
                 _hula_convert_mov(path, dest_dir, idx, log=log)
             elif interlaced:
-                _hula_convert_tga_interlaced(path, dest_dir, target=target,
-                                             clip_name=clip_name,
-                                             field_order=field_order, log=log)
+                src_header = HulaSWSHeader(path)
+                if src_header.fps >= 48.0:
+                    # Progressive source: field-weave pairs of frames into interlaced output.
+                    _hula_convert_tga_interlaced(path, dest_dir, target=target,
+                                                 clip_name=clip_name,
+                                                 field_order=field_order, log=log)
+                else:
+                    # Source is already interlaced: pass frames through as-is.
+                    log(f"  Source is {src_header.standard} ({src_header.fps:.4g}fps) "
+                        f"— already interlaced, outputting as interlaced TGA frames. "
+                        f"If re-importing into Watch Folder, tick 'TGA source already interlaced'.")
+                    _hula_convert_tga(path, dest_dir, target,
+                                      clip_name=clip_name, log=log)
             else:
                 _hula_convert_tga(path, dest_dir, target,
                                   clip_name=clip_name, log=log)

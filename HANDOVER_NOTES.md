@@ -4,7 +4,31 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
-## Recent Session Notes (May 2026)
+## Recent Session Notes (May 2026 — v1.5.31)
+
+### Hula Code Review and Bugfixes (v1.5.31)
+
+A full analysis of Hula's conversion paths for interlaced and progressive sources was conducted. Two bugs were found and fixed:
+
+1. **Interlaced SWS → interlaced TGA target was incorrectly rejected.** The batch runner sent all interlaced-standard selections to `_hula_convert_tga_interlaced`, which guards `fps < 48.0`. An interlaced SWS (25fps) was rejected. Fix: batch runner reads source header fps first. Progressive sources (fps ≥ 48) go to `_hula_convert_tga_interlaced` for field-weaving as before. Interlaced sources go to `_hula_convert_tga` (straight frame dump — frames already woven) with a log message advising the "TGA source already interlaced" checkbox for Watch Folder round-trips.
+
+2. **Hula MOV encoder could not be cancelled.** `_hula_convert_mov` used `subprocess.run` directly, bypassing `_run_ffmpeg`. Stop/Cancel had no effect during long encodes. Fixed to use `_run_ffmpeg(cmd, check=True)`.
+
+### Hula Hardware Unknowns (as of v1.5.31)
+
+A full audit of Hula's output paths identified several items that are coded but unconfirmed on real hardware. These are all documented in full in DEVELOPMENT_NOTES.md under "Hula hardware unknowns". Summary:
+
+- **Kayenne MOV and TGA outputs** — logic is correct by analysis, never loaded on a live Kayenne ClipStore/Image Store
+- **Sony MVS clip naming** — naming convention assumed, not verified by live desk import
+- **Interlaced SWS → MOV: interlace metadata** — ProRes container has no field-order flags; unknown whether a Kayenne desk cares. Potential fix: add `-field_order tb/bb` to ffmpeg encode.
+- **Sony MVS 25i field order** — BFF assumed; toggle present if wrong
+- **MOV → TGA** — full path coded and routes correctly, never hardware-tested
+
+These are the main items to address in the next hardware test session. No code changes needed until hardware feedback is available.
+
+---
+
+
 
 ### Development Workflow (updated)
 David now uses Claude Code CLI directly. Claude has full file system access and can read, edit, and commit files without patch scripts. The old patch script workaround is no longer needed. Test command remains `python3.12 ~/Developer/MacHuna/machuna.py --gui`.
@@ -95,7 +119,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.30
+- **MacHuna:** v1.5.31
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
 
 ---

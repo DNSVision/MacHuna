@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.31 — 2026-05-11
+
+### Fixed
+- **Hula: interlaced SWS → interlaced TGA target was incorrectly rejected.** When an interlaced SWS (e.g. 1080i/50, 25fps) was loaded into Hula with an interlaced standard selected, the batch runner sent it to `_hula_convert_tga_interlaced`, which immediately rejected it because 25fps < 48fps guard. The correct behaviour for an interlaced source + interlaced target is a straight frame dump (the frames are already woven). Fix: the batch runner now reads the source header fps first; sources below 48fps are passed to `_hula_convert_tga` with a log message advising the user to tick "TGA source already interlaced" when re-importing into Watch Folder.
+- **Hula: Kayenne MOV encoder could not be cancelled.** `_hula_convert_mov` was calling `subprocess.run` directly, bypassing the `_run_ffmpeg` wrapper. Stop/Cancel had no way to kill the ffmpeg process mid-encode. Fixed: now calls `_run_ffmpeg(cmd, check=True)`.
+
+---
+
 ## v1.5.30 — 2026-05-10
 
 ### Fixed

@@ -96,11 +96,11 @@ Click the SWS Player button in the Batch Convert row to open the built-in previe
 
 Click the Hula button in the Batch Convert row to open the Hula extractor. Accepts **.SWS** or **.MOV** input files and converts to standard formats for use on other vision mixing desks:
 
-- **Kayenne MOV** -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store (SWS input only)
-- **Kayenne TGA** *(UNCONFIRMED — awaiting hardware verification)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
+- **Kayenne MOV** *(UNCONFIRMED on hardware — awaiting live Kayenne desk test)* -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store (SWS input only)
+- **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 
-For TGA targets, choose the **Standard** from the same dropdown used by the main converter (1080i50, 1080p50, 720p50, etc.). Interlaced standards automatically field-weave pairs of progressive frames into interlaced output; a **BFF/TFF field order** toggle appears for interlaced selections. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import).
+For TGA targets, choose the **Standard** from the same dropdown used by the main converter (1080i50, 1080p50, 720p50, etc.). For progressive standards, frames are extracted as-is. For interlaced standards, pairs of progressive source frames are field-woven into interlaced output. If the source SWS is already interlaced, frames are passed through directly with a log note. A **BFF/TFF field order** toggle appears for interlaced selections. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import).
 
 ### Large Files (>4GB)
 
@@ -112,11 +112,18 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 ## Roadmap
 
-- P→I field order hardware confirmation -- TFF field order is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
-- Hula 25i field order hardware confirmation -- BFF is assumed for PAL/50Hz; flip the toggle in Hula if motion artefacts appear
-- Kayenne TGA output parameters hardware confirmation -- pending verification against a live Kayenne system
+### MacHuna conversion engine
+- P→I field order hardware confirmation -- TFF is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in SWS Preview Player
+
+### Hula -- pending hardware verification
+All items below are coded and working by analysis; hardware tests on Kayenne and Sony MVS desks are needed to confirm.
+- Kayenne MOV output -- ProRes 4444 with correct fps, BT.709; never loaded on a live Kayenne ClipStore
+- Kayenne TGA output -- frame naming and format assumed correct; unconfirmed
+- Sony MVS clip naming -- 4-char prefix + frame number convention unconfirmed on a live Sony MVS
+- Interlaced SWS → Kayenne MOV -- interlace metadata (field order flags) not written to ProRes container; unknown whether a Kayenne desk requires it
+- Sony MVS 25i field order -- BFF assumed for PAL/50Hz; toggle present if incorrect
 
 ## Licence
 
