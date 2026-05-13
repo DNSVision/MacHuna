@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.33"
+VERSION = "1.5.34"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -937,10 +937,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 #  File naming parser (K-Watch conventions)
 # ─────────────────────────────────────────────────────────────
 
-# Matches generic TGA sequence frames: base name + required separator + frame number
-# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga
-# Separator required to avoid false-positives with K-Watch stills (Still001.tga, Clip1.tga)
-_GENERIC_TGA_RE = re.compile(r'^(.+)[._-](\d+)$')
+# Matches generic TGA sequence frames: base name + optional separator + frame number
+# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  FEDX0000.tga
+_GENERIC_TGA_RE = re.compile(r'^(.+?)(?:[._-]?)(\d+)$')
 GENERIC_TGA_QUIET_SECS = 3.0
 
 def parse_filename(filename: str) -> Optional[dict]:

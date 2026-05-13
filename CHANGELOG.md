@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.34 — 2026-05-13
+
+### Fixed
+- **TGA sequences without separators now detected correctly.** Files named with a plain letters+digits pattern (e.g. `FEDX0000.tga`) were silently skipped because the sequence-detection regex required a separator character (`_`, `.`, or `-`) between the base name and the frame number. The separator is now optional, so `FEDX0000.tga … FEDX0051.tga` is correctly grouped as a single TGA sequence.
+
+---
+
 ## v1.5.33 — 2026-05-13
 
 ### Changed
