@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.33 — 2026-05-13
+
+### Changed
+- **Unified format-in / format-out interface.** MacHuna and Hula are no longer separate tools. A single Convert section replaces the old Settings row, Batch Convert row, and Hula button. The user opens a folder, the app detects what's inside (SWS files, video files, TGA sequences, stills), and the Output dropdown adapts to show only the valid targets for what was found.
+- **Input autodetection.** Scanning a folder of SWS files offers Kayenne MOV / Kayenne TGA / Sony TGA as output options. Scanning a folder of MOV/video files offers Kahuna SWS / Kayenne TGA / Sony TGA. Mixed folders (video + TGA sequences + stills) offer Kahuna SWS only. Mixed SWS + other formats shows an error.
+- **Adaptive controls.** Options shown depend on input type and selected output: Standard dropdown, Split >4GB, Ignore alpha, Auto play, Loop play, TGA source interlaced, Include audio, Clip name (Sony TGA), BFF/TFF field order (TGA outputs). Controls not relevant to the current conversion are hidden.
+- **MOV → TGA path surfaced.** Previously coded but not accessible from the UI. Now available when a folder of MOV files is scanned and a TGA output is selected. A warning dialogue confirms the path is unconfirmed on hardware before proceeding.
+- **Sony TGA output folder named after clip name.** Previously the output subfolder was named after the source SWS stem. Now uses the 4-character clip name (e.g. `WIPE/`) to match Sony MVS import conventions.
+- **"SWS Player" renamed "Video Player"** — more accurately describes what it does (accepts SWS, TGA sequences, MOV/MP4/MXF/AVI).
+- **HulaWindow removed from GUI.** The separate Hula Toplevel window is no longer launched. All Hula conversion logic is unchanged and now routed through the unified interface. The `HulaWindow` class is retained in the source for reference but is no longer called.
+
+---
+
 ## v1.5.32 — 2026-05-13
 
 ### Changed

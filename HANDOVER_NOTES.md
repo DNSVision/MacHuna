@@ -4,6 +4,22 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.5.33)
+
+### v1.5.33 — Unified format-in / format-out interface
+
+MacHuna and Hula are now one tool. The separate Hula button and HulaWindow are gone. A single Convert section with input autodetection and an adaptive Output dropdown handles all conversion directions:
+
+- **Folder scan → autodetect**: SWS files → FROM-SWS outputs (Kayenne MOV / Kayenne TGA / Sony TGA). MOV/video files → Kahuna SWS or TGA (with hardware-unconfirmed warning for MOV→TGA). Mixed video/TGA/stills → Kahuna SWS only.
+- **Adaptive controls**: Standard, Split >4GB, Ignore alpha, Auto play, Loop play, TGA source interlaced, Include audio, Clip name (Sony TGA), BFF/TFF field order — shown only when relevant.
+- **Sony TGA folder naming**: output subfolder now named after the 4-character clip name rather than the SWS stem.
+- **"Video Player" button**: replaces "SWS Player" label; more accurate since it accepts SWS, TGA sequences, and video files.
+- **`HulaWindow` class**: still in the source but no longer called. All Hula conversion engine functions (`_hula_run_batch`, `_hula_convert_tga`, `_hula_convert_mov`, etc.) are unchanged.
+
+The unified UI was the long-term direction discussed in v1.5.31 session notes. The hardware unknowns (Kayenne MOV, Kayenne TGA, Sony MVS clip naming, MOV→TGA) remain unconfirmed — the unconfirmed warning dialogue handles this at runtime.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.32)
 
 ### v1.5.32 — TGA Workflow Overhaul
@@ -165,7 +181,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.32
+- **MacHuna:** v1.5.33
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
 
 ---

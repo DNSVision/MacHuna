@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.32"
+VERSION = "1.5.33"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2252,7 +2252,8 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
                       target: str, clip_name: str = 'WIPE', log=print):
     """Convert one SWS to a TGA sequence subfolder."""
     stem     = Path(sws_path).stem
-    dest_dir = os.path.join(dest_parent, stem)
+    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
     log(f"  {header}")
@@ -2298,7 +2299,8 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     [UNCONFIRMED: Kayenne TGA output parameters pending hardware verification]
     """
     stem     = Path(sws_path).stem
-    dest_dir = os.path.join(dest_parent, stem)
+    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
     std = header.standard.replace('/', '')
@@ -2799,6 +2801,92 @@ def _ask_confirm(parent, message: str) -> bool:
     return result[0]
 
 
+def _scan_folder_unified(folder: str) -> tuple:
+    """Scan a folder for all supported files.
+
+    Returns (items, input_type, has_audio_clips, has_tga_seq).
+    input_type: 'from_sws' | 'mov_only' | 'to_sws_only' | 'mixed_error'
+    """
+    video_exts = {'.mov', '.mp4', '.avi', '.mxf', '.mkv'}
+    still_exts = {'.png', '.bmp', '.jpg', '.jpeg'}
+
+    sequences    = _find_tga_sequences(folder)
+    seq_frames   = {f for _, files in sequences for f in files}
+
+    sws_items = []
+    vid_items = []
+    still_items = []
+
+    for fname in sorted(os.listdir(folder)):
+        fpath = os.path.join(folder, fname)
+        if not os.path.isfile(fpath):
+            continue
+        ext = Path(fname).suffix.lower()
+        if ext == '.sws':
+            try:
+                h = HulaSWSHeader(fpath)
+                tc = _fmt_timecode(h.frame_count, h.fps)
+                display = f"{fname:<28}  {h.standard}  {h.frame_count}fr  {tc}"
+            except Exception:
+                display = fname
+            sws_items.append({'type': 'sws', 'path': fpath,
+                               'display': display, 'source_num': None})
+        elif ext in video_exts and fpath not in seq_frames:
+            meta = parse_filename(fname)
+            vid_items.append({'type': 'clip', 'path': fpath,
+                               'source_num': meta['file_num'] if meta else None,
+                               'display': fname})
+        elif ext in still_exts and fpath not in seq_frames:
+            meta = parse_filename(fname)
+            still_items.append({'type': 'still', 'path': fpath,
+                                 'source_num': meta['file_num'] if meta else None,
+                                 'display': fname})
+
+    seq_items = []
+    for base, files in sequences:
+        kw = parse_filename(Path(files[0]).name)
+        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
+        seq_items.append({
+            'type': 'tga_seq', 'base': base, 'files': files, 'source_num': source_num,
+            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
+        })
+
+    has_sws    = bool(sws_items)
+    has_vid    = bool(vid_items)
+    has_stills = bool(still_items)
+    has_seqs   = bool(seq_items)
+
+    if has_sws and (has_vid or has_stills or has_seqs):
+        return [], 'mixed_error', False, False
+
+    if has_sws:
+        sws_has_aud = False
+        for item in sws_items:
+            try:
+                if HulaSWSHeader(item['path']).has_audio:
+                    sws_has_aud = True
+                    break
+            except Exception:
+                pass
+        return sws_items, 'from_sws', sws_has_aud, False
+
+    has_aud = False
+    if has_vid:
+        for vi in vid_items[:3]:  # probe first few to avoid scanning everything
+            try:
+                if get_video_info(vi['path']).get('has_audio'):
+                    has_aud = True
+                    break
+            except Exception:
+                pass
+
+    if has_vid and not has_stills and not has_seqs:
+        return vid_items, 'mov_only', has_aud, False
+
+    items = seq_items + vid_items + still_items
+    return items, 'to_sws_only', has_aud, bool(seq_items)
+
+
 def _scan_folder_for_items(folder: str) -> list:
     """Scan a folder and return items for the browser.
     TGA sequences are collapsed to one entry; other files listed individually."""
@@ -2923,22 +3011,19 @@ def launch_gui():
         try:
             with open(SETTINGS_FILE, 'w') as f:
                 json.dump({
-                    'dest':     dest_var.get(),
-                    'standard': std_var.get(),
-                    'split':    split_var.get(),
-                    'delete':   delete_var.get(),
-                    'ignore_alpha': ignore_alpha_var.get(),
-                    'include_audio': include_audio_var.get(),
-                    'auto_play': auto_play_var.get(),
-                    'loop_play': loop_play_var.get(),
+                    'dest':             dest_var.get(),
+                    'standard':         std_var.get(),
+                    'split':            split_var.get(),
+                    'ignore_alpha':     ignore_alpha_var.get(),
+                    'include_audio':    include_audio_var.get(),
+                    'auto_play':        auto_play_var.get(),
+                    'loop_play':        loop_play_var.get(),
                     'source_interlaced': source_interlaced_var.get(),
-                    'start_num':     start_num_var.get(),
-                    'hula_dest':        s.get('hula_dest', ''),
-                    'hula_target':      s.get('hula_target', HULA_TARGET_KAYENNE_MOV),
-                    'hula_standard':    s.get('hula_standard', '1080p50'),
-                    'hula_clip':        s.get('hula_clip', 'WIPE'),
-                    'hula_field_order': s.get('hula_field_order', 'BFF'),
-                    'window_geometry': root.geometry(),
+                    'start_num':        start_num_var.get(),
+                    'clip_name':        clip_name_var.get(),
+                    'field_order':      field_order_var.get(),
+                    'output_format':    output_var.get(),
+                    'window_geometry':  root.geometry(),
                 }, f)
         except Exception:
             pass
@@ -2978,76 +3063,180 @@ def launch_gui():
     ttk.Button(frm2, text="Open in Finder",
                command=_open_dest_folder).pack(side='left', **pad)
 
-    # ── Settings row ──
-    frm3 = ttk.LabelFrame(root, text="Settings")
-    frm3.pack(fill='x', **pad)
+    # ── Output format constants ──
+    OUTPUT_KAHUNA_SWS  = "Kahuna SWS"
+    OUTPUT_KAYENNE_MOV = "Kayenne MOV"
+    OUTPUT_KAYENNE_TGA = "Kayenne TGA"
+    OUTPUT_SONY_TGA    = "Sony TGA"
 
-    # Row 1: video standard
-    frm3_row1 = tk.Frame(frm3)
-    frm3_row1.pack(fill='x', anchor='w')
-    ttk.Label(frm3_row1, text="Video Standard:").pack(side='left', **pad)
-    std_var = tk.StringVar(value='1080i50')
-    std_cb  = ttk.Combobox(frm3_row1, textvariable=std_var, width=12,
-                            values=list(VIDEO_STANDARDS.keys()), state='readonly')
-    std_cb.pack(side='left', **pad)
+    # ── State ──
+    _selected_items  = []
+    _input_type      = [None]   # 'to_sws_only' | 'mov_only' | 'from_sws'
+    _has_audio_clips = [False]
+    _has_tga_seq     = [False]
 
-    # Row 2: conversion options
-    frm3_row2 = tk.Frame(frm3)
-    frm3_row2.pack(fill='x', anchor='w')
-    split_var              = tk.BooleanVar(value=True)
-    delete_var             = tk.BooleanVar(value=False)
-    ignore_alpha_var       = tk.BooleanVar(value=False)
-    include_audio_var      = tk.BooleanVar(value=True)
-    auto_play_var          = tk.BooleanVar(value=False)
-    loop_play_var          = tk.BooleanVar(value=False)
-    source_interlaced_var  = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frm3_row2, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="TGA source interlaced", variable=source_interlaced_var).pack(side='left', **pad)
+    # ── All tk variables (defined before load_settings) ──
+    std_var               = tk.StringVar(value='1080i50')
+    split_var             = tk.BooleanVar(value=True)
+    ignore_alpha_var      = tk.BooleanVar(value=False)
+    include_audio_var     = tk.BooleanVar(value=True)
+    auto_play_var         = tk.BooleanVar(value=False)
+    loop_play_var         = tk.BooleanVar(value=False)
+    source_interlaced_var = tk.BooleanVar(value=False)
+    start_num_var         = tk.IntVar(value=1)
+    use_source_num_var    = tk.BooleanVar(value=False)
+    clip_name_var         = tk.StringVar(value='WIPE')
+    field_order_var       = tk.StringVar(value='BFF')
+    output_var            = tk.StringVar()
 
     # ── Load saved settings ──
-    start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
     s = load_settings()
-    if s.get('dest'):     dest_var.set(s['dest'])
-    if s.get('standard'): std_var.set(s['standard'])
-    if 'split'        in s: split_var.set(s['split'])
-    if 'delete'       in s: delete_var.set(s['delete'])
-    if 'ignore_alpha'       in s: ignore_alpha_var.set(s['ignore_alpha'])
-    if 'include_audio'      in s: include_audio_var.set(s['include_audio'])
-    if 'auto_play'          in s: auto_play_var.set(s['auto_play'])
-    if 'loop_play'          in s: loop_play_var.set(s['loop_play'])
-    if 'source_interlaced'  in s: source_interlaced_var.set(s['source_interlaced'])
-    if 'start_num'      in s: start_num_var.set(s['start_num'])
-    # Hula settings live in the same dict -- HulaWindow reads them directly
-    # s is passed by reference so HulaWindow can update it in place
+    if s.get('dest'):             dest_var.set(s['dest'])
+    if s.get('standard'):         std_var.set(s['standard'])
+    if 'split'             in s:  split_var.set(s['split'])
+    if 'ignore_alpha'      in s:  ignore_alpha_var.set(s['ignore_alpha'])
+    if 'include_audio'     in s:  include_audio_var.set(s['include_audio'])
+    if 'auto_play'         in s:  auto_play_var.set(s['auto_play'])
+    if 'loop_play'         in s:  loop_play_var.set(s['loop_play'])
+    if 'source_interlaced' in s:  source_interlaced_var.set(s['source_interlaced'])
+    if 'start_num'         in s:  start_num_var.set(s['start_num'])
+    if 'clip_name'         in s:  clip_name_var.set(s['clip_name'])
+    if 'field_order'       in s:  field_order_var.set(s['field_order'])
+    # hula_clip / hula_field_order: backwards-compat with pre-v1.5.33 settings
+    if 'hula_clip'         in s and 'clip_name' not in s:
+        clip_name_var.set(s['hula_clip'])
+    if 'hula_field_order'  in s and 'field_order' not in s:
+        field_order_var.set(s['hula_field_order'])
 
-    # ── Batch Convert row ──
-    frm5 = ttk.LabelFrame(root, text="Batch Convert")
-    frm5.pack(fill='x', **pad)
+    # ── Convert section ──
+    frm_convert = ttk.LabelFrame(root, text="Convert")
+    frm_convert.pack(fill='x', **pad)
 
-    batch_cancel_event = threading.Event()
-
-    ttk.Label(frm5, text="Start number:").pack(side='left', **pad)
-    start_num_entry = ttk.Spinbox(frm5, from_=1, to=9999, textvariable=start_num_var, width=6)
-    start_num_entry.pack(side='left', **pad)
-
-    use_source_num_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frm5, text="Use source file number",
-                    variable=use_source_num_var).pack(side='left', **pad)
-
-    open_btn = ttk.Button(frm5, text="Open Files…")
+    # Top row: Open Files + summary + Output dropdown
+    frm_row_open = tk.Frame(frm_convert)
+    frm_row_open.pack(fill='x', anchor='w')
+    open_btn = ttk.Button(frm_row_open, text="Open Files…")
     open_btn.pack(side='left', **pad)
+    summary_var = tk.StringVar(value="No files selected.")
+    ttk.Label(frm_row_open, textvariable=summary_var,
+              foreground='#555555').pack(side='left', padx=(0, 12))
+    ttk.Label(frm_row_open, text="Output:").pack(side='left')
+    output_cb = ttk.Combobox(frm_row_open, textvariable=output_var,
+                              width=22, state='disabled')
+    output_cb.pack(side='left', padx=(4, 0))
 
-    cancel_btn = ttk.Button(frm5, text="✕  Cancel", state='disabled')
+    # Adaptive option rows (pack/forget in _update_adaptive_controls)
+    frm_row_std = tk.Frame(frm_convert)
+    std_cb = ttk.Combobox(frm_row_std, textvariable=std_var, width=12,
+                           values=list(VIDEO_STANDARDS.keys()), state='readonly')
+    ttk.Label(frm_row_std, text="Standard:").pack(side='left', padx=(8, 4), pady=4)
+    std_cb.pack(side='left', pady=4)
+
+    frm_row_flags = tk.Frame(frm_convert)
+    ttk.Checkbutton(frm_row_flags, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm_row_flags, text="Ignore alpha/key",   variable=ignore_alpha_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm_row_flags, text="Auto play",          variable=auto_play_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm_row_flags, text="Loop play",          variable=loop_play_var).pack(side='left', **pad)
+
+    frm_row_tga_opts = tk.Frame(frm_convert)
+    chk_tga_int = ttk.Checkbutton(frm_row_tga_opts, text="TGA source interlaced",
+                                   variable=source_interlaced_var)
+    chk_audio_tosws = ttk.Checkbutton(frm_row_tga_opts, text="Include audio",
+                                       variable=include_audio_var)
+
+    frm_row_hula_tga = tk.Frame(frm_convert)
+    frm_clip_inner = tk.Frame(frm_row_hula_tga)
+    ttk.Label(frm_clip_inner, text="Clip name (4 chars):").pack(side='left')
+    vcmd = root.register(lambda P: len(P) <= 4 and (P == '' or P.isalnum()))
+    ttk.Entry(frm_clip_inner, textvariable=clip_name_var, width=5,
+              validate='key', validatecommand=(vcmd, '%P')).pack(side='left', padx=(4, 4))
+    ttk.Label(frm_clip_inner,
+              text="(all clips share this name — they will merge on import)",
+              foreground='#888888').pack(side='left')
+    frm_field_inner = tk.Frame(frm_row_hula_tga)
+    ttk.Label(frm_field_inner, text="Field order:").pack(side='left', padx=(0, 4))
+    for _fo in ('BFF', 'TFF'):
+        tk.Radiobutton(frm_field_inner, text=_fo,
+                       variable=field_order_var, value=_fo).pack(side='left')
+
+    frm_row_hula_mov = tk.Frame(frm_convert)
+    ttk.Checkbutton(frm_row_hula_mov, text="Include audio",
+                    variable=include_audio_var).pack(side='left', **pad)
+
+    # Action row
+    batch_cancel_event = threading.Event()
+    cancel_btn  = ttk.Button(frm_row_open, text="✕  Cancel", state='disabled')
+    convert_btn = ttk.Button(frm_row_open, text="Convert",   state='disabled')
+    convert_btn.pack(side='left', **pad)
     cancel_btn.pack(side='left', **pad)
 
-    ttk.Button(frm5, text="SWS Player",
-               command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
-    ttk.Button(frm5, text="Hula",
-               command=lambda: HulaWindow(root, s, save_settings)).pack(side='right', **pad)
+    frm_row_actions = tk.Frame(frm_convert)
+    frm_row_actions.pack(fill='x', anchor='w')
+    frm_numbering = tk.Frame(frm_row_actions)
+    ttk.Label(frm_numbering, text="Start number:").pack(side='left', padx=(8, 4), pady=4)
+    ttk.Spinbox(frm_numbering, from_=1, to=9999, textvariable=start_num_var,
+                width=6).pack(side='left', pady=4)
+    ttk.Checkbutton(frm_numbering, text="Use source file number",
+                    variable=use_source_num_var).pack(side='left', padx=(8, 0), pady=4)
+    ttk.Button(frm_row_actions, text="Video Player",
+               command=lambda: SWSPlayer(root, initial_dir=dest_var.get())
+               ).pack(side='right', **pad)
+
+    def _update_adaptive_controls(*_):
+        out = output_var.get()
+        is_interlaced_std = 'i' in std_var.get()
+        for frm in (frm_row_std, frm_row_flags, frm_row_tga_opts,
+                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering):
+            frm.pack_forget()
+        if not out:
+            return
+        bf = dict(fill='x', anchor='w', before=frm_row_actions)
+        if out != OUTPUT_KAYENNE_MOV:
+            frm_row_std.pack(**bf)
+        if out == OUTPUT_KAHUNA_SWS:
+            frm_row_flags.pack(**bf)
+            show_tga = _has_tga_seq[0]
+            show_aud = _has_audio_clips[0]
+            chk_tga_int.pack_forget()
+            chk_audio_tosws.pack_forget()
+            if show_tga:
+                chk_tga_int.pack(side='left', **pad)
+            if show_aud:
+                chk_audio_tosws.pack(side='left', **pad)
+            if show_tga or show_aud:
+                frm_row_tga_opts.pack(**bf)
+            frm_numbering.pack(side='left')
+        elif out == OUTPUT_KAYENNE_MOV:
+            if _has_audio_clips[0]:
+                frm_row_hula_mov.pack(**bf)
+        elif out in (OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA):
+            is_sony = (out == OUTPUT_SONY_TGA)
+            frm_clip_inner.pack_forget()
+            frm_field_inner.pack_forget()
+            if is_sony:
+                frm_clip_inner.pack(side='left', padx=(8, 0), pady=4)
+            if is_sony or is_interlaced_std:
+                frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
+                frm_row_hula_tga.pack(**bf)
+
+    def _update_output_options():
+        itype = _input_type[0]
+        if itype == 'from_sws':
+            opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
+        elif itype == 'mov_only':
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
+        elif itype == 'to_sws_only':
+            opts = [OUTPUT_KAHUNA_SWS]
+        else:
+            opts = []
+        output_cb['values'] = opts
+        output_cb.config(state='readonly' if opts else 'disabled')
+        if output_var.get() not in opts:
+            output_var.set(opts[0] if opts else '')
+        _update_adaptive_controls()
+
+    std_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
+    output_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
@@ -3067,114 +3256,26 @@ def launch_gui():
         log_text.see('end')
         root.update_idletasks()
 
-    def on_drop(event):
-        """Handle files dropped onto the log area."""
-        d = dest_var.get().strip()
-        if not d:
-            log("ERROR: Please set a Destination Folder before dropping files.")
-            return
-
-        # Parse the drop data -- tkinterdnd2 returns paths wrapped in {} if they contain spaces
-        raw = event.data.strip()
-        paths = []
-        # Handle paths wrapped in braces (spaces in filenames)
-        import shlex
-        try:
-            paths = shlex.split(raw)
-        except ValueError:
-            # Fallback: strip braces manually
-            paths = [p.strip('{}') for p in re.findall(r'\{[^}]+\}|\S+', raw)]
-
-        # Filter to supported file types
-        supported = {'.mov', '.mp4', '.avi', '.mxf', '.tga', '.png', '.bmp', '.jpg', '.jpeg'}
-        valid = [p for p in paths if Path(p).suffix.lower() in supported]
-
-        if not valid:
-            log("ERROR: No supported files in drop.")
-            return
-
-        # Ask for starting file number
-        import tkinter.simpledialog as simpledialog
-        start_num = simpledialog.askinteger(
-            "File Number",
-            f"Starting file number for {len(valid)} file(s):",
-            initialvalue=1, minvalue=1, maxvalue=9999, parent=root
-        )
-        if start_num is None:
-            return  # user cancelled
-
-        try:
-            check_ffmpeg()
-        except RuntimeError as e:
-            log(f"ERROR: {e}")
-            return
-
-        def convert_dropped():
-            batch_cancel_event.clear()
-            root.after(0, lambda: cancel_btn.config(state='normal'))
-            for i, path in enumerate(sorted(valid)):
-                if batch_cancel_event.is_set():
-                    log("Batch conversion cancelled.")
-                    break
-                fnum = start_num + i
-                ext = Path(path).suffix.lower()
-                try:
-                    if ext in {'.mov', '.mp4', '.avi', '.mxf'}:
-                        convert_clip(path, fnum, d,
-                                     std_var.get(), split_var.get(),
-                                     delete_var.get(), log,
-                                     ignore_alpha=ignore_alpha_var.get(),
-                                     include_audio=include_audio_var.get(),
-                                     auto_play=auto_play_var.get(),
-                                     loop_play=loop_play_var.get())
-                    elif ext == '.tga' and Path(path).stat().st_size > 0:
-                        convert_still(path, fnum, d,
-                                      std_var.get(), split_var.get(),
-                                      delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get(),
-                                      auto_play=auto_play_var.get(),
-                                      loop_play=loop_play_var.get())
-                    else:
-                        convert_still(path, fnum, d,
-                                      std_var.get(), split_var.get(),
-                                      delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get(),
-                                      auto_play=auto_play_var.get(),
-                                      loop_play=loop_play_var.get())
-                except Exception as e:
-                    import traceback
-                    log(f"  ERROR converting {Path(path).name}: {e}")
-                    log(f"  {traceback.format_exc()}")
-            root.after(0, lambda: cancel_btn.config(state='disabled'))
-
-        threading.Thread(target=convert_dropped, daemon=True).start()
-
-    # ── Wire up drag and drop to log area ──
-    if HAS_DND:
-        log_text.drop_target_register(DND_FILES)
-        log_text.dnd_bind('<<Drop>>', on_drop)
-        log(f"Drag and drop enabled -- drop files onto the log area to convert.")
-
     def open_files():
-        d = dest_var.get().strip()
-        if not d:
-            log("Please set a Destination Folder before converting.")
-            return
-
         folder = filedialog.askdirectory(title="Select folder to convert", parent=root)
         if not folder:
             return
 
-        items = _scan_folder_for_items(folder)
+        items, itype, has_aud, has_tga = _scan_folder_unified(folder)
+
+        if itype == 'mixed_error':
+            messagebox.showwarning("Open Files",
+                "This folder contains a mix of SWS files and other formats.\n"
+                "Use a folder with either SWS files or media files, not both.",
+                parent=root)
+            return
         if not items:
             log(f"No supported files found in {os.path.basename(folder)}.")
             return
 
-        try:
-            check_ffmpeg()
-        except RuntimeError as e:
-            log(f"ERROR: {e}")
-            return
+        _input_type[0]      = itype
+        _has_audio_clips[0] = has_aud
+        _has_tga_seq[0]     = has_tga
 
         # ── Folder browser dialog ──
         dlg = tk.Toplevel(root)
@@ -3184,14 +3285,13 @@ def launch_gui():
         dlg.grab_set()
 
         pad2 = {'padx': 8, 'pady': 4}
-
         ttk.Label(dlg, text=f"Folder: {os.path.basename(folder)}",
                   font=('Helvetica', 11, 'bold')).pack(anchor='w', **pad2)
 
         list_frame = ttk.Frame(dlg)
         list_frame.pack(fill='both', expand=True, padx=8, pady=2)
         lb = tk.Listbox(list_frame, selectmode='extended', height=min(len(items), 16),
-                        width=54, font=('Menlo', 11))
+                        width=60, font=('Menlo', 11))
         sb = ttk.Scrollbar(list_frame, command=lb.yview)
         lb.config(yscrollcommand=sb.set)
         lb.pack(side='left', fill='both', expand=True)
@@ -3201,96 +3301,45 @@ def launch_gui():
             lb.insert('end', '  ' + item['display'])
         lb.select_set(0, 'end')
 
-        status_var = tk.StringVar(value=f"{len(items)} item(s) found. Select all or choose individually.")
-        ttk.Label(dlg, textvariable=status_var, foreground='#888888').pack(anchor='w', padx=8)
+        dlg_status = tk.StringVar(value=f"{len(items)} item(s). Select all or choose individually.")
+        ttk.Label(dlg, textvariable=dlg_status, foreground='#888888').pack(anchor='w', padx=8)
 
-        clips_with_audio = [item for item in items
-                            if item['type'] == 'clip'
-                            and get_video_info(item['path']).get('has_audio')]
-        if clips_with_audio:
-            include_audio_var.set(True)
-            ttk.Checkbutton(dlg, text="Exclude audio", variable=include_audio_var,
-                            onvalue=False, offvalue=True).pack(anchor='w', padx=8)
+        btn_frame_dlg = ttk.Frame(dlg)
+        btn_frame_dlg.pack(fill='x', padx=8, pady=8)
 
-        btn_frame = ttk.Frame(dlg)
-        btn_frame.pack(fill='x', padx=8, pady=8)
-
-        def on_convert():
-            selected = lb.curselection()
-            if not selected:
-                status_var.set("Select at least one item.")
+        def on_select():
+            sel = lb.curselection()
+            if not sel:
+                dlg_status.set("Select at least one item.")
                 return
-            chosen = [items[i] for i in selected]
+            chosen = [items[i] for i in sel]
+            _selected_items.clear()
+            _selected_items.extend(chosen)
+
+            counts = {}
+            for item in chosen:
+                counts[item['type']] = counts.get(item['type'], 0) + 1
+            parts = []
+            if 'tga_seq' in counts:
+                n = counts['tga_seq']
+                parts.append(f"{n} TGA sequence{'s' if n > 1 else ''}")
+            if 'clip' in counts:
+                n = counts['clip']
+                parts.append(f"{n} video file{'s' if n > 1 else ''}")
+            if 'still' in counts:
+                n = counts['still']
+                parts.append(f"{n} still{'s' if n > 1 else ''}")
+            if 'sws' in counts:
+                n = counts['sws']
+                parts.append(f"{n} SWS file{'s' if n > 1 else ''}")
+            summary_var.set(f"{os.path.basename(folder)}: " + ', '.join(parts))
+
+            convert_btn.config(state='normal')
             dlg.destroy()
+            _update_output_options()
 
-            start_num      = start_num_var.get()
-            use_source_num = use_source_num_var.get()
-
-            log(f"Batch convert: {len(chosen)} item(s) from {os.path.basename(folder)}")
-
-            def convert_batch():
-                batch_cancel_event.clear()
-                root.after(0, lambda: cancel_btn.config(state='normal'))
-                results   = []
-                next_slot = start_num
-                cancelled = False
-
-                for item in chosen:
-                    if batch_cancel_event.is_set():
-                        log("Batch conversion cancelled.")
-                        cancelled = True
-                        break
-
-                    fnum = item['source_num'] if use_source_num and item['source_num'] else next_slot
-                    if not (use_source_num and item['source_num']):
-                        next_slot += 1
-
-                    try:
-                        if item['type'] == 'tga_seq':
-                            seq_id = item['base'].rstrip('._- ')
-                            convert_tga_sequence(
-                                item['files'], fnum, d,
-                                std_var.get(), split_var.get(), delete_var.get(), log,
-                                ignore_alpha=ignore_alpha_var.get(),
-                                auto_play=auto_play_var.get(),
-                                loop_play=loop_play_var.get(),
-                                write_log=False,
-                                source_interlaced=source_interlaced_var.get())
-                            results.append((fnum, seq_id, 'OK'))
-                        elif item['type'] == 'clip':
-                            convert_clip(
-                                item['path'], fnum, d,
-                                std_var.get(), split_var.get(), delete_var.get(), log,
-                                ignore_alpha=ignore_alpha_var.get(),
-                                include_audio=include_audio_var.get(),
-                                auto_play=auto_play_var.get(),
-                                loop_play=loop_play_var.get())
-                            results.append((fnum, Path(item['path']).stem, 'OK'))
-                        else:
-                            convert_still(
-                                item['path'], fnum, d,
-                                std_var.get(), split_var.get(), delete_var.get(), log,
-                                ignore_alpha=ignore_alpha_var.get(),
-                                auto_play=auto_play_var.get(),
-                                loop_play=loop_play_var.get())
-                            results.append((fnum, Path(item['path']).stem, 'OK'))
-                    except Exception as e:
-                        import traceback
-                        name = item.get('base') or Path(item.get('path', '')).name
-                        log(f"  ERROR converting {name}: {e}")
-                        log(f"  {traceback.format_exc()}")
-                        results.append((fnum, name, f'ERROR: {e}'))
-
-                root.after(0, lambda: cancel_btn.config(state='disabled'))
-                if results and not cancelled:
-                    _write_batch_log(results, d, std_var.get(), log)
-                    if not use_source_num:
-                        root.after(0, lambda: start_num_var.set(next_slot))
-
-            threading.Thread(target=convert_batch, daemon=True).start()
-
-        ttk.Button(btn_frame, text="Cancel", command=dlg.destroy).pack(side='right', padx=2)
-        ttk.Button(btn_frame, text="Convert", command=on_convert).pack(side='right', padx=2)
+        ttk.Button(btn_frame_dlg, text="Cancel", command=dlg.destroy).pack(side='right', padx=2)
+        ttk.Button(btn_frame_dlg, text="Select", command=on_select).pack(side='right', padx=2)
 
         dlg.update_idletasks()
         px = root.winfo_x() + (root.winfo_width()  - dlg.winfo_width())  // 2
@@ -3298,6 +3347,120 @@ def launch_gui():
         dlg.geometry(f"+{px}+{py}")
 
     open_btn.config(command=open_files)
+
+    def on_convert():
+        d = dest_var.get().strip()
+        if not d:
+            log("Please set a Destination Folder before converting.")
+            return
+        if not _selected_items:
+            log("No items selected.")
+            return
+        out   = output_var.get()
+        itype = _input_type[0]
+
+        try:
+            check_ffmpeg()
+        except RuntimeError as e:
+            log(f"ERROR: {e}")
+            return
+
+        # Warning for unconfirmed MOV→TGA path
+        if itype == 'mov_only' and out in (OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA):
+            if not _ask_confirm(root,
+                    "MOV → TGA has not been tested on hardware.\n\n"
+                    "The output may not load correctly on a Kayenne\n"
+                    "or Sony MVS desk.\n\nProceed anyway?"):
+                return
+
+        if out == OUTPUT_SONY_TGA and len(clip_name_var.get().strip()) != 4:
+            messagebox.showerror("Convert",
+                                 "Clip name must be exactly 4 characters for Sony TGA output.",
+                                 parent=root)
+            return
+
+        def _run_to_sws():
+            start_num  = start_num_var.get()
+            use_src    = use_source_num_var.get()
+            next_slot  = start_num
+            results    = []
+            cancelled  = False
+            for item in _selected_items:
+                if batch_cancel_event.is_set():
+                    log("Batch cancelled.")
+                    cancelled = True
+                    break
+                fnum = item['source_num'] if use_src and item['source_num'] else next_slot
+                if not (use_src and item['source_num']):
+                    next_slot += 1
+                try:
+                    if item['type'] == 'tga_seq':
+                        convert_tga_sequence(
+                            item['files'], fnum, d,
+                            std_var.get(), split_var.get(), False, log,
+                            ignore_alpha=ignore_alpha_var.get(),
+                            auto_play=auto_play_var.get(),
+                            loop_play=loop_play_var.get(),
+                            write_log=False,
+                            source_interlaced=source_interlaced_var.get())
+                        results.append((fnum, item['base'].rstrip('._- '), 'OK'))
+                    elif item['type'] == 'clip':
+                        convert_clip(
+                            item['path'], fnum, d,
+                            std_var.get(), split_var.get(), False, log,
+                            ignore_alpha=ignore_alpha_var.get(),
+                            include_audio=include_audio_var.get(),
+                            auto_play=auto_play_var.get(),
+                            loop_play=loop_play_var.get())
+                        results.append((fnum, Path(item['path']).stem, 'OK'))
+                    else:
+                        convert_still(
+                            item['path'], fnum, d,
+                            std_var.get(), split_var.get(), False, log,
+                            ignore_alpha=ignore_alpha_var.get(),
+                            auto_play=auto_play_var.get(),
+                            loop_play=loop_play_var.get())
+                        results.append((fnum, Path(item['path']).stem, 'OK'))
+                except Exception as e:
+                    import traceback
+                    name = item.get('base') or Path(item.get('path', '')).name
+                    log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
+                    results.append((fnum, name, f'ERROR: {e}'))
+            if results and not cancelled:
+                _write_batch_log(results, d, std_var.get(), log)
+                if not use_src:
+                    root.after(0, lambda v=next_slot: start_num_var.set(v))
+
+        def _run_from_sws():
+            target_map = {
+                OUTPUT_KAYENNE_MOV: HULA_TARGET_KAYENNE_MOV,
+                OUTPUT_KAYENNE_TGA: HULA_TARGET_KAYENNE_TGA,
+                OUTPUT_SONY_TGA:    HULA_TARGET_SONY_TGA,
+            }
+            hula_target = target_map.get(out, HULA_TARGET_KAYENNE_TGA)
+            paths = [item['path'] for item in _selected_items]
+            _hula_run_batch(paths, d, hula_target,
+                            standard=std_var.get(),
+                            clip_name=clip_name_var.get().strip().upper(),
+                            field_order=field_order_var.get(),
+                            log=log)
+
+        def worker():
+            batch_cancel_event.clear()
+            root.after(0, lambda: cancel_btn.config(state='normal'))
+            root.after(0, lambda: convert_btn.config(state='disabled'))
+            try:
+                if out == OUTPUT_KAHUNA_SWS:
+                    _run_to_sws()
+                else:
+                    _run_from_sws()
+            finally:
+                root.after(0, lambda: cancel_btn.config(state='disabled'))
+                root.after(0, lambda: convert_btn.config(state='normal'))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    convert_btn.config(command=on_convert)
 
     def cancel_batch():
         batch_cancel_event.set()
