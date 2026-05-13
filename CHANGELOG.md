@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.32 — 2026-05-13
+
+### Changed
+- **Watch Folder removed.** MacHuna is a field tool for freelancers, not a networked server app. Watch Folder was a legacy of the K-Watch workflow and is no longer needed. `WatchService` and all associated UI removed.
+- **Slot Override removed.** Replaced with a "Use source file number" checkbox in Batch Convert. K-Watch named files (e.g. `TNTS201_30_0001.tga`) carry their slot number in the filename; ticking this uses it directly. Unticked: all items sequence from Start Number.
+- **Smart folder browser replaces file picker.** "Open Files…" now opens a folder picker. The app scans the folder and shows a custom browser listing one entry per TGA sequence (collapsed with frame count) plus any other supported files. No more scrolling through hundreds of individual TGA frames.
+- **"Include audio" moved to folder browser dialog.** Only shown when at least one video file with an audio track is detected. Hidden for TGA-only folders. Framed as "Exclude audio" (default = include).
+- **"TGA source already interlaced" label shortened** to "TGA source interlaced".
+
+### Fixed
+- **TGA sequence → progressive standard played at double speed.** When a TGA sequence captured from an interlaced source (e.g. 1080i/50, 25fps display rate) was converted to a progressive standard (e.g. 1080p/50, 50fps), the frame count was unchanged, halving the duration. Fix: when "TGA source interlaced" is ticked and the target is progressive, each frame is duplicated in the concat to produce double the frame count and preserve duration.
+
+---
+
 ## v1.5.31 — 2026-05-11
 
 ### Fixed

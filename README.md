@@ -62,27 +62,19 @@ The built app will appear in the `dist/` folder.
 
 ## Usage
 
-### Watch Folder
-
-1. Launch MacHuna.app
-2. Set your Watch Folder -- drop source files here
-3. Set your Destination Folder -- converted .SWS files appear here
-4. Select your video standard
-5. Set playback options (Auto play, Loop play) as required
-6. Click Start Watching
-
-MacHuna will convert files automatically as they appear and log progress in the app window. When a TGA sequence batch finishes, the service stops automatically and writes a single combined log file to the destination folder.
-
 ### Batch Convert
 
 1. Set your Destination Folder
-2. Set your start number in the Batch Convert section
-3. Click Open Files and select MOV, MP4 or still image files
-4. Files are converted in alphabetical order with auto-incrementing numbers
-5. Click Cancel Batch at any time to stop after the current file completes
-6. A conversion log is written to the destination folder after each completed batch
+2. Set your video standard and options in Settings
+3. Set your start number in the Batch Convert row
+4. Click **Open Files…** and select a folder
+5. A browser lists one entry per TGA sequence (e.g. `TNTS201  (30 frames)`) plus any video or still files found — select all or choose individually
+6. Click **Convert** — files are converted in order, sequences first, then alphabetically
+7. A conversion log is written to the destination folder on completion
 
-For TGA sequences, use the Watch Folder service -- batch convert does not support sequences.
+**"Use source file number"** — tick this when converting K-Watch named files (e.g. `TNTS201_30_0001.tga`). MacHuna reads the slot number from the filename rather than the Start Number.
+
+**TGA source interlaced** — tick when TGA frames were captured from an interlaced source (e.g. 1080i/50). MacHuna duplicates each frame to preserve duration when outputting to a progressive standard.
 
 ### SWS Preview Player
 
@@ -124,6 +116,9 @@ All items below are coded and working by analysis; hardware tests on Kayenne and
 - Sony MVS clip naming -- 4-char prefix + frame number convention unconfirmed on a live Sony MVS
 - Interlaced SWS → Kayenne MOV -- interlace metadata (field order flags) not written to ProRes container; unknown whether a Kayenne desk requires it
 - Sony MVS 25i field order -- BFF assumed for PAL/50Hz; toggle present if incorrect
+
+### Unified conversion engine (long-term)
+MacHuna's long-term direction is a single format-in / format-out interface that replaces the current MacHuna + Hula split. Pick your input format (MOV, TGA, SWS) and output format (SWS, MOV, TGA) and the UI adapts to show only the relevant controls. This unification is contingent on all Hula output paths being confirmed on Kayenne and Sony MVS hardware first.
 
 ## Licence
 

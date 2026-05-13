@@ -19,6 +19,12 @@ When the version number in `machuna.py` changes, update ALL of the following —
 4. **`HANDOVER_NOTES.md`** — update the `**MacHuna:**` line under `## Current Versions`
 5. **`README.md`** — update if any user-facing features, supported formats, or workflow steps changed
 
+Before building, run the test suite and confirm it passes:
+
+```
+/opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
+```
+
 Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 ## Architecture notes
@@ -28,6 +34,7 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 - SWS format constants (`VIDEO_STANDARDS`, `FORMAT_VARIANTS`, `FORMAT_VARIANT_FPS`, `FORMAT_VARIANT_DISPLAY`) are all keyed by standard name string (e.g. `'1080i50'`).
 - All ffmpeg calls go through `_run_ffmpeg()` so Stop/Cancel can kill them.
 - Build output: `dist/MacHuna.app`
+- Tests live in `test_machuna.py` and cover the SWS header builder and all four format constant tables. Update them if `build_sws_header`'s signature changes or any header byte offsets/constants change. The format table tests auto-cover new video standards (they iterate the dicts), so adding a standard doesn't require new test cases — just run the suite to confirm consistency.
 
 ## Key constraints
 

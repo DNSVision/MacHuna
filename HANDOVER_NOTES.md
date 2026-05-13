@@ -4,7 +4,53 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.5.32)
+
+### v1.5.32 — TGA Workflow Overhaul
+
+Watch Folder and Slot Override were removed. MacHuna is positioned as a field tool for freelancers, not a networked server app. Watch Folder was a legacy of the K-Watch workflow that David confirmed would never be used in practice.
+
+Key changes:
+- **Smart folder browser**: "Open Files…" opens a folder picker; TGA sequences are collapsed to one entry (e.g. `TNTS201  (30 frames)`), video files and stills listed individually. User selects items and clicks Convert.
+- **"Use source file number" checkbox**: replaces Slot Override. K-Watch files have slot number embedded in filename; ticking this uses it. Unticked = sequential from Start Number.
+- **i→p TGA fix**: ticking "TGA source interlaced" when converting to a progressive standard now duplicates each frame to preserve duration (was playing at double speed before).
+- **"Include audio" contextual**: moved into the folder browser dialog, only appears when audio is detected in a video file. Hidden for TGA-only folders.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.31)
+
+### Unified App — Strategic Discussion (May 2026)
+
+A strategic discussion was held about MacHuna's long-term direction. The core insight: MacHuna started as an SWS converter with Hula added as an optional extra. But the conversion engine now handles MOV, TGA, and SWS in both directions — making it more accurately described as a fully featured format conversion engine for broadcast media. Hula is no longer a bolt-on; it is the other half of the engine.
+
+**The proposal:** Retire the separate Hula window and unify everything into a single format-in / format-out UI. The user picks an input format and an output format; the UI adapts to expose only the controls relevant to that combination (video standard, P/I options, field order, clip name, etc.). No more "is this a MacHuna job or a Hula job?" question.
+
+**Why not do it now:** Six Hula output paths remain UNCONFIRMED on hardware (see Hula Hardware Unknowns table). A unified UI implies that all format combinations are equally reliable. Merging before those paths are confirmed would embed untested code deeper into the main product. The three pending Kahuna tests (below) validate the TO-SWS direction but do not touch the FROM-SWS (Hula) paths at all.
+
+**What is needed before merging:**
+
+1. Kahuna hardware test (imminent — highest priority):
+   - 1080i/50 MOV → 1080p/50 SWS plays at correct speed (main v1.5.31 fix)
+   - 1080p/50 → 1080i/50 SWS regression check
+   - TGA i→i with "TGA source already interlaced" checkbox — correct speed on hardware
+   - These confirm the MacHuna conversion engine (TO SWS direction) but do NOT clear the Hula (FROM SWS) unknowns.
+
+2. Kayenne hardware tests (no timeline):
+   - SWS → Kayenne MOV — load on a live Kayenne ClipStore / Image Store
+   - SWS → Kayenne TGA — verify frame naming and format on hardware
+
+3. Sony MVS hardware tests (no timeline):
+   - SWS → Sony TGA — verify 4-char clip naming convention on a live desk
+   - Sony MVS 25i field order — BFF assumed; confirm or flip on hardware
+
+4. MOV → TGA via Hula — full path coded, never hardware-tested (not desk-specific; can be tested independently)
+
+Once all FROM-SWS paths are confirmed, the unification can proceed cleanly.
+
+**Near-term stepping stone (optional):** If the Hula/MacHuna split feels awkward before the full rearchitect is ready, a lower-risk improvement would be replacing the separate Hula Toplevel window with two tabs in the main window — "To SWS" and "From SWS" — without touching the underlying conversion logic.
+
+---
 
 ### Hula Code Review and Bugfixes (v1.5.31)
 
@@ -119,7 +165,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.31
+- **MacHuna:** v1.5.32
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
 
 ---

@@ -39,7 +39,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.31"
+VERSION = "1.5.32"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -815,14 +815,18 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     has_alpha = info['has_alpha'] and not ignore_alpha
 
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
-    # Apply field-weaving only when source frames are truly progressive.
-    # If source_interlaced is set, each TGA already contains a full interlaced
-    # frame (e.g. extracted from an existing SWS) — tinterlace would halve the
-    # frame count and cause double-speed playback.
+    # p→i: field-weave progressive frames into interlaced output
     do_p_to_i = video_standard in _interlaced_standards and not source_interlaced
+    # i→p: source is interlaced (25/29.97/30fps) but target is progressive (50/59.94/60fps)
+    #       duplicate each frame to preserve duration
+    do_i_to_p = source_interlaced and video_standard not in _interlaced_standards
+
     if do_p_to_i:
         vf_tinterlace = 'tinterlace=mode=interleave_top'
-        log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+        log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+    elif do_i_to_p:
+        vf_tinterlace = None
+        log(f"  Interlaced→progressive: duplicating {frame_count} frames → {frame_count * 2} frames")
     elif source_interlaced and video_standard in _interlaced_standards:
         vf_tinterlace = None
         log(f"  Source frames already interlaced — passing through as {video_standard}")
@@ -830,18 +834,20 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         vf_tinterlace = None
 
     with tempfile.TemporaryDirectory() as tmp:
-        # Build a concat demuxer file
+        # Build a concat demuxer file — list each frame twice for i→p to preserve duration
         concat_file = os.path.join(tmp, 'concat.txt')
         with open(concat_file, 'w') as f:
             for tga in sorted(tga_files):
                 f.write(f"file '{tga}'\n")
+                if do_i_to_p:
+                    f.write(f"file '{tga}'\n")
 
         fill_raw = os.path.join(tmp, 'fill.v210')
         ffmpeg = _get_ffmpeg_path('ffmpeg')
         cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
         if vf_tinterlace:
             cmd += ['-vf', vf_tinterlace]
-        else:
+        elif not do_i_to_p:
             cmd += ['-frames:v', str(frame_count)]
         cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
         _run_ffmpeg(cmd, check=True)
@@ -932,6 +938,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 #  File naming parser (K-Watch conventions)
 # ─────────────────────────────────────────────────────────────
 
+# Matches generic TGA sequence frames: base name + required separator + frame number
+# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga
+# Separator required to avoid false-positives with K-Watch stills (Still001.tga, Clip1.tga)
+_GENERIC_TGA_RE = re.compile(r'^(.+)[._-](\d+)$')
+GENERIC_TGA_QUIET_SECS = 3.0
+
 def parse_filename(filename: str) -> Optional[dict]:
     """
     Parse a K-Watch style filename and return metadata.
@@ -1004,190 +1016,6 @@ def parse_filename(filename: str) -> Optional[dict]:
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-#  Watch folder service
-# ─────────────────────────────────────────────────────────────
-
-class WatchService:
-    """Monitors a folder and converts files as they arrive."""
-
-    POLL_INTERVAL = 2.0  # seconds
-
-    def __init__(self, watch_dir: str, dest_dir: str,
-                 video_standard: str = '1080i50',
-                 split_fat32: bool = True,
-                 delete_source: bool = False,
-                 ignore_alpha: bool = False,
-                 include_audio: bool = True,
-                 auto_play: bool = False,
-                 loop_play: bool = False,
-                 slot_override: int = 0,
-                 source_interlaced: bool = False,
-                 log=print,
-                 on_batch_complete=None):
-        self.watch_dir        = watch_dir
-        self.dest_dir         = dest_dir
-        self.video_standard   = video_standard
-        self.split_fat32      = split_fat32
-        self.delete_source    = delete_source
-        self.ignore_alpha     = ignore_alpha
-        self.include_audio    = include_audio
-        self.auto_play        = auto_play
-        self.loop_play        = loop_play
-        self.slot_override    = slot_override
-        self.source_interlaced = source_interlaced
-        self.log            = log
-        self._stop_event         = threading.Event()
-        self._seen               = set()
-        self._pending_seqs: dict = {}   # file_num -> {seq -> path}
-        self._slot_map: dict     = {}   # file_num -> actual output slot
-        self._next_slot: int     = slot_override if slot_override > 0 else 1
-        self._tga_results: list  = []   # (fnum, seq_id, status) per completed sequence
-        self._on_batch_complete  = on_batch_complete
-
-        os.makedirs(dest_dir, exist_ok=True)
-
-    def start(self):
-        self.log(f"Watching: {self.watch_dir}")
-        self.log(f"Output:   {self.dest_dir}")
-        self.log(f"Standard: {self.video_standard}")
-        t = threading.Thread(target=self._run, daemon=True)
-        t.start()
-        return t
-
-    def stop(self):
-        self._stop_event.set()
-
-    def _run(self):
-        while not self._stop_event.is_set():
-            self._scan()
-            time.sleep(self.POLL_INTERVAL)
-
-    def _scan(self):
-        try:
-            entries = sorted(os.listdir(self.watch_dir))
-        except OSError:
-            return
-
-        new_tga_this_scan = False
-
-        for fname in entries:
-            fpath = os.path.join(self.watch_dir, fname)
-            if not os.path.isfile(fpath):
-                continue
-            if fname in self._seen:
-                continue
-
-            meta = parse_filename(fname)
-            if meta is None:
-                continue
-
-            # Wait until the file has finished being written
-            if not self._file_stable(fpath):
-                continue
-
-            self._seen.add(fname)
-
-            try:
-                if meta['type'] == 'clip':
-                    convert_clip(fpath, meta['file_num'], self.dest_dir,
-                                 self.video_standard, self.split_fat32,
-                                 self.delete_source, self.log,
-                                 ignore_alpha=self.ignore_alpha,
-                                 include_audio=self.include_audio,
-                                 auto_play=self.auto_play,
-                                 loop_play=self.loop_play)
-
-                elif meta['type'] == 'still' and meta['is_fill']:
-                    convert_still(fpath, meta['file_num'], self.dest_dir,
-                                  self.video_standard, self.split_fat32,
-                                  self.delete_source, self.log,
-                                  ignore_alpha=self.ignore_alpha,
-                                  auto_play=self.auto_play,
-                                  loop_play=self.loop_play)
-
-                elif meta['type'] == 'tga_seq':
-                    new_tga_this_scan = True
-                    if meta['is_fill']:
-                        self._accumulate_seq(fname, fpath, meta, entries)
-
-            except Exception as e:
-                import traceback
-                self.log(f"  ERROR converting {fname}: {e}")
-                self.log(f"  {traceback.format_exc()}")
-
-        # Batch complete: results accumulated, no incomplete sequences, quiet scan
-        if self._tga_results and not self._pending_seqs and not new_tga_this_scan:
-            self._finish_tga_batch()
-
-    def _accumulate_seq(self, fname, fpath, meta, all_entries):
-        """Collect all TGA frames for a sequence then convert when complete."""
-        fnum  = meta['file_num']
-        total = meta['total']
-
-        # Assign override slot on first encounter of this filename number.
-        if self.slot_override > 0 and fnum not in self._slot_map:
-            self._slot_map[fnum] = self._next_slot
-            self._next_slot += 1
-
-        if fnum not in self._pending_seqs:
-            self._pending_seqs[fnum] = {}
-        self._pending_seqs[fnum][meta['seq']] = fpath
-
-        if len(self._pending_seqs[fnum]) == total:
-            frames = [self._pending_seqs[fnum][i+1] for i in range(total)]
-            del self._pending_seqs[fnum]
-            actual_fnum = self._slot_map.get(fnum, fnum) if self.slot_override > 0 else fnum
-            if self.slot_override > 0:
-                self.log(f"  Slot override: filename slot {fnum} → output slot {actual_fnum}")
-            first_name = Path(frames[0]).stem
-            seq_id = first_name.split('_')[0] if '_' in first_name else first_name
-            try:
-                convert_tga_sequence(frames, actual_fnum, self.dest_dir,
-                                     self.video_standard, self.split_fat32,
-                                     self.delete_source, self.log,
-                                     ignore_alpha=self.ignore_alpha,
-                                     auto_play=self.auto_play,
-                                     loop_play=self.loop_play,
-                                     write_log=False,
-                                     source_interlaced=self.source_interlaced)
-                self._tga_results.append((actual_fnum, seq_id, 'OK'))
-            except Exception as e:
-                self._tga_results.append((actual_fnum, seq_id, f'ERROR: {e}'))
-                raise
-
-    def _finish_tga_batch(self):
-        results = self._tga_results[:]
-        self._tga_results.clear()
-        date_str = datetime.now().strftime('%d-%m-%Y')
-        log_filename = f"MacHuna_Log_{date_str}.txt"
-        log_path = os.path.join(self.dest_dir, log_filename)
-        try:
-            max_len = max(len(seq_id) for _, seq_id, _ in results)
-            with open(log_path, 'w') as f:
-                f.write("MacHuna Conversion Log\n")
-                f.write(f"{'=' * 40}\n")
-                f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
-                f.write(f"Standard: {self.video_standard}\n")
-                f.write(f"{'=' * 40}\n\n")
-                for fnum, seq_id, status in results:
-                    f.write(f"{fnum:4d}  {seq_id:<{max_len}}  [{status}]\n")
-            self.log(f"Conversion log saved: {log_filename}")
-        except Exception as e:
-            self.log(f"  Could not write log file: {e}")
-        if self._on_batch_complete:
-            self._on_batch_complete()
-
-    @staticmethod
-    def _file_stable(path: str, wait: float = 0.5) -> bool:
-        """Return True if the file size hasn't changed in `wait` seconds."""
-        try:
-            s1 = os.path.getsize(path)
-            time.sleep(wait)
-            s2 = os.path.getsize(path)
-            return s1 == s2 and s1 > 0
-        except OSError:
-            return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1505,13 +1333,44 @@ class _GenericFrameCache:
 
 
 def _tga_sequence_files(first_tga: str) -> list:
-    """Return sorted list of all TGA paths in the same directory."""
+    """Return sorted list of TGA paths sharing the same sequence base name as first_tga."""
     folder = os.path.dirname(os.path.abspath(first_tga))
+    m = _GENERIC_TGA_RE.match(Path(first_tga).stem)
+    if m:
+        base = m.group(1)
+        result = []
+        for f in os.listdir(folder):
+            if not f.lower().endswith('.tga'):
+                continue
+            fm = _GENERIC_TGA_RE.match(Path(f).stem)
+            if fm and fm.group(1) == base:
+                result.append(os.path.join(folder, f))
+        return sorted(result)
     return sorted(
         os.path.join(folder, f)
         for f in os.listdir(folder)
         if f.lower().endswith('.tga')
     )
+
+
+def _find_tga_sequences(folder: str) -> list:
+    """Scan folder and return list of (base_name, sorted_file_paths) for each TGA sequence found."""
+    groups = {}
+    for fname in os.listdir(folder):
+        if not fname.lower().endswith('.tga'):
+            continue
+        if not os.path.isfile(os.path.join(folder, fname)):
+            continue
+        m = _GENERIC_TGA_RE.match(Path(fname).stem)
+        if m:
+            base = m.group(1)
+            seq_num = int(m.group(2))
+            groups.setdefault(base, []).append((seq_num, os.path.join(folder, fname)))
+    result = []
+    for base, entries in sorted(groups.items()):
+        if len(entries) >= 2:
+            result.append((base, [p for _, p in sorted(entries)]))
+    return result
 
 
 def _load_tga_frames(tga_files: list, progress_cb=None):
@@ -2940,6 +2799,107 @@ def _ask_confirm(parent, message: str) -> bool:
     return result[0]
 
 
+def _scan_folder_for_items(folder: str) -> list:
+    """Scan a folder and return items for the browser.
+    TGA sequences are collapsed to one entry; other files listed individually."""
+    supported = {'.mov', '.mp4', '.avi', '.mxf', '.png', '.bmp', '.jpg', '.jpeg', '.tga'}
+    sequences = _find_tga_sequences(folder)
+    seq_all_frames = {f for _, files in sequences for f in files}
+
+    items = []
+    for base, files in sequences:
+        kw = parse_filename(Path(files[0]).name)
+        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
+        items.append({
+            'type': 'tga_seq', 'base': base, 'files': files, 'source_num': source_num,
+            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
+        })
+
+    for fname in sorted(os.listdir(folder)):
+        fpath = os.path.join(folder, fname)
+        if not os.path.isfile(fpath):
+            continue
+        ext = Path(fname).suffix.lower()
+        if ext not in supported or fpath in seq_all_frames:
+            continue
+        meta = parse_filename(fname)
+        kind = 'clip' if ext in {'.mov', '.mp4', '.avi', '.mxf'} else 'still'
+        items.append({
+            'type': kind, 'path': fpath,
+            'source_num': meta['file_num'] if meta else None,
+            'display': fname,
+        })
+
+    return items
+
+
+def _group_files_for_batch(paths: list) -> list:
+    """
+    Group a list of file paths for batch conversion.
+    TGA files with the same base name are combined into a single tga_seq item
+    (all siblings in the folder are collected, not just the selected frames).
+    Other files become individual clip/still items.
+    Returns a list of dicts sorted sequences-first then alphabetically.
+    """
+    tga_groups = {}   # base -> sorted file list (all siblings)
+    others     = []
+
+    for path in sorted(paths):
+        ext = Path(path).suffix.lower()
+        if ext == '.tga':
+            m = _GENERIC_TGA_RE.match(Path(path).stem)
+            if m:
+                base = m.group(1)
+                if base not in tga_groups:
+                    siblings = _tga_sequence_files(path)
+                    if len(siblings) >= 2:
+                        # Check K-Watch naming for embedded slot number
+                        kw = parse_filename(Path(path).name)
+                        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
+                        tga_groups[base] = {'files': siblings, 'source_num': source_num}
+                    else:
+                        meta = parse_filename(Path(path).name)
+                        others.append({'type': 'still', 'path': path,
+                                       'source_num': meta['file_num'] if meta else None})
+            else:
+                meta = parse_filename(Path(path).name)
+                others.append({'type': 'still', 'path': path,
+                               'source_num': meta['file_num'] if meta else None})
+        elif ext in {'.mov', '.mp4', '.avi', '.mxf'}:
+            meta = parse_filename(Path(path).name)
+            others.append({'type': 'clip', 'path': path,
+                           'source_num': meta['file_num'] if meta else None})
+        else:
+            meta = parse_filename(Path(path).name)
+            others.append({'type': 'still', 'path': path,
+                           'source_num': meta['file_num'] if meta else None})
+
+    seq_items = [{'type': 'tga_seq', 'base': base,
+                  'files': info['files'], 'source_num': info['source_num']}
+                 for base, info in sorted(tga_groups.items())]
+    return seq_items + others
+
+
+def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
+    """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir."""
+    date_str = datetime.now().strftime('%d-%m-%Y')
+    log_filename = f"MacHuna_Log_{date_str}.txt"
+    log_path = os.path.join(dest_dir, log_filename)
+    try:
+        max_len = max(len(name) for _, name, _ in results)
+        with open(log_path, 'w') as f:
+            f.write("MacHuna Conversion Log\n")
+            f.write(f"{'=' * 40}\n")
+            f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
+            f.write(f"Standard: {standard}\n")
+            f.write(f"{'=' * 40}\n\n")
+            for fnum, name, status in results:
+                f.write(f"{fnum:4d}  {name:<{max_len}}  [{status}]\n")
+        log_fn(f"Conversion log saved: {log_filename}")
+    except Exception as e:
+        log_fn(f"  Could not write log file: {e}")
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -2963,7 +2923,6 @@ def launch_gui():
         try:
             with open(SETTINGS_FILE, 'w') as f:
                 json.dump({
-                    'watch':    watch_var.get(),
                     'dest':     dest_var.get(),
                     'standard': std_var.get(),
                     'split':    split_var.get(),
@@ -3001,24 +2960,6 @@ def launch_gui():
 
     pad = dict(padx=8, pady=4)
 
-    # ── Watch folder row ──
-    frm1 = ttk.LabelFrame(root, text="Watch Folder")
-    frm1.pack(fill='x', **pad)
-    watch_var = tk.StringVar()
-    ttk.Entry(frm1, textvariable=watch_var, width=60).pack(side='left', fill='x', expand=True, **pad)
-    ttk.Button(frm1, text="Browse…",
-               command=lambda: watch_var.set(filedialog.askdirectory())).pack(side='left', **pad)
-    def _open_watch_folder():
-        w = watch_var.get().strip()
-        if w and os.path.isdir(w):
-            subprocess.run(['open', w])
-        elif w:
-            messagebox.showwarning("Watch Folder", f"Folder not found:\n{w}")
-        else:
-            messagebox.showwarning("Watch Folder", "No Watch Folder set.")
-    ttk.Button(frm1, text="Open in Finder",
-               command=_open_watch_folder).pack(side='left', **pad)
-
     # ── Destination folder row ──
     frm2 = ttk.LabelFrame(root, text="Destination Folder")
     frm2.pack(fill='x', **pad)
@@ -3041,7 +2982,7 @@ def launch_gui():
     frm3 = ttk.LabelFrame(root, text="Settings")
     frm3.pack(fill='x', **pad)
 
-    # Row 1: standard + slot override
+    # Row 1: video standard
     frm3_row1 = tk.Frame(frm3)
     frm3_row1.pack(fill='x', anchor='w')
     ttk.Label(frm3_row1, text="Video Standard:").pack(side='left', **pad)
@@ -3049,12 +2990,6 @@ def launch_gui():
     std_cb  = ttk.Combobox(frm3_row1, textvariable=std_var, width=12,
                             values=list(VIDEO_STANDARDS.keys()), state='readonly')
     std_cb.pack(side='left', **pad)
-    ttk.Label(frm3_row1, text="Slot override:").pack(side='left', **pad)
-    slot_override_var = tk.IntVar(value=0)
-    ttk.Spinbox(frm3_row1, textvariable=slot_override_var, from_=0, to=9999,
-                width=5).pack(side='left', **pad)
-    ttk.Label(frm3_row1, text="(0 = use filename)",
-              font=('Helvetica', 10), foreground='#888888').pack(side='left')
 
     # Row 2: conversion options
     frm3_row2 = tk.Frame(frm3)
@@ -3069,15 +3004,13 @@ def launch_gui():
     ttk.Checkbutton(frm3_row2, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Delete source after conversion", variable=delete_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Ignore alpha/key", variable=ignore_alpha_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="Include audio", variable=include_audio_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Auto play", variable=auto_play_var).pack(side='left', **pad)
     ttk.Checkbutton(frm3_row2, text="Loop play", variable=loop_play_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm3_row2, text="TGA source already interlaced", variable=source_interlaced_var).pack(side='left', **pad)
+    ttk.Checkbutton(frm3_row2, text="TGA source interlaced", variable=source_interlaced_var).pack(side='left', **pad)
 
     # ── Load saved settings ──
     start_num_var = tk.IntVar(value=1)  # must be defined before load_settings references it
     s = load_settings()
-    if s.get('watch'):    watch_var.set(s['watch'])
     if s.get('dest'):     dest_var.set(s['dest'])
     if s.get('standard'): std_var.set(s['standard'])
     if 'split'        in s: split_var.set(s['split'])
@@ -3091,38 +3024,30 @@ def launch_gui():
     # Hula settings live in the same dict -- HulaWindow reads them directly
     # s is passed by reference so HulaWindow can update it in place
 
-    # ── Buttons ──
-    frm4 = ttk.Frame(root)
-    frm4.pack(fill='x', **pad)
-
-    service_ref = [None]
-    batch_cancel_event = threading.Event()  # set to request batch cancellation
-
-    run_btn    = ttk.Button(frm4, text="▶  Start Watching")
-    stop_btn   = ttk.Button(frm4, text="⏹  Stop", state='disabled')
-    cancel_btn = ttk.Button(frm4, text="✕  Cancel Batch", state='disabled')
-    run_btn.pack(side='left', **pad)
-    stop_btn.pack(side='left', **pad)
-    cancel_btn.pack(side='left', **pad)
-
-    # ── Open Files / Batch Convert row ──
+    # ── Batch Convert row ──
     frm5 = ttk.LabelFrame(root, text="Batch Convert")
     frm5.pack(fill='x', **pad)
+
+    batch_cancel_event = threading.Event()
 
     ttk.Label(frm5, text="Start number:").pack(side='left', **pad)
     start_num_entry = ttk.Spinbox(frm5, from_=1, to=9999, textvariable=start_num_var, width=6)
     start_num_entry.pack(side='left', **pad)
 
+    use_source_num_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(frm5, text="Use source file number",
+                    variable=use_source_num_var).pack(side='left', **pad)
+
     open_btn = ttk.Button(frm5, text="Open Files…")
     open_btn.pack(side='left', **pad)
+
+    cancel_btn = ttk.Button(frm5, text="✕  Cancel", state='disabled')
+    cancel_btn.pack(side='left', **pad)
 
     ttk.Button(frm5, text="SWS Player",
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())).pack(side='right', **pad)
     ttk.Button(frm5, text="Hula",
                command=lambda: HulaWindow(root, s, save_settings)).pack(side='right', **pad)
-
-    ttk.Label(frm5, text="MOV, MP4, MXF, PNG, BMP, JPG only. TGA → Watch Folder.",
-              foreground='#888888').pack(side='left', **pad)
 
     # ── Log area ──
     log_frame = ttk.LabelFrame(root, text="Log")
@@ -3231,38 +3156,19 @@ def launch_gui():
         log(f"Drag and drop enabled -- drop files onto the log area to convert.")
 
     def open_files():
-        """Open a file picker for batch conversion."""
         d = dest_var.get().strip()
         if not d:
-            log("ERROR: Please set a Destination Folder before converting files.")
+            log("Please set a Destination Folder before converting.")
             return
 
-        supported_types = [
-            ('Video & Image files', '*.mov *.mp4 *.avi *.mxf *.png *.bmp *.jpg *.jpeg'),
-            ('Video files', '*.mov *.mp4 *.avi *.mxf'),
-            ('Image files', '*.png *.bmp *.jpg *.jpeg'),
-            ('All files', '*.*'),
-        ]
-        paths = filedialog.askopenfilenames(
-            title="Select files to convert",
-            filetypes=supported_types,
-            parent=root
-        )
-        if not paths:
+        folder = filedialog.askdirectory(title="Select folder to convert", parent=root)
+        if not folder:
             return
 
-        start_num = start_num_var.get()
-        valid = sorted(paths)  # alphabetical order
-
-        confirmed = _ask_confirm(
-            root,
-            f"Convert {len(valid)} file(s) starting at slot {start_num}?")
-        if not confirmed:
+        items = _scan_folder_for_items(folder)
+        if not items:
+            log(f"No supported files found in {os.path.basename(folder)}.")
             return
-
-        log(f"Batch convert: {len(valid)} file(s) starting at number {start_num}")
-        for i, p in enumerate(valid):
-            log(f"  {start_num + i} ← {Path(p).name}")
 
         try:
             check_ffmpeg()
@@ -3270,119 +3176,135 @@ def launch_gui():
             log(f"ERROR: {e}")
             return
 
-        def convert_batch():
-            batch_cancel_event.clear()
-            root.after(0, lambda: cancel_btn.config(state='normal'))
-            results = []
-            cancelled = False
-            for i, path in enumerate(valid):
-                if batch_cancel_event.is_set():
-                    log("Batch conversion cancelled.")
-                    cancelled = True
-                    break
-                fnum = start_num + i
-                ext = Path(path).suffix.lower()
-                try:
-                    if ext in {'.mov', '.mp4', '.avi', '.mxf'}:
-                        convert_clip(path, fnum, d,
-                                     std_var.get(), split_var.get(),
-                                     delete_var.get(), log,
-                                     ignore_alpha=ignore_alpha_var.get(),
-                                     include_audio=include_audio_var.get(),
-                                     auto_play=auto_play_var.get(),
-                                     loop_play=loop_play_var.get())
-                    else:
-                        convert_still(path, fnum, d,
-                                      std_var.get(), split_var.get(),
-                                      delete_var.get(), log,
-                                      ignore_alpha=ignore_alpha_var.get(),
-                                      auto_play=auto_play_var.get(),
-                                      loop_play=loop_play_var.get())
-                    results.append((fnum, Path(path).stem, 'OK'))
-                except Exception as e:
-                    import traceback
-                    log(f"  ERROR converting {Path(path).name}: {e}")
-                    log(f"  {traceback.format_exc()}")
-                    results.append((fnum, Path(path).stem, f'ERROR: {e}'))
+        # ── Folder browser dialog ──
+        dlg = tk.Toplevel(root)
+        dlg.title("Select Items to Convert")
+        dlg.resizable(False, False)
+        dlg.transient(root)
+        dlg.grab_set()
 
-            root.after(0, lambda: cancel_btn.config(state='disabled'))
+        pad2 = {'padx': 8, 'pady': 4}
 
-            # Write conversion log to destination folder
-            if results and not cancelled:
-                from datetime import datetime as dt
-                date_str = dt.now().strftime('%d-%m-%Y')
-                log_filename = f"MacHuna_Log_{date_str}.txt"
-                log_path = os.path.join(d, log_filename)
-                try:
-                    max_len = max(len(fname) for _, fname, _ in results)
-                    with open(log_path, 'w') as f:
-                        f.write(f"MacHuna Conversion Log\n")
-                        f.write(f"{'=' * 40}\n")
-                        f.write(f"Date: {dt.now().strftime('%d %b %Y')}\n")
-                        f.write(f"Standard: {std_var.get()}\n")
-                        f.write(f"{'=' * 40}\n\n")
-                        for fnum, fname, status in results:
-                            f.write(f"{fnum:4d}  {fname:<{max_len}}  [{status}]\n")
-                    log(f"Conversion log saved: {log_filename}")
-                except Exception as e:
-                    log(f"  Could not write log file: {e}")
+        ttk.Label(dlg, text=f"Folder: {os.path.basename(folder)}",
+                  font=('Helvetica', 11, 'bold')).pack(anchor='w', **pad2)
 
-            # Advance start number for next batch
-            root.after(0, lambda: start_num_var.set(start_num + len(valid)))
+        list_frame = ttk.Frame(dlg)
+        list_frame.pack(fill='both', expand=True, padx=8, pady=2)
+        lb = tk.Listbox(list_frame, selectmode='extended', height=min(len(items), 16),
+                        width=54, font=('Menlo', 11))
+        sb = ttk.Scrollbar(list_frame, command=lb.yview)
+        lb.config(yscrollcommand=sb.set)
+        lb.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
 
-        threading.Thread(target=convert_batch, daemon=True).start()
+        for item in items:
+            lb.insert('end', '  ' + item['display'])
+        lb.select_set(0, 'end')
+
+        status_var = tk.StringVar(value=f"{len(items)} item(s) found. Select all or choose individually.")
+        ttk.Label(dlg, textvariable=status_var, foreground='#888888').pack(anchor='w', padx=8)
+
+        clips_with_audio = [item for item in items
+                            if item['type'] == 'clip'
+                            and get_video_info(item['path']).get('has_audio')]
+        if clips_with_audio:
+            include_audio_var.set(True)
+            ttk.Checkbutton(dlg, text="Exclude audio", variable=include_audio_var,
+                            onvalue=False, offvalue=True).pack(anchor='w', padx=8)
+
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(fill='x', padx=8, pady=8)
+
+        def on_convert():
+            selected = lb.curselection()
+            if not selected:
+                status_var.set("Select at least one item.")
+                return
+            chosen = [items[i] for i in selected]
+            dlg.destroy()
+
+            start_num      = start_num_var.get()
+            use_source_num = use_source_num_var.get()
+
+            log(f"Batch convert: {len(chosen)} item(s) from {os.path.basename(folder)}")
+
+            def convert_batch():
+                batch_cancel_event.clear()
+                root.after(0, lambda: cancel_btn.config(state='normal'))
+                results   = []
+                next_slot = start_num
+                cancelled = False
+
+                for item in chosen:
+                    if batch_cancel_event.is_set():
+                        log("Batch conversion cancelled.")
+                        cancelled = True
+                        break
+
+                    fnum = item['source_num'] if use_source_num and item['source_num'] else next_slot
+                    if not (use_source_num and item['source_num']):
+                        next_slot += 1
+
+                    try:
+                        if item['type'] == 'tga_seq':
+                            seq_id = item['base'].rstrip('._- ')
+                            convert_tga_sequence(
+                                item['files'], fnum, d,
+                                std_var.get(), split_var.get(), delete_var.get(), log,
+                                ignore_alpha=ignore_alpha_var.get(),
+                                auto_play=auto_play_var.get(),
+                                loop_play=loop_play_var.get(),
+                                write_log=False,
+                                source_interlaced=source_interlaced_var.get())
+                            results.append((fnum, seq_id, 'OK'))
+                        elif item['type'] == 'clip':
+                            convert_clip(
+                                item['path'], fnum, d,
+                                std_var.get(), split_var.get(), delete_var.get(), log,
+                                ignore_alpha=ignore_alpha_var.get(),
+                                include_audio=include_audio_var.get(),
+                                auto_play=auto_play_var.get(),
+                                loop_play=loop_play_var.get())
+                            results.append((fnum, Path(item['path']).stem, 'OK'))
+                        else:
+                            convert_still(
+                                item['path'], fnum, d,
+                                std_var.get(), split_var.get(), delete_var.get(), log,
+                                ignore_alpha=ignore_alpha_var.get(),
+                                auto_play=auto_play_var.get(),
+                                loop_play=loop_play_var.get())
+                            results.append((fnum, Path(item['path']).stem, 'OK'))
+                    except Exception as e:
+                        import traceback
+                        name = item.get('base') or Path(item.get('path', '')).name
+                        log(f"  ERROR converting {name}: {e}")
+                        log(f"  {traceback.format_exc()}")
+                        results.append((fnum, name, f'ERROR: {e}'))
+
+                root.after(0, lambda: cancel_btn.config(state='disabled'))
+                if results and not cancelled:
+                    _write_batch_log(results, d, std_var.get(), log)
+                    if not use_source_num:
+                        root.after(0, lambda: start_num_var.set(next_slot))
+
+            threading.Thread(target=convert_batch, daemon=True).start()
+
+        ttk.Button(btn_frame, text="Cancel", command=dlg.destroy).pack(side='right', padx=2)
+        ttk.Button(btn_frame, text="Convert", command=on_convert).pack(side='right', padx=2)
+
+        dlg.update_idletasks()
+        px = root.winfo_x() + (root.winfo_width()  - dlg.winfo_width())  // 2
+        py = root.winfo_y() + (root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{px}+{py}")
 
     open_btn.config(command=open_files)
 
     def cancel_batch():
         batch_cancel_event.set()
-        log("Cancelling batch -- current file will complete before stopping.")
+        log("Cancelling — current file will complete before stopping.")
         cancel_btn.config(state='disabled')
 
     cancel_btn.config(command=cancel_batch)
-
-    def start_watching():
-        w = watch_var.get().strip()
-        d = dest_var.get().strip()
-        if not w or not d:
-            log("ERROR: Please set both Watch and Destination folders.")
-            return
-        try:
-            check_ffmpeg()
-        except RuntimeError as e:
-            log(f"ERROR: {e}")
-            return
-        save_settings()
-        def on_batch_complete():
-            root.after(0, lambda: log("Batch complete — watch stopped automatically."))
-            root.after(0, stop_watching)
-
-        svc = WatchService(w, d, std_var.get(), split_var.get(), delete_var.get(),
-                           ignore_alpha=ignore_alpha_var.get(),
-                           include_audio=include_audio_var.get(),
-                           auto_play=auto_play_var.get(),
-                           loop_play=loop_play_var.get(),
-                           slot_override=slot_override_var.get(),
-                           source_interlaced=source_interlaced_var.get(),
-                           log=log,
-                           on_batch_complete=on_batch_complete)
-        svc.start()
-        service_ref[0] = svc
-        run_btn.config(state='disabled')
-        stop_btn.config(state='normal')
-        log("Service started.")
-
-    def stop_watching():
-        if service_ref[0]:
-            service_ref[0].stop()
-            service_ref[0] = None
-        _kill_current_ffmpeg()
-        run_btn.config(state='normal')
-        stop_btn.config(state='disabled')
-        log("Service stopped.")
-
-    run_btn.config(command=start_watching)
-    stop_btn.config(command=stop_watching)
 
     def on_closing():
         save_settings()
@@ -3478,7 +3400,6 @@ Examples:
   python3 kwatch_converter.py --gui
         """
     )
-    parser.add_argument('--watch',    help='Folder to watch for incoming files')
     parser.add_argument('--dest',     help='Destination folder for .SWS files')
     parser.add_argument('--convert',  help='Convert a single file immediately')
     parser.add_argument('--number',   type=int, default=1, help='File number for --convert')
@@ -3517,19 +3438,6 @@ Examples:
         else:
             convert_clip(args.convert, args.number, args.dest,
                          args.standard, split, args.delete_source)
-        return
-
-    if args.watch and args.dest:
-        svc = WatchService(args.watch, args.dest, args.standard,
-                           split, args.delete_source)
-        t = svc.start()
-        print("Press Ctrl+C to stop.")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            svc.stop()
-            print("\nStopped.")
         return
 
     parser.print_help()
