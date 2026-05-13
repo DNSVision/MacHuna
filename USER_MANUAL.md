@@ -242,6 +242,17 @@ Converting SWS → Kayenne MOV → SWS involves a YCbCr/RGB/YCbCr colour space r
 
 TGA sequences are multi-frame clips stored as individually numbered still images. MacHuna handles them through the folder browser — you do not need to select individual frames.
 
+MacHuna accepts any numbered TGA naming convention — K-Watch names, After Effects exports, third-party renders, or anything else:
+
+```
+TNTS201_30_0001.tga   (K-Watch naming)
+FEDX0000.tga          (letters + digits, no separator)
+shot_0001.tga         (underscore separator)
+render.0001.tga       (dot separator)
+```
+
+The only requirement is that frames are numbered sequentially.
+
 ### 7.1 In the Folder Browser
 
 When you open a folder containing a TGA sequence, MacHuna collapses the entire sequence to a single entry:
@@ -451,7 +462,7 @@ Bit 15 (`0x8000`) of `0x188` is set for all interlaced standards. Standard codes
 ### TGA sequence not appearing as a single entry in the file list
 
 - Confirm the TGA files are in the same folder with no other file types present
-- MacHuna detects TGA sequences by parsing numbered filenames — files must be numbered sequentially
+- MacHuna detects TGA sequences by parsing numbered filenames — files must be numbered sequentially. Any naming convention works (K-Watch, After Effects, custom renders, etc.) as long as the base name is consistent and frames are numbered.
 
 ### File plays at double speed on Kahuna
 

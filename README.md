@@ -11,7 +11,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 ## Features
 
 - Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS` (K-Watch supports MOV and AVI only)
-- Converts TGA sequences to `.SWS` clips
+- Converts TGA sequences to `.SWS` clips — any naming convention (K-Watch, After Effects, custom renders); K-Watch naming is not required
 - Converts still images (PNG, TGA, BMP, JPG etc.) to `.SWS` stills
 - Extracts `.SWS` files to Kayenne MOV, Kayenne TGA, or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
