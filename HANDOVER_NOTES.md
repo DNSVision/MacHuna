@@ -72,7 +72,7 @@ Once all FROM-SWS paths are confirmed, the unification can proceed cleanly.
 
 A full analysis of Hula's conversion paths for interlaced and progressive sources was conducted. Two bugs were found and fixed:
 
-1. **Interlaced SWS → interlaced TGA target was incorrectly rejected.** The batch runner sent all interlaced-standard selections to `_hula_convert_tga_interlaced`, which guards `fps < 48.0`. An interlaced SWS (25fps) was rejected. Fix: batch runner reads source header fps first. Progressive sources (fps ≥ 48) go to `_hula_convert_tga_interlaced` for field-weaving as before. Interlaced sources go to `_hula_convert_tga` (straight frame dump — frames already woven) with a log message advising the "TGA source already interlaced" checkbox for Watch Folder round-trips.
+1. **Interlaced SWS → interlaced TGA target was incorrectly rejected.** The batch runner sent all interlaced-standard selections to `_hula_convert_tga_interlaced`, which guards `fps < 48.0`. An interlaced SWS (25fps) was rejected. Fix: batch runner reads source header fps first. Progressive sources (fps ≥ 48) go to `_hula_convert_tga_interlaced` for field-weaving as before. Interlaced sources go to `_hula_convert_tga` (straight frame dump — frames already woven) with a log message advising the "TGA source already interlaced" checkbox for round-trips.
 
 2. **Hula MOV encoder could not be cancelled.** `_hula_convert_mov` used `subprocess.run` directly, bypassing `_run_ffmpeg`. Stop/Cancel had no effect during long encodes. Fixed to use `_run_ffmpeg(cmd, check=True)`.
 
@@ -110,7 +110,7 @@ A comprehensive code review was conducted at the start of this session. Six bugs
 
 6. **SWSPlayer playback jitter - fixed in v1.5.15.** The playback loop was sleeping relative to each frame's start time, so sleep overshoot accumulated as drift. The loop now sleeps to an absolute target time derived from a fixed origin, so any overshoot self-corrects on the next frame.
 
-7. **Batch Convert TGA ambiguity - fixed in v1.5.16.** TGA files removed from the Batch Convert file picker entirely. Batch Convert now accepts MOV, MP4, MXF, MKV, AVI, PNG, BMP, and JPG only. A hint label in the Batch Convert row directs TGA sequence users to the Watch Folder.
+7. **Batch Convert TGA ambiguity - fixed in v1.5.16.** TGA files removed from the Batch Convert file picker entirely. Batch Convert now accepts MOV, MP4, MXF, MKV, AVI, PNG, BMP, and JPG only. TGA sequences are handled via the smart folder browser.
 
 **Remaining items from the review (no action needed):**
 - SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix.
@@ -158,10 +158,10 @@ This was a major reverse engineering session. All nine supported video standards
 
 ### Stop Button / Cancel Batch (v1.5.7)
 - **Cancel Batch button** added to main button row - enables when Open Files batch starts, kills current ffmpeg and stops after current file
-- **Stop button** now calls `_kill_current_ffmpeg()` in addition to setting the WatchService stop event
-- Kill is immediate for long MOV conversions; for rapid TGA floods the scan thread may have already queued files which will still convert - this is an acceptable limitation
+- **Stop button** calls `_kill_current_ffmpeg()` to kill the active ffmpeg process immediately
+- Kill is immediate for long MOV conversions; for rapid TGA floods already-queued files may still convert - acceptable limitation
 - A global `_current_ffmpeg_proc` and `_ffmpeg_proc_lock` track the active subprocess via `_run_ffmpeg()` wrapper
-- Killing ffmpeg raises `subprocess.CalledProcessError` with SIGKILL (-9) - this is caught by WatchService `_scan()` exception handler and logged. This is correct behaviour, not a bug.
+- Killing ffmpeg raises `subprocess.CalledProcessError` with SIGKILL (-9) - caught and logged. Correct behaviour, not a bug.
 - Conversion log is not written if batch is cancelled
 
 ### File Delivery Method
@@ -213,16 +213,7 @@ MacHuna repo is currently **private**.
 ### MacHuna
 
 ```bash
-cd ~/Developer/MacHuna && python3.12 -m PyInstaller \
-  --onedir \
-  --windowed \
-  --name "MacHuna" \
-  --icon ~/Developer/MacHuna/machuna.icns \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg:." \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffprobe:." \
-  --add-data "/Users/davidsteer/Developer/MacHuna/machuna_final_1024.png:." \
-  --noconfirm \
-  ~/Developer/MacHuna/machuna.py
+python3.12 -m PyInstaller MacHuna.spec -y
 ```
 
 ### User Manual PDF
@@ -268,10 +259,9 @@ git push
 
 ## MacHuna Feature Summary
 
-- Watch Folder service - converts incoming media files to .SWS automatically
-- Batch Convert - file picker for MOVs and stills
+- Batch Convert - smart folder browser for MOVs, TGA sequences, and stills
 - Cancel Batch button - kills current ffmpeg and stops batch after current file
-- Stop button - stops watch folder service AND kills current ffmpeg immediately
+- Stop button - kills current ffmpeg immediately
 - Video standards: all nine confirmed by K-Watch hex analysis -- 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94
 - Progressive-to-interlaced mismatch warning logged automatically
 - Input formats: MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG
@@ -404,8 +394,8 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 ### ffmpeg Process Tracking
 - `_run_ffmpeg()` wraps subprocess.Popen and registers the process in `_current_ffmpeg_proc`
 - `_kill_current_ffmpeg()` kills the registered process if one exists
-- Both Stop (watch folder) and Cancel Batch call `_kill_current_ffmpeg()`
-- Killing ffmpeg mid-conversion raises CalledProcessError with SIGKILL (-9) - caught by WatchService exception handler
+- Both Stop and Cancel Batch call `_kill_current_ffmpeg()`
+- Killing ffmpeg mid-conversion raises CalledProcessError with SIGKILL (-9) - caught and logged
 
 ---
 
