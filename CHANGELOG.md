@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.37 — 2026-05-14
+
+### Fixed
+- **Sony TGA multi-file guard.** Selecting more than one clip and converting to Sony TGA would silently overwrite the first clip's frames with the second (both land in the same folder, named after the single clip name). MacHuna now blocks this with a clear error dialog and asks the user to select a single clip.
+
+---
+
 ## v1.5.36 — 2026-05-14
 
 ### Fixed

@@ -181,7 +181,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.36
+- **MacHuna:** v1.5.37
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -329,7 +329,6 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 ## Roadmap
 
 ### MacHuna
-- **Sony TGA multi-file guard:** Selecting more than one file and converting to Sony TGA is broken — all output goes into the same folder (named after the single clip name), so the second conversion silently overwrites the first. Fix: add a validation check in the GUI that blocks the conversion and shows an error if Sony TGA is selected and more than one item is in the file list. Kayenne TGA is not affected (its folder is named after each file's own stem).
 - **Format transcoding (P→I) field order confirmation:** Implemented in v1.5.18 using TFF (SMPTE standard for 1080i HD). Tested on a 1080P Kahuna — file loaded correctly, genuine interlaced fields confirmed. Field order TFF vs BFF cannot be assessed on a 1080P desk. Next test: load MacHuna P→I output on a 1080i/50 Kahuna and check for clean motion. If motion artefacts, change `interleave_top` → `interleave_bottom` in `convert_clip` (one word). See DEVELOPMENT_NOTES.md "Format Transcoding" section.
 - Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
 - Ignore Alpha behaviour for TGA sequences - fixed in v1.5.11

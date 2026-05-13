@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.36"
+VERSION = "1.5.37"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3128,6 +3128,15 @@ def launch_gui():
         if out == OUTPUT_SONY_TGA and len(clip_name_var.get().strip()) != 4:
             messagebox.showerror("Convert",
                                  "Clip name must be exactly 4 characters for Sony TGA output.",
+                                 parent=root)
+            return
+
+        if out == OUTPUT_SONY_TGA and len(_selected_items) > 1:
+            messagebox.showerror("Convert",
+                                 "Sony TGA output can only convert one clip at a time.\n\n"
+                                 "All frames would be written to the same folder and the\n"
+                                 "second clip would overwrite the first.\n\n"
+                                 "Please select a single clip and convert again.",
                                  parent=root)
             return
 
