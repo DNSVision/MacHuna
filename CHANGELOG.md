@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.35 — 2026-05-13
+
+### Docs
+- README and USER_MANUAL now explicitly state that TGA sequences do not need to follow K-Watch naming conventions. Any consistently named, sequentially numbered sequence is accepted (K-Watch, After Effects, custom renders, etc.). Examples added to USER_MANUAL Section 7.
+
+---
+
 ## v1.5.34 — 2026-05-13
 
 ### Fixed
