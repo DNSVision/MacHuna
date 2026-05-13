@@ -59,7 +59,7 @@ git push
 1. ~~**Tidy dev environment / GitHub**~~ -- DONE
 2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, no key plane is written at all and header fields 0x1A8 and 0x1B4 are zeroed -- matches K-Watch behaviour exactly (confirmed by live Kahuna test and hex analysis of K-Watch reference file). Note: earlier implementation wrote a solid white key plane which was incorrect -- the Kahuna was showing a black key panel rather than no key at all.
 3. ~~**Batch convert with file picker**~~ -- DONE. Batch Convert section in GUI with start number field, Open Files button, alphabetical ordering, auto-incrementing numbers, and conversion log text file written to destination folder after each batch.
-4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.
+4. ~~**TGA sequence hint in Batch Convert**~~ -- DONE. ~~Grey label added to Batch Convert section: "For TGA sequences, use the Watch Folder service above." Batch convert (Open Files) is for MOVs and single-frame stills only.~~ Superseded by v1.5.32: Watch Folder removed; TGA sequences are now handled by the smart folder browser in Batch Convert.
 5. ~~**Audio support**~~ -- DONE. extract_audio() extracts 16-bit LE PCM, upmixes to 16 channels at 48kHz, pads to exact frame alignment. Header fields 0x1C2, 0x1E8, 0x1EC, 0x1CC updated correctly. "Include audio" checkbox added to GUI (default: on). Confirmed working on live Kahuna.
 6. ~~**Auto play / Loop play**~~ -- DONE. Bits 2 and 3 of the low byte at 0x188 confirmed by hex analysis of K-Watch reference files across all four flag combinations (neither, auto only, loop only, both). Auto play = bit 2 (0x04), Loop play = bit 3 (0x08), OR'd into the video standard code. Both checkboxes added to GUI (default: off), saved to settings, passed through all converters and WatchService. Awaiting live Kahuna test.
 7. ~~**Split large files (>4GB)**~~ -- DONE. Format fully reverse-engineered from real K-Watch split files. _write_sws_split() rewritten: correct 2GB chunk size, correct data layout (all fill then all key, not interleaved), correct header patching (0x1A8 and 0x1B4 zeroed, 0x1CC set to final chunk size), correct filename format (01_OF_03._XX), streams directly to disk with no in-memory buffering. Also fixed uint32 overflow in build_sws_header() for files >4GB (0x1CC now capped at 0xFFFFFFFF -- patched correctly by _write_sws_split() anyway). Confirmed working on live Kahuna.
@@ -124,11 +124,11 @@ All Hula code lives in a clearly marked section just above `launch_gui()`:
 
 ### Output formats
 
-| Target | Format | Naming |
-|--------|--------|--------|
-| Kayenne MOV | ProRes 4444, embedded alpha, BT.709, audio if present | `0001.mov`, `0002.mov` ... flat in dest |
-| Kayenne TGA | 32-bit RGBA TGA | `0001.tga` onwards, subfolder per SWS |
-| Sony MVS TGA | 32-bit RGBA TGA | `XXXX0000.tga` onwards (clip name prefix, then frame number), subfolder per SWS |
+| Target | Format | Naming | Notes |
+|--------|--------|--------|-------|
+| Kayenne MOV | ProRes 4444, embedded alpha, BT.709, audio if present | `0001.mov`, `0002.mov` ... flat in dest | SWS input only |
+| Kayenne TGA | 32-bit RGBA TGA | `0001.tga` onwards, subfolder per SWS | Progressive or interlaced via standard dropdown |
+| Sony TGA | 32-bit RGBA TGA | `XXXX0000.tga` onwards (4-char clip name prefix + frame number), subfolder per SWS | Progressive or interlaced via standard dropdown; BFF/TFF toggle for interlaced |
 
 ### Sony MVS interlaced TGA -- implemented in v1.5.20+
 
@@ -212,6 +212,20 @@ All values confirmed by hex analysis of K-Watch reference files (2026-05-09). Ni
 > **UNVERIFIED STANDARDS:** 1080p/29.97, 1080p/30, and 2160p variants have been removed from the MacHuna dropdown pending verification. Do not add them back without confirmed K-Watch reference files. SD standards (625/50, 525/59.94) and sF (segmented frame) variants are supported by K-Watch but not implemented in MacHuna.
 
 > **HOW TO VERIFY A NEW STANDARD:** Convert any file in K-Watch with the target standard selected. Run `xxd -l 512 output.SWS` and read offset 0x188 (4 bytes) and 0x18C (4 bytes). Both values are needed.
+
+### Format Support Rationale
+
+Decisions about which standards to implement or defer, based on broadcast research (2026-05).
+
+**720p/59.94** — Keep. ABC and Fox broadcast networks in the US, plus all their affiliates, still transmit in 720p/59.94 in 2026. Not legacy — actively operational.
+
+**720p/50** — Keep, low priority. PAL regions skipped 720p almost entirely. Rarely encountered in professional production outside North America. Retained for completeness but unlikely to be used in practice.
+
+**1080p/29.97 and 1080p/30** — Not yet implemented, pending verification. In active use in NTSC file delivery workflows and increasingly in ATSC 3.0 deployments. Add to the dropdown once K-Watch reference files are available for hex analysis. Do not add without confirmed 0x188 and 0x18C values. To generate reference files: originate a short clip (even colour bars) in the target standard using Final Cut Pro or DaVinci Resolve, convert in K-Watch, then run `xxd -l 512 output.SWS` and read offsets 0x188 and 0x18C.
+
+**HLG Rec.2020** — Parked pending engineering input. 1080p/50 HLG is now the preferred format for major live European sports production (UEFA Euro 2024 was produced in 1080p/50 HLG). This is the priority HDR addition. Implementation requires a real HLG SWS file from a Kahuna workflow for hex analysis — being pursued via broadcast engineering contacts.
+
+**4K (2160p)** — Not planned until HLG is confirmed. 4K is operational in Japan (NHK BS4K), South Korea (ATSC 3.0), and premium streaming, but not mainstream in live terrestrial broadcast. No K-Watch reference files available. Defer until HLG work is complete and hardware access allows.
 
 ### K-Watch Reference File Analysis (2026-05-09)
 
@@ -364,7 +378,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - onedir vs onefile: Must use --onedir. The --onefile + --windowed combination causes ffmpeg binaries to not bundle correctly on macOS.
 - ffmpeg path: Must point to real binary not Homebrew symlink (/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg). Symlinks confuse PyInstaller.
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
-- TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Must use Watch Folder service -- not supported in Batch Convert file picker.
+- TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Selected via the smart folder browser in Batch Convert -- the browser collapses each sequence to a single entry. Not supported in the file picker (TGA is excluded from Open Files).
 - Settings persistence: Stored as JSON in ~/.kwatch_settings.json. Hula settings stored in same file under hula_ prefixed keys.
 - VERSION constant: Single `VERSION = "x.x.x"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - Format variant (0x18C): Stored in `FORMAT_VARIANTS` dict keyed by standard name, applied in `build_sws_header`. A companion `FORMAT_VARIANT_FPS` dict maps variant values back to fps -- used by `SWSHeader` and `HulaSWSHeader` for unambiguous fps lookup (all nine variant values are unique). The old simple interlaced/progressive logic (0x08/0x18) was replaced in v1.5.10 after v1.5.8 analysis confirmed each standard has its own specific value.
@@ -373,7 +387,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - About box: Custom `tk.Toplevel` dialog. `tk::mac::ShowAbout` is silently overridden by PyInstaller's default panel, so an explicit menubar with `name='apple'` is created and the About item wired to our command instead. App icon loaded from `sys._MEIPASS` (bundled via `--add-data`) using Pillow; falls back to rocket emoji if image not found.
 - White key plane: Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked (i.e. a real fill+key file is expected). When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. Confirmed by live Kahuna test and hex analysis of K-Watch reference file.
 - Batch convert ordering: Files sorted alphabetically. Manual reorder is a future feature.
-- Batch convert scope: MOV, MP4, MXF, MKV, AVI, PNG, BMP, JPG only. TGA is excluded from the file picker (v1.5.16) -- TGA sequences must use the Watch Folder service, and single-frame TGA stills are an edge case not worth the ambiguity.
+- Batch convert scope: MOV, MP4, MXF, MKV, AVI, PNG, BMP, JPG only. TGA is excluded from the file picker -- TGA sequences are handled via the smart folder browser (v1.5.32), and single-frame TGA stills are an edge case not worth the ambiguity.
 - Audio bit depth: 16-bit LE (not 24-bit). Confirmed by hex analysis of K-Watch reference files. Source MOV audio is passed through at native bit depth via ffmpeg -ac 16 upmix.
 - Audio frame size header field (0x1C2) is always 0x1680 (5760) in MacHuna-generated files regardless of fps. Actual bytes per frame varies with fps but this header field does not. Note: third-party workflows may write a different value here -- K-Watch writes 0x3EC0 (16064) for 24fps content (confirmed by hex comparison of K-Watch and third-party SWS files generated from the same source MOV). The field appears to be an arbitrary constant rather than a meaningful bytes-per-frame value in either case. Do not rely on this field for audio detection -- use 0x1E8 and 0x1EC instead.
 - Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
@@ -381,6 +395,26 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - SWS Player integration: All player code lives in machuna.py above launch_gui(). Classes renamed to avoid any future collision: PlayerFrameCache, PlayerAudio. Decode functions prefixed _player_. The standalone sws_player.py repo (DNSVision/SWSPlayer) is now superseded for production use but retained as a reference. sounddevice is a gracefully-degraded dependency -- if not installed, HAS_AUDIO is False and the player opens without audio playback (meters still drawn, no sound).
 - Hula integration: All Hula code lives in machuna.py in a clearly marked section just above launch_gui(). Classes and functions prefixed Hula/hula_ to avoid collision. The v210 decoder functions (_v210_plane_to_yuv, _yuv_to_rgb8, _yuv_to_gray8) are shared -- Hula reuses them directly without duplication.
 - tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer and HulaWindow classes can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
+
+---
+
+## Development Process Notes
+
+### Reverting to a known good version
+
+Git makes this straightforward. If a change badly breaks the app, we can roll back to any previous commit and the file returns to exactly that state — as if the bad change never happened. To make this reliable, commit after each version bump once it has been tested and confirmed working. Do not batch multiple version bumps into a single commit at the end of a session — if something in the middle broke, we want to be able to land on the last clean version without losing the good changes that came after it.
+
+### The unified app architecture — when to proceed
+
+The long-term direction is a single format-in / format-out interface replacing the current MacHuna + Hula split (see Roadmap for full discussion). The caution about proceeding covers two separate risks that should be treated independently:
+
+1. **Untested conversions** — several Hula output paths are unconfirmed on hardware (Kayenne MOV, Kayenne TGA, Sony MVS clip naming, interlaced SWS → MOV metadata, MOV → TGA). These can be handled with a runtime dialogue warning the user that the conversion is unconfirmed on hardware. This approach is already used in the README and is acceptable for the app itself.
+
+2. **Architectural risk** — merging MacHuna and Hula into a unified UI is a significant rearchitecting of the GUI and conversion routing. This carries independent risk of breaking confirmed working paths.
+
+Before starting this work, establish clearly which concern is the primary driver. If it is purely the hardware uncertainty, the dialogue box approach handles it and the rearchitecture can proceed independently. If it is the architectural change itself, understand the specific risks before committing to it.
+
+**Do not start the unified app rearchitecture until this question is answered clearly.**
 
 ---
 
@@ -393,6 +427,9 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 ├── machuna_final_1024.png  # Source icon image (1024x1024px)
 ├── Audio Spec.pdf          # Early audio format notes -- superseded, see notes above
 ├── README.md               # Public-facing repository readme
+├── CHANGELOG.md            # Version history and release notes
+├── HANDOVER_NOTES.md       # Session handover notes for continuity between development sessions
 ├── DEVELOPMENT_NOTES.md    # This file
+├── CLAUDE.md               # Claude Code instructions and project conventions
 └── .gitignore              # Excludes build/, dist/, *.spec etc.
 ```

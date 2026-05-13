@@ -4,7 +4,7 @@ A macOS application for converting video and still image files to the Grass Vall
 
 ## Overview
 
-MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It monitors a watch folder for incoming media files and automatically converts them to `.SWS` format for use with Grass Valley Kahuna vision mixers.
+MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers.
 
 Converted files are placed into a destination folder, ready to be loaded onto a Kahuna mainframe via USB or network transfer.
 
@@ -26,7 +26,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
 - Interlaced-to-progressive transcoding -- MacHuna bob-deinterlaces interlaced sources to produce the correct number of progressive frames for the target standard (e.g. 1080i/50 → 1080p/50 produces 50fps output at the correct playback speed).
 - "TGA source already interlaced" option -- when re-wrapping TGA frames extracted from an existing interlaced SWS, tick this to pass frames through directly rather than applying field-weaving.
-- Watch folder service runs in background; automatically stops and writes a single combined conversion log once a TGA batch is complete
+- Conversion log written to the destination folder after each batch
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
 
@@ -43,19 +43,10 @@ Requirements:
 - PyInstaller (`pip3.12 install pyinstaller`)
 - Pillow, numpy, watchdog (`pip3.12 install pillow numpy watchdog`)
 
-Always run the build command from the project directory:
+Run from the project directory:
 
 ```bash
-cd ~/Developer/MacHuna && python3.12 -m PyInstaller \
-  --onedir \
-  --windowed \
-  --name "MacHuna" \
-  --icon machuna.icns \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg:." \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffprobe:." \
-  --add-data "/path/to/machuna_final_1024.png:." \
-  --noconfirm \
-  machuna.py
+python3.12 -m PyInstaller MacHuna.spec -y
 ```
 
 The built app will appear in the `dist/` folder.
