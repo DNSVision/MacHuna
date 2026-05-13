@@ -113,7 +113,7 @@ A comprehensive code review was conducted at the start of this session. Six bugs
 7. **Batch Convert TGA ambiguity - fixed in v1.5.16.** TGA files removed from the Batch Convert file picker entirely. Batch Convert now accepts MOV, MP4, MXF, MKV, AVI, PNG, BMP, and JPG only. TGA sequences are handled via the smart folder browser.
 
 **Remaining items from the review (no action needed):**
-- SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix.
+- Video Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix.
 - Single-file architecture - machuna.py contains conversion engine, header builder, GUI, Video Player, extraction engine, audio, settings, CLI. Suggested future modularisation: sws.py, player.py, extraction.py, audio.py, gui.py. Not urgent.
 
 **Positive findings:** Header builder, split-file streaming, audio channel mapping and pan filter all specifically praised.
@@ -204,7 +204,7 @@ MacHuna repo is currently **private**.
 - **Python:** 3.12 (`python3.12`)
 - **ffmpeg:** Homebrew at `/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/`
 - **PyInstaller:** pip3.12
-- **Key libraries:** Pillow, numpy, tkinter, sounddevice, watchdog, tkinterdnd2-universal
+- **Key libraries:** Pillow, numpy, tkinter, sounddevice, tkinterdnd2-universal
 
 ---
 

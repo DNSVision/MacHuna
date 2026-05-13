@@ -18,7 +18,7 @@ MacHuna is a macOS application that converts video and still image files to the 
 ## Development Environment
 
 - **Python:** 3.12
-- **Key libraries:** Pillow, numpy, sounddevice, tkinter (built-in), subprocess, struct, watchdog, tkinterdnd2-universal (installed but currently disabled)
+- **Key libraries:** Pillow, numpy, sounddevice, tkinter (built-in), subprocess, struct, tkinterdnd2-universal (installed but currently disabled)
 - **ffmpeg:** Installed via Homebrew at `/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/`
 - **PyInstaller:** Installed via pip3.12
 - **Working directory:** `~/Developer/MacHuna/`
@@ -70,7 +70,7 @@ git push
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
-- Split file support in SWS Player (requires virtual multi-file stream abstraction and frame cap)
+- Split file support in Video Player (requires virtual multi-file stream abstraction and frame cap)
 - Sony MVS 25i field order confirmation -- BFF assumed for PAL/50Hz; needs live hardware test on a Sony MVS desk
 - ~~Sony MVS 50i TGA output in Hula~~ -- DONE (v1.5.20/v1.5.21 as Sony MVS TGA 25i with BFF/TFF toggle and source guard)
 - ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
