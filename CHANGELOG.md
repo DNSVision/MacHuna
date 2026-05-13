@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.36 — 2026-05-14
+
+### Fixed
+- **MOV → Sony TGA output folder now named after the 4-character clip name.** Previously the output folder used the MOV filename stem instead of the clip name, so a file like `myclip.mov` would produce a folder called `myclip` rather than `WIPE` (or whatever clip name was set). The MOV→TGA path now matches the existing SWS→TGA behaviour.
+
+---
+
 ## v1.5.35 — 2026-05-13
 
 ### Docs

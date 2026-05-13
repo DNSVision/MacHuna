@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.35"
+VERSION = "1.5.36"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2372,9 +2372,10 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     [UNCONFIRMED: Kayenne TGA output parameters pending hardware verification]
     """
     stem      = Path(mov_path).stem
-    dest_dir  = os.path.join(dest_parent, stem)
-    os.makedirs(dest_dir, exist_ok=True)
     is_sony   = target == HULA_TARGET_SONY_TGA
+    folder    = clip_name.upper()[:4] if is_sony else stem
+    dest_dir  = os.path.join(dest_parent, folder)
+    os.makedirs(dest_dir, exist_ok=True)
     cn        = clip_name.upper()[:4].ljust(4) if is_sony else None
     interlaced = 'i' in standard
 
