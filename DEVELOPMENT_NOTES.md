@@ -75,52 +75,36 @@ git push
 - ~~Sony MVS 50i TGA output in Hula~~ -- DONE (v1.5.20/v1.5.21 as Sony MVS TGA 25i with BFF/TFF toggle and source guard)
 - ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
 
-### Unified App (long-term goal, post hardware confirmation)
+### Unified App (implemented in v1.5.33)
 
-MacHuna's long-term direction is to retire the separate Hula window and unify the full conversion engine into a single format-in / format-out UI. The user picks an input format (MOV, TGA, SWS) and an output format (SWS, MOV, TGA); the UI adapts to expose only the controls relevant to that combination (video standard, P/I options, field order, clip name, etc.).
+MacHuna v1.5.33 unified the full conversion engine into a single format-in / format-out UI. The user opens a folder; MacHuna autodetects the input type (SWS, video, TGA/stills) and adapts the Output dropdown and controls accordingly. The "which tool do I use?" question is gone.
 
-**Why this makes sense:** MacHuna started as an SWS converter. Hula was added as an optional extra. But the engine now handles MOV, TGA, and SWS in both directions -- the MacHuna/Hula split is an artefact of how the project grew, not a deliberate design choice. A unified UI removes the "which tool do I use?" question entirely.
-
-**Prerequisite:** All Hula FROM-SWS output paths must be confirmed on hardware before merging. A unified format picker implies equal confidence in all directions. Merging untested paths into the core product is the wrong order of operations.
-
-**Steps required:**
-
-1. Kahuna session (imminent): confirm 1080i/50 MOV→SWS speed, P→I regression, and TGA i→i. Clears TO-SWS confidence but does not touch FROM-SWS paths.
-2. Kayenne session (no timeline): load SWS→MOV and SWS→TGA outputs on a live Kayenne desk.
-3. Sony MVS session (no timeline): verify clip naming and 25i field order on a live Sony MVS.
-4. MOV→TGA via Hula: full path coded, never hardware-tested. Not desk-specific -- can be confirmed independently.
-5. Once all paths confirmed: design and implement unified UI with adaptive controls. See HANDOVER_NOTES.md "Unified App" section for full discussion.
-
-**Optional stepping stone:** Replace the separate Hula Toplevel with two tabs inside the main MacHuna window -- "To SWS" and "From SWS" -- without touching the underlying conversion logic. Lower risk than a full rearchitect; moves the product in the right direction while Hula confirmation is pending.
+**Remaining work:** The extraction output paths (SWS → Kayenne MOV, SWS → Kayenne TGA, SWS → Sony TGA, MOV → TGA) are coded and working by analysis but unconfirmed on real hardware. These need live desk tests on Kayenne and Sony MVS before being marked confirmed. See "Extraction output hardware unknowns" below.
 
 ---
 
-## Hula Integration (v1.5.0)
+## Extraction Engine (integrated from v1.5.0, unified in v1.5.33)
 
-Hula is an SWS extractor -- the reverse of MacHuna. It converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS desks. It was developed first as a standalone app (`DNSVision/Hula`, last version v0.1.1) then folded into MacHuna following the same pattern as SWS Player. **The standalone repo is archived and no longer maintained** — MacHuna's integrated Hula has far outstripped it in features.
+MacHuna's extraction engine converts `.SWS` files back to standard media formats for use on Kayenne and Sony MVS desks. It was developed first as a standalone app (`DNSVision/Hula`, last version v0.1.1) then folded into MacHuna v1.5.0, and fully unified into the main Convert interface in v1.5.33. **The standalone repo is archived and no longer maintained.**
 
-### How it works in MacHuna
+### How it works in MacHuna (v1.5.33+)
 
-- A "Hula" button sits in the Batch Convert row, to the left of the "SWS Player" button
-- Clicking it opens a `HulaWindow` -- a non-modal `tk.Toplevel` child window
-- The window is self-contained: destination folder, output target, clip name, file picker, convert button, log
-- Settings (`hula_dest`, `hula_target`, `hula_clip`) are persisted in the existing `~/.kwatch_settings.json` under `hula_` prefixed keys
-- The shared settings dict `s` is passed by reference to `HulaWindow` so it can update settings in place; `save_settings` is passed as a callback
+- Open a folder of `.SWS` files; MacHuna autodetects the input type and populates the Output dropdown with extraction targets (Kayenne MOV, Kayenne TGA, Sony TGA)
+- Adaptive controls appear based on the selected output (standard dropdown, clip name, field order, include audio)
+- Settings (`clip_name`, `field_order`) are persisted in `~/.kwatch_settings.json`
 
 ### Code structure in machuna.py
 
-All Hula code lives in a clearly marked section just above `launch_gui()`:
+The extraction code lives in a clearly marked section just above `launch_gui()`:
 
 - `HULA_TARGET_*` constants
 - `_HULA_OFF_*` header offset constants (read side only -- no write side needed)
-- `_HULA_STD_CODE_FPS` dict
 - `HulaSWSHeader` class -- parses the 512-byte SWS header for reading
 - `_hula_decode_frame()` -- decodes one frame pair using the existing `_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8` functions (no duplication)
 - `_hula_extract_audio_stereo()` -- extracts Ch0+Ch2 from SWS 16ch PCM as stereo temp file
 - `_hula_convert_tga()` -- converts one SWS to a TGA sequence subfolder
 - `_hula_convert_mov()` -- converts one SWS to a ProRes 4444 MOV
 - `_hula_run_batch()` -- batch dispatcher, called from worker thread
-- `HulaWindow` class -- the tkinter GUI
 
 ### Output formats
 
@@ -134,9 +118,9 @@ All Hula code lives in a clearly marked section just above `launch_gui()`:
 
 Interlaced TGA output was implemented in v1.5.20 via field-weaving (pairs of progressive frames interleaved by line). Available for all interlaced standards via the Standard dropdown. Field order toggle (BFF/TFF) present; BFF assumed for PAL/50Hz, unconfirmed on hardware.
 
-### Hula hardware unknowns (as of v1.5.31)
+### Extraction output hardware unknowns (as of v1.5.33)
 
-A thorough code review of Hula (May 2026) identified the following items that are coded but unconfirmed on real hardware. Each needs a live desk test before being marked confirmed.
+A thorough code review (May 2026) identified the following items that are coded but unconfirmed on real hardware. Each needs a live desk test before being marked confirmed.
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -144,15 +128,15 @@ A thorough code review of Hula (May 2026) identified the following items that ar
 | **Kayenne TGA output** | UNCONFIRMED | 32-bit RGBA, correct naming (0001.tga onwards). Marked UNCONFIRMED in code since v1.5.22. |
 | **Sony MVS TGA clip naming** | UNCONFIRMED | 4-char clip prefix + 4-digit frame number (e.g. `WIPE0000.tga`). Naming convention assumed from desk documentation; not verified by importing onto a live Sony MVS. |
 | **Interlaced SWS → MOV: interlace metadata** | KNOWN GAP | A 1080i/50 SWS converted to Kayenne MOV produces a 25fps ProRes file with correctly decoded interlaced frames, but ffmpeg does not write field-order flags into the container. A downstream NLE or desk may not identify the frames as interlaced. Whether a Kayenne desk cares is unknown — needs hardware test. Potential fix: add `-field_order tb` (TFF) or `bb` (BFF) to the ffmpeg encode command. |
-| **Interlaced SWS → TGA (progressive target)** | POTENTIAL CONFUSION | If an interlaced SWS is converted to TGA with a progressive standard selected, Hula does a straight frame dump (correct — it doesn't try to deinterlace). The resulting TGAs contain interlaced frames, which will show comb artefacts if treated as progressive. This is an edge case but worth documenting. |
+| **Interlaced SWS → TGA (progressive target)** | POTENTIAL CONFUSION | If an interlaced SWS is converted to TGA with a progressive standard selected, MacHuna does a straight frame dump (correct — it doesn't try to deinterlace). The resulting TGAs contain interlaced frames, which will show comb artefacts if treated as progressive. This is an edge case but worth documenting. |
 | **Sony MVS 25i field order** | UNCONFIRMED | BFF is assumed for PAL/50Hz. A BFF/TFF toggle is present in the UI. Needs live desk test — if motion artefacts appear, flip the toggle. |
 | **MOV → TGA** | UNCONFIRMED | Full path (MOV input + TGA target) is coded and routes correctly, but has never been tested on hardware. |
 
-**How to hardware-test Hula:** Convert a known clip in MacHuna to SWS, then round-trip it back through Hula. Load the output onto the target desk and verify correct playback, frame count, and field order. The Kayenne and Sony tests are independent — access to each desk is needed separately.
+**How to hardware-test:** Convert a known clip in MacHuna to SWS, then round-trip it back through MacHuna's extraction outputs. Load the result onto the target desk and verify correct playback, frame count, and field order. The Kayenne and Sony tests are independent — access to each desk is needed separately.
 
-### Standalone Hula repo
+### Standalone repo (archived)
 
-`DNSVision/Hula` is **archived and no longer maintained**. MacHuna's integrated Hula is the only active version. There is no sync obligation between the two — all future Hula development happens in `machuna.py` only.
+`DNSVision/Hula` is **archived and no longer maintained**. All extraction development happens in `machuna.py` only.
 
 ---
 
@@ -379,7 +363,7 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - ffmpeg path: Must point to real binary not Homebrew symlink (/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg). Symlinks confuse PyInstaller.
 - sys.frozen check: _get_ffmpeg_path() checks sys.frozen to find bundled ffmpeg when running as .app.
 - TGA sequences: Handled via ffmpeg concat demuxer with a temporary concat file. Selected via the smart folder browser in Batch Convert -- the browser collapses each sequence to a single entry. Not supported in the file picker (TGA is excluded from Open Files).
-- Settings persistence: Stored as JSON in ~/.kwatch_settings.json. Hula settings stored in same file under hula_ prefixed keys.
+- Settings persistence: Stored as JSON in ~/.kwatch_settings.json. Keys include `clip_name`, `field_order`, `output_format` for extraction settings. Old `hula_clip`/`hula_field_order` keys are migrated on load for backwards compat with pre-v1.5.33 settings.
 - VERSION constant: Single `VERSION = "x.x.x"` constant near the top of machuna.py. Title bar and About box both read from it. Update this one line for each release.
 - Format variant (0x18C): Stored in `FORMAT_VARIANTS` dict keyed by standard name, applied in `build_sws_header`. A companion `FORMAT_VARIANT_FPS` dict maps variant values back to fps -- used by `SWSHeader` and `HulaSWSHeader` for unambiguous fps lookup (all nine variant values are unique). The old simple interlaced/progressive logic (0x08/0x18) was replaced in v1.5.10 after v1.5.8 analysis confirmed each standard has its own specific value.
 - Interlaced fps in SWSPlayer: `FORMAT_VARIANT_FPS` uses frame rates for interlaced standards (25/29.97/30fps), not field rates (50/59.94/60fps). Each SWS frame is a full 1920x1080 frame -- MacHuna does not separate fields. Confirmed on hardware (v1.5.14).
@@ -393,8 +377,8 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 - Auto play / Loop play flags: Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188, OR'd into the video standard code. Confirmed by hex analysis of K-Watch reference files across all four flag combinations. Both flags default to off.
 - SWS Player audio detection: uses `aud_offset > 0 AND aud_fmt == 0x03000000` (fields 0x1E8 and 0x1EC) rather than checking `aud_frame_size == 0x1680` (0x1C2). Confirmed by analysis of a third-party SWS file where 0x1C2 was 0x3EC0 -- audio was present and correctly located but the player was reporting no audio. The 0x1C2 field varies between workflows and is not a reliable audio detection indicator.
 - SWS Player integration: All player code lives in machuna.py above launch_gui(). Classes renamed to avoid any future collision: PlayerFrameCache, PlayerAudio. Decode functions prefixed _player_. The standalone sws_player.py repo (DNSVision/SWSPlayer) is now superseded for production use but retained as a reference. sounddevice is a gracefully-degraded dependency -- if not installed, HAS_AUDIO is False and the player opens without audio playback (meters still drawn, no sound).
-- Hula integration: All Hula code lives in machuna.py in a clearly marked section just above launch_gui(). Classes and functions prefixed Hula/hula_ to avoid collision. The v210 decoder functions (_v210_plane_to_yuv, _yuv_to_rgb8, _yuv_to_gray8) are shared -- Hula reuses them directly without duplication.
-- tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer and HulaWindow classes can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
+- Extraction engine: All extraction code lives in machuna.py in a clearly marked section just above launch_gui(). Classes and functions use the `_hula_*` prefix (internal naming only — not user-facing). The v210 decoder functions (_v210_plane_to_yuv, _yuv_to_rgb8, _yuv_to_gray8) are shared with SWSPlayer and not duplicated.
+- tkinter top-level import: tk, ttk, filedialog, messagebox, scrolledtext are now imported at module level (guarded with try/except) so the SWSPlayer class can reference tk.Toplevel at definition time. launch_gui() still has its own internal imports which are harmless re-imports.
 
 ---
 
@@ -404,17 +388,9 @@ MacHuna-generated v210 video data differs byte-for-byte from K-Watch output and 
 
 Git makes this straightforward. If a change badly breaks the app, we can roll back to any previous commit and the file returns to exactly that state — as if the bad change never happened. To make this reliable, commit after each version bump once it has been tested and confirmed working. Do not batch multiple version bumps into a single commit at the end of a session — if something in the middle broke, we want to be able to land on the last clean version without losing the good changes that came after it.
 
-### The unified app architecture — when to proceed
+### The unified app architecture — implemented in v1.5.33
 
-The long-term direction is a single format-in / format-out interface replacing the current MacHuna + Hula split (see Roadmap for full discussion). The caution about proceeding covers two separate risks that should be treated independently:
-
-1. **Untested conversions** — several Hula output paths are unconfirmed on hardware (Kayenne MOV, Kayenne TGA, Sony MVS clip naming, interlaced SWS → MOV metadata, MOV → TGA). These can be handled with a runtime dialogue warning the user that the conversion is unconfirmed on hardware. This approach is already used in the README and is acceptable for the app itself.
-
-2. **Architectural risk** — merging MacHuna and Hula into a unified UI is a significant rearchitecting of the GUI and conversion routing. This carries independent risk of breaking confirmed working paths.
-
-Before starting this work, establish clearly which concern is the primary driver. If it is purely the hardware uncertainty, the dialogue box approach handles it and the rearchitecture can proceed independently. If it is the architectural change itself, understand the specific risks before committing to it.
-
-**Do not start the unified app rearchitecture until this question is answered clearly.**
+The unified format-in / format-out interface was implemented in v1.5.33. The remaining work is hardware confirmation of the extraction output paths — see "Extraction output hardware unknowns" in the Extraction Engine section. Unconfirmed paths are flagged in the UI with a warning dialogue before converting.
 
 ---
 

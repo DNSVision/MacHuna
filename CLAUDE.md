@@ -1,6 +1,6 @@
 # MacHuna — Claude Code Instructions
 
-MacHuna is a single-file Python app (`machuna.py`) that converts video/image files to Grass Valley Kahuna `.SWS` format. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
+MacHuna is a single-file Python app (`machuna.py`) that translates broadcast media assets between formats: video, TGA sequences, and stills to/from Grass Valley Kahuna `.SWS`, Kayenne MOV, Kayenne TGA, and Sony TGA. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
 
 ## Dev environment
 
@@ -29,7 +29,7 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 ## Architecture notes
 
-- Single file: `machuna.py` (~2,700+ lines). Contains conversion engine, SWS header builder, Watch Folder service, Batch Convert, SWS Preview Player, Hula SWS Extractor, audio handling, GUI, settings, and CLI.
+- Single file: `machuna.py` (~2,600+ lines). Contains conversion engine, SWS header builder, extraction engine, Video Player, audio handling, GUI, settings, and CLI.
 - Version constant: `VERSION` near top of file — title bar reads from it.
 - SWS format constants (`VIDEO_STANDARDS`, `FORMAT_VARIANTS`, `FORMAT_VARIANT_FPS`, `FORMAT_VARIANT_DISPLAY`) are all keyed by standard name string (e.g. `'1080i50'`).
 - All ffmpeg calls go through `_run_ffmpeg()` so Stop/Cancel can kill them.
@@ -42,9 +42,9 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 - Field order for P→I transcoding is TFF (SMPTE standard for 1080i HD) — unconfirmed on 1080i hardware as of v1.5.19.
 - PyInstaller builds must happen on the M1 MacBook Air.
 
-## Hula — hardware unknowns (as of v1.5.31)
+## Extraction output hardware unknowns
 
-Hula's extraction logic is correct by code analysis, but the following output paths have never been tested on real hardware. Do not remove the UNCONFIRMED notes in the code or README until these are verified:
+MacHuna's extraction logic is correct by code analysis, but the following output paths have never been tested on real hardware. Do not remove the UNCONFIRMED notes in the code or README until these are verified:
 
 - **Kayenne MOV output** — never loaded on a live Kayenne ClipStore/Image Store
 - **Kayenne TGA output** — frame naming and format unconfirmed
@@ -53,4 +53,4 @@ Hula's extraction logic is correct by code analysis, but the following output pa
 - **Sony MVS 25i field order** — BFF assumed; toggle in UI if incorrect on hardware
 - **MOV → TGA** — full path coded, never hardware-tested
 
-Full detail in `DEVELOPMENT_NOTES.md` under "Hula hardware unknowns".
+Full detail in `DEVELOPMENT_NOTES.md` under "Extraction output hardware unknowns".

@@ -1,4 +1,4 @@
-# MacHuna & Hula - Session Handover Notes
+# MacHuna - Session Handover Notes
 
 Paste this document into a new Claude session to resume development. Read carefully before asking for any files or writing any code.
 
@@ -14,7 +14,7 @@ MacHuna and Hula are now one tool. The separate Hula button and HulaWindow are g
 - **Adaptive controls**: Standard, Split >4GB, Ignore alpha, Auto play, Loop play, TGA source interlaced, Include audio, Clip name (Sony TGA), BFF/TFF field order — shown only when relevant.
 - **Sony TGA folder naming**: output subfolder now named after the 4-character clip name rather than the SWS stem.
 - **"Video Player" button**: replaces "SWS Player" label; more accurate since it accepts SWS, TGA sequences, and video files.
-- **`HulaWindow` class**: still in the source but no longer called. All Hula conversion engine functions (`_hula_run_batch`, `_hula_convert_tga`, `_hula_convert_mov`, etc.) are unchanged.
+- **`HulaWindow` class**: removed in post-v1.5.33 cleanup. All extraction engine functions (`_hula_run_batch`, `_hula_convert_tga`, `_hula_convert_mov`, etc.) remain unchanged.
 
 The unified UI was the long-term direction discussed in v1.5.31 session notes. The hardware unknowns (Kayenne MOV, Kayenne TGA, Sony MVS clip naming, MOV→TGA) remain unconfirmed — the unconfirmed warning dialogue handles this at runtime.
 
@@ -78,7 +78,7 @@ A full analysis of Hula's conversion paths for interlaced and progressive source
 
 ### Hula Hardware Unknowns (as of v1.5.31)
 
-A full audit of Hula's output paths identified several items that are coded but unconfirmed on real hardware. These are all documented in full in DEVELOPMENT_NOTES.md under "Hula hardware unknowns". Summary:
+A full audit of the extraction output paths identified several items that are coded but unconfirmed on real hardware. These are all documented in full in DEVELOPMENT_NOTES.md under "Extraction output hardware unknowns". Summary:
 
 - **Kayenne MOV and TGA outputs** — logic is correct by analysis, never loaded on a live Kayenne ClipStore/Image Store
 - **Sony MVS clip naming** — naming convention assumed, not verified by live desk import
@@ -114,7 +114,7 @@ A comprehensive code review was conducted at the start of this session. Six bugs
 
 **Remaining items from the review (no action needed):**
 - SWS Player memory usage - frames cached in memory, fine for short clips but a known limitation for longer material. Document rather than fix.
-- Single-file architecture - machuna.py contains conversion engine, header builder, GUI, watch service, audio, SWS Player, Hula, settings, CLI. Suggested future modularisation: sws.py, player.py, hula.py, audio.py, gui.py. Not urgent.
+- Single-file architecture - machuna.py contains conversion engine, header builder, GUI, Video Player, extraction engine, audio, settings, CLI. Suggested future modularisation: sws.py, player.py, extraction.py, audio.py, gui.py. Not urgent.
 
 **Positive findings:** Header builder, split-file streaming, audio channel mapping and pan filter all specifically praised.
 
@@ -173,7 +173,7 @@ Claude Code CLI has direct file system access and edits machuna.py directly usin
 
 **MacHuna** (`DNSVision/MacHuna`) is a macOS application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It is a Mac-native alternative to the Windows-only K-Watch application. Built by David Steer (DNS Vision Limited) and Claude (Anthropic) using AI-assisted development with no prior coding background on David's part.
 
-**Hula** is MacHuna's built-in SWS extractor — converts `.SWS` files back to standard media formats for Kayenne and Sony MVS desks. Originally built as a standalone app (`DNSVision/Hula`), now fully integrated into MacHuna. The standalone repo is **archived and no longer maintained** — MacHuna's integrated Hula has far outstripped it in features.
+MacHuna also extracts `.SWS` files back to standard media formats for Kayenne and Sony MVS desks (SWS → Kayenne MOV, Kayenne TGA, Sony TGA). This extraction engine was originally built as a standalone app (`DNSVision/Hula`), integrated into MacHuna v1.5.0, and unified into the main Convert interface in v1.5.33. The standalone repo is **archived and no longer maintained**.
 
 MacHuna repo is currently **private**.
 
@@ -182,7 +182,7 @@ MacHuna repo is currently **private**.
 ## Current Versions
 
 - **MacHuna:** v1.5.33
-- **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's built-in Hula
+- **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
 
@@ -280,22 +280,22 @@ git push
 - Audio: 16-bit LE PCM, 16ch, 48kHz, L=Ch1 R=Ch3 (K-Watch mapping)
 - Auto play / Loop play flags
 - Large file support: >4GB split into 2GB FAT32-safe chunks
-- Built-in SWS Preview Player (fill, key, composite, audio meters)
-- Built-in Hula SWS Extractor
+- Built-in Video Player (fill, key, composite, audio meters)
+- Built-in extraction engine (SWS → Kayenne MOV, Kayenne TGA, Sony TGA)
 - Window size persisted between sessions
 - Settings saved to `~/.kwatch_settings.json`
 
 ---
 
-## Hula Feature Summary
+## Extraction Output Summary
 
-- Converts .SWS to four output targets:
+- Converts .SWS to three output targets:
   - Kayenne MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present
   - Kayenne TGA: 32-bit RGBA, frames 0001.tga onwards, subfolder per SWS
-  - Sony MVS TGA (50p): 32-bit RGBA progressive, frames XXXX0000.tga (4-char clip name prefix)
-  - Sony MVS TGA (25i): field-woven interlaced from 1080p50 source, BFF/TFF toggle, frame count halved
+  - Sony TGA: 32-bit RGBA, frames XXXX0000.tga (4-char clip name prefix), subfolder named after clip
+- Progressive or interlaced output via Standard dropdown (TGA targets)
+- Field order toggle (BFF/TFF) for interlaced standards; always shown for Sony TGA
 - Batch conversion supported
-- Source guard: Sony MVS 25i rejects non-1080p50 input with a clear error message
 - Per-file metadata shown at load time: standard, frame count, duration
 
 ---
@@ -307,13 +307,12 @@ The file is a single script. Key sections in order:
 1. Imports and constants (including `_current_ffmpeg_proc` and `_ffmpeg_proc_lock`)
 2. `_run_ffmpeg()` - tracked ffmpeg subprocess wrapper
 3. `_kill_current_ffmpeg()` - kills active ffmpeg process
-4. SWS header builder and conversion functions (Watch Folder path)
-5. WatchService class
-6. SWSPlayer classes (PlayerFrameCache, PlayerAudio, SWSPlayer)
-7. **Hula section** - HulaSWSHeader, _hula_* converter functions, HulaWindow class
-8. launch_gui() - main GUI
+4. SWS header builder and conversion functions
+5. SWSPlayer classes (PlayerFrameCache, PlayerAudio, SWSPlayer)
+6. Extraction engine — HulaSWSHeader, _hula_* converter functions
+7. launch_gui() - main GUI
 
-The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8`) are shared between SWSPlayer and Hula - do not duplicate.
+The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8`) are shared between SWSPlayer and the extraction engine — do not duplicate.
 
 ---
 
@@ -337,9 +336,9 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 - HLG Rec.2020 colour space option (requires a real HLG .SWS file to verify)
 - Split file support in SWS Preview Player
 
-### Hula (integrated in MacHuna only — standalone DNSVision/Hula archived)
+### Extraction outputs (standalone DNSVision/Hula archived)
 - Live hardware test on Kayenne and Sony MVS — Sony MVS clip naming unverified on hardware
-- Sony MVS 25i field order confirmation — BFF assumed for PAL/50Hz; flip toggle in Hula if motion artefacts appear on a real desk
+- Sony MVS 25i field order confirmation — BFF assumed for PAL/50Hz; flip the toggle in MacHuna if motion artefacts appear on a real desk
 
 ### Future consideration
 - Windows port - the core Python code has no Mac-specific dependencies. Main changes needed: ffmpeg path handling, macOS menu bar code conditionally skipped, PyInstaller build on Windows machine. Someone with a Windows machine could fork and port without needing to redo any of the reverse engineering. Worth adding "Windows port contributions welcome" to README when repos go public.

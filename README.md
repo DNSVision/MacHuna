@@ -13,7 +13,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS` (K-Watch supports MOV and AVI only)
 - Converts TGA sequences to `.SWS` clips
 - Converts still images (PNG, TGA, BMP, JPG etc.) to `.SWS` stills
-- Extracts `.SWS` files to Kayenne MOV, Kayenne TGA, or Sony TGA format (Hula engine, built in)
+- Extracts `.SWS` files to Kayenne MOV, Kayenne TGA, or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
 - Audio support -- 16-bit PCM, 16 channels, correct K-Watch channel mapping (L=Ch1, R=Ch3)
@@ -42,7 +42,7 @@ Requirements:
 - Python 3.12
 - ffmpeg installed via Homebrew (`brew install ffmpeg`)
 - PyInstaller (`pip3.12 install pyinstaller`)
-- Pillow, numpy, watchdog (`pip3.12 install pillow numpy watchdog`)
+- Pillow, numpy (`pip3.12 install pillow numpy`)
 
 Run from the project directory:
 
@@ -105,7 +105,7 @@ Click the **Video Player** button to open the built-in preview player. Displays 
 
 Files larger than 4GB are automatically split into 2GB chunks inside a folder named `<number>.SWS`, matching the K-Watch split file format exactly. The Split >4GB option must be enabled (it is on by default).
 
-## Extraction outputs (Hula engine)
+## Extraction outputs
 
 MacHuna can extract `.SWS` files back to standard formats:
 
@@ -126,7 +126,7 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 - HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
 - Split file support in Video Player
 
-### Hula extraction -- pending hardware verification
+### Extraction outputs -- pending hardware verification
 All items below are coded and working by analysis; hardware tests on Kayenne and Sony MVS desks are needed to confirm.
 - Kayenne MOV output -- ProRes 4444 with correct fps, BT.709; never loaded on a live Kayenne ClipStore
 - Kayenne TGA output -- frame naming and format assumed correct; unconfirmed

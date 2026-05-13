@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
 MacHuna for macOS
-Converts TGA stills, TGA sequences, and MOV/MP4 files to Grass Valley Kahuna .SWS format.
-Replicates the core functionality of K-Watch (K-Manager Pro) without requiring Windows/Parallels.
+Translates broadcast media assets between formats: MOV, MP4, MXF, TGA sequences,
+and still images to/from Grass Valley Kahuna .SWS, Kayenne MOV, Kayenne TGA, and Sony TGA.
 
 Requirements:
-    pip3 install watchdog
     brew install ffmpeg   (or: https://ffmpeg.org/download.html)
+    pip3 install pillow numpy
 
 Usage:
-    python3 kwatch_converter.py --watch /path/to/watch --dest /path/to/destination
-    python3 kwatch_converter.py --gui   (launches simple GUI)
-    python3 kwatch_converter.py --convert /path/to/file.mov --number 42 --dest /path/to/destination
+    python3 machuna.py --gui
+    python3 machuna.py --convert /path/to/file.mov --number 42 --dest /path/to/destination
 """
 
 import argparse
@@ -2484,7 +2483,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'BFF',
                     log=print):
-    """Convert a list of SWS or MOV files. Called from HulaWindow worker thread."""
+    """Convert a list of SWS or MOV files to the specified extraction target."""
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
     interlaced = 'i' in standard
@@ -2513,7 +2512,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     # Source is already interlaced: pass frames through as-is.
                     log(f"  Source is {src_header.standard} ({src_header.fps:.4g}fps) "
                         f"— already interlaced, outputting as interlaced TGA frames. "
-                        f"If re-importing into Watch Folder, tick 'TGA source already interlaced'.")
+                        f"If re-importing into MacHuna, tick 'TGA source already interlaced'.")
                     _hula_convert_tga(path, dest_dir, target,
                                       clip_name=clip_name, log=log)
             else:
@@ -2526,253 +2525,6 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
     log(f"\n{'='*40}")
     log(f"Complete: {ok} succeeded, {fail} failed.")
 
-
-class HulaWindow(tk.Toplevel):
-    """Hula SWS / MOV Extractor -- non-modal child window launched from MacHuna."""
-
-    def __init__(self, parent, settings: dict, save_cb):
-        super().__init__(parent)
-        self.title("Hula — SWS / MOV Extractor")
-        self.resizable(False, False)
-        self._save_cb    = save_cb   # callable to persist settings
-        self._settings   = settings  # shared dict
-        self._selected   = []
-        self._build_ui(settings)
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        # Centre over parent
-        self.update_idletasks()
-        px = parent.winfo_x() + (parent.winfo_width()  - self.winfo_width())  // 2
-        py = parent.winfo_y() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{px}+{py}")
-
-    def _build_ui(self, s: dict):
-        PAD = 8
-        pad = dict(padx=PAD, pady=4)
-
-        # Destination
-        dest_frame = ttk.LabelFrame(self, text="Destination Folder")
-        dest_frame.pack(fill='x', **pad)
-        self._dest_var = tk.StringVar(value=s.get('hula_dest', ''))
-        ttk.Entry(dest_frame, textvariable=self._dest_var, width=52).pack(
-            side='left', fill='x', expand=True)
-        ttk.Button(dest_frame, text="Browse…",
-                   command=self._browse_dest).pack(side='left', padx=(PAD, 0))
-        ttk.Button(dest_frame, text="Open in Finder",
-                   command=self._open_dest).pack(side='left', padx=(PAD, 0))
-
-        # Output target
-        tgt_frame = ttk.LabelFrame(self, text="Output Target")
-        tgt_frame.pack(fill='x', **pad)
-
-        # Row 1: target radio buttons
-        saved_tgt = s.get('hula_target', HULA_TARGET_KAYENNE_MOV)
-        if saved_tgt not in (HULA_TARGET_KAYENNE_MOV,
-                             HULA_TARGET_KAYENNE_TGA,
-                             HULA_TARGET_SONY_TGA):
-            saved_tgt = HULA_TARGET_KAYENNE_TGA
-        self._target_var = tk.StringVar(value=saved_tgt)
-        tgt_row = tk.Frame(tgt_frame)
-        tgt_row.pack(fill='x', anchor='w', pady=(2, 0))
-        for label in (HULA_TARGET_KAYENNE_MOV,
-                      HULA_TARGET_KAYENNE_TGA,
-                      HULA_TARGET_SONY_TGA):
-            tk.Radiobutton(tgt_row, text=label,
-                           variable=self._target_var, value=label,
-                           command=self._on_options_change
-                           ).pack(side='left', padx=(0, PAD))
-
-        # Row 2: TGA options — standard dropdown, clip name, field order
-        self._tga_opts_frame = tk.Frame(tgt_frame)
-
-        # Standard dropdown (same set as main MacHuna)
-        std_inner = tk.Frame(self._tga_opts_frame)
-        std_inner.pack(side='left')
-        tk.Label(std_inner, text="Standard:").pack(side='left')
-        self._standard_var = tk.StringVar(
-            value=s.get('hula_standard', '1080p50'))
-        self._std_combo = ttk.Combobox(
-            std_inner, textvariable=self._standard_var, width=10,
-            values=list(VIDEO_STANDARDS.keys()), state='readonly')
-        self._std_combo.pack(side='left', padx=(4, 0))
-        self._std_combo.bind('<<ComboboxSelected>>', self._on_options_change)
-
-        # Clip name (Sony TGA only)
-        clip_frame = tk.Frame(self._tga_opts_frame)
-        clip_frame.pack(side='left', padx=(PAD * 2, 0))
-        tk.Label(clip_frame, text="Clip name (4 chars):").pack(side='left')
-        self._clip_var = tk.StringVar(value=s.get('hula_clip', 'WIPE'))
-        vcmd = self.register(lambda P: len(P) <= 4 and (P == '' or P.isalnum()))
-        self._clip_entry = ttk.Entry(clip_frame, textvariable=self._clip_var,
-                                     width=5, validate='key',
-                                     validatecommand=(vcmd, '%P'))
-        self._clip_entry.pack(side='left', padx=(4, 0))
-        tk.Label(clip_frame,
-                 text="(all clips share this name — they will merge on import)",
-                 font=('Helvetica', 10), fg='#888888'
-                 ).pack(side='left', padx=(8, 0))
-
-        # Field order (interlaced standards only)
-        self._field_order_frame = tk.Frame(self._tga_opts_frame)
-        tk.Label(self._field_order_frame, text="Field order:").pack(side='left')
-        self._field_order_var = tk.StringVar(
-            value=s.get('hula_field_order', 'BFF'))
-        for fo in ('BFF', 'TFF'):
-            tk.Radiobutton(self._field_order_frame, text=fo,
-                           variable=self._field_order_var, value=fo
-                           ).pack(side='left')
-
-        # Input files
-        files_frame = ttk.LabelFrame(self, text="Input Files")
-        files_frame.pack(fill='x', **pad)
-        list_frame = tk.Frame(files_frame)
-        list_frame.pack(side='left', fill='both', expand=True)
-        self._file_listbox = tk.Listbox(
-            list_frame, font=('Menlo', 11), height=4,
-            activestyle='none', selectmode='browse', state='disabled')
-        self._file_listbox.pack(side='left', fill='both', expand=True)
-        sb = ttk.Scrollbar(list_frame, orient='vertical',
-                           command=self._file_listbox.yview)
-        sb.pack(side='left', fill='y')
-        self._file_listbox.config(yscrollcommand=sb.set)
-        ttk.Button(files_frame, text="Open Files…",
-                   command=self._open_files).pack(side='left', padx=(PAD, 0), anchor='n')
-
-        # Buttons
-        btn_frame = tk.Frame(self)
-        btn_frame.pack(fill='x', **pad)
-        self._convert_btn = ttk.Button(btn_frame, text="Convert",
-                                       command=self._do_convert)
-        self._convert_btn.pack(side='left')
-        self._clear_btn = ttk.Button(btn_frame, text="Clear Log")
-        self._clear_btn.pack(side='left', padx=(PAD, 0))
-
-        # Log
-        log_frame = ttk.LabelFrame(self, text="Log")
-        log_frame.pack(fill='both', expand=True, **pad)
-        self._log_box = scrolledtext.ScrolledText(
-            log_frame, width=80, height=16,
-            font=('Menlo', 11), state='disabled')
-        self._log_box.pack(fill='both', expand=True)
-
-        def clear_log():
-            self._log_box.config(state='normal')
-            self._log_box.delete('1.0', 'end')
-            self._log_box.config(state='disabled')
-
-        self._clear_btn.config(command=clear_log)
-        self._on_options_change()
-
-    def _browse_dest(self):
-        d = filedialog.askdirectory(title="Choose destination folder",
-                                    parent=self)
-        if d:
-            self._dest_var.set(d)
-
-    def _open_dest(self):
-        d = self._dest_var.get().strip()
-        if d and os.path.isdir(d):
-            subprocess.run(['open', d])
-        elif d:
-            messagebox.showwarning("Hula", f"Folder not found:\n{d}", parent=self)
-        else:
-            messagebox.showwarning("Hula", "No destination folder set.", parent=self)
-
-    def _open_files(self):
-        paths = filedialog.askopenfilenames(
-            title="Select SWS or MOV files", parent=self,
-            filetypes=[('SWS and MOV files', '*.SWS *.sws *.mov *.MOV'),
-                       ('SWS files', '*.SWS *.sws'),
-                       ('MOV files', '*.mov *.MOV'),
-                       ('All files', '*.*')])
-        if not paths:
-            return
-        self._selected = sorted(paths)
-        self._file_listbox.config(state='normal')
-        self._file_listbox.delete(0, 'end')
-        for path in self._selected:
-            name = os.path.basename(path)
-            if Path(path).suffix.lower() == '.mov':
-                meta = "MOV file"
-            else:
-                try:
-                    h = HulaSWSHeader(path)
-                    std = h.standard.replace('/', '')
-                    tc = _fmt_timecode(h.frame_count, h.fps)
-                    meta = f"{std}  {h.frame_count}frms  {tc}"
-                except Exception:
-                    meta = "unknown format"
-            self._file_listbox.insert('end', f"{name:<20}  {meta}")
-        self._file_listbox.config(state='disabled')
-
-    def _on_options_change(self, *_):
-        tgt        = self._target_var.get()
-        std        = self._standard_var.get()
-        is_tga     = tgt in _HULA_TGA_TARGETS
-        is_sony    = tgt == HULA_TARGET_SONY_TGA
-        is_interlaced = is_tga and 'i' in std
-
-        if is_tga:
-            self._tga_opts_frame.pack(fill='x', anchor='w',
-                                      padx=4, pady=(0, 4))
-        else:
-            self._tga_opts_frame.pack_forget()
-
-        self._clip_entry.config(state='normal' if is_sony else 'disabled')
-
-        if is_interlaced:
-            self._field_order_frame.pack(side='left', padx=(16, 0))
-        else:
-            self._field_order_frame.pack_forget()
-
-    def _log(self, msg: str):
-        def _append():
-            self._log_box.config(state='normal')
-            self._log_box.insert('end', msg + '\n')
-            self._log_box.see('end')
-            self._log_box.config(state='disabled')
-        self.after(0, _append)
-
-    def _do_convert(self):
-        dest  = self._dest_var.get().strip()
-        tgt   = self._target_var.get()
-        std   = self._standard_var.get() if tgt in _HULA_TGA_TARGETS else '1080p50'
-        cname = self._clip_var.get().strip().upper()
-        if not dest:
-            messagebox.showerror("Hula", "Please set a destination folder.",
-                                 parent=self)
-            return
-        if not self._selected:
-            messagebox.showerror("Hula", "Please select at least one input file.",
-                                 parent=self)
-            return
-        if tgt == HULA_TARGET_SONY_TGA and len(cname) != 4:
-            messagebox.showerror("Hula",
-                                 "Clip name must be exactly 4 characters.",
-                                 parent=self)
-            return
-        try:
-            check_ffmpeg()
-        except RuntimeError as e:
-            messagebox.showerror("Hula", str(e), parent=self)
-            return
-        field_order = self._field_order_var.get()
-        self._settings['hula_dest']        = dest
-        self._settings['hula_target']      = tgt
-        self._settings['hula_standard']    = std
-        self._settings['hula_clip']        = cname
-        self._settings['hula_field_order'] = field_order
-        self._save_cb()
-        self._convert_btn.config(state='disabled')
-
-        def worker():
-            try:
-                _hula_run_batch(list(self._selected), dest, tgt,
-                                standard=std, clip_name=cname,
-                                field_order=field_order, log=self._log)
-            finally:
-                self.after(0, lambda: self._convert_btn.config(state='normal'))
-
-        threading.Thread(target=worker, daemon=True).start()
 
 # ─────────────────────────────────────────────────────────────
 #  Simple Tkinter GUI
@@ -3553,14 +3305,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Start folder watch service
-  python3 kwatch_converter.py --watch ~/Desktop/KWatch --dest ~/Desktop/SWS
-
   # Convert a single file
-  python3 kwatch_converter.py --convert myclip.mov --number 42 --dest ~/Desktop/SWS
+  python3 machuna.py --convert myclip.mov --number 42 --dest ~/Desktop/SWS
 
   # Launch GUI
-  python3 kwatch_converter.py --gui
+  python3 machuna.py --gui
         """
     )
     parser.add_argument('--dest',     help='Destination folder for .SWS files')
