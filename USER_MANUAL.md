@@ -1,8 +1,8 @@
-# MacHuna v1.5.4 - User Manual
+# MacHuna v1.5.33 — User Manual
 
-**Grass Valley Kahuna SWS Converter**
+**Broadcast Media Format Converter**
 
-DNS Vision Limited - For use by Vision Mixers, TDs, and Support Engineers
+DNS Vision Limited — For Vision Mixers, TDs, and Support Engineers
 
 ---
 
@@ -11,61 +11,73 @@ DNS Vision Limited - For use by Vision Mixers, TDs, and Support Engineers
 1. [Overview](#1-overview)
 2. [Installation](#2-installation)
 3. [Main Window](#3-main-window)
-4. [Batch Convert](#4-batch-convert)
-5. [TGA Sequence Conversion](#5-tga-sequence-conversion)
-6. [Audio](#6-audio)
-7. [SWS Preview Player](#7-sws-preview-player)
-8. [Hula SWS Extractor](#8-hula-sws-extractor)
-9. [Large File Support](#9-large-file-support-4gb)
-10. [SWS Format Reference](#10-sws-format-reference)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Known Limitations](#12-known-limitations)
-13. [Related Projects](#13-related-projects)
+4. [Converting Files](#4-converting-files)
+5. [Kahuna SWS Output](#5-kahuna-sws-output)
+6. [Extraction Outputs — Kayenne and Sony MVS](#6-extraction-outputs--kayenne-and-sony-mvs)
+7. [TGA Sequences](#7-tga-sequences)
+8. [Audio](#8-audio)
+9. [Video Player](#9-video-player)
+10. [Large File Support (>4GB)](#10-large-file-support-4gb)
+11. [SWS Format Reference](#11-sws-format-reference)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Known Limitations](#13-known-limitations)
 14. [Authors](#14-authors)
 
 ---
 
 ## 1. Overview
 
-MacHuna is a macOS application for converting video and still image files to the Grass Valley Kahuna .SWS native format. It is a Mac-native alternative to the Windows-only K-Watch application from Grass Valley's K-Manager Pro suite.
+MacHuna is a macOS application for translating broadcast media assets between formats. It converts video clips, TGA sequences, and still images to Grass Valley Kahuna `.SWS` format, and extracts `.SWS` files back to standard formats for use on Kayenne and Sony MVS desks.
 
-MacHuna also includes two built-in tools accessible from the main window:
+It is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro.
 
-- **SWS Preview Player** - preview any .SWS file with fill, key, composite, and audio metering
-- **Hula SWS Extractor** - convert .SWS files back to standard formats for use on Kayenne and Sony MVS desks
+### 1.1 What MacHuna Does
 
-### 1.1 Supported Platforms
+| Direction | From | To |
+|---|---|---|
+| Kahuna SWS | MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG | `.SWS` (Grass Valley Kahuna) |
+| Kayenne MOV | `.SWS` | ProRes 4444 MOV with embedded alpha |
+| Kayenne TGA | `.SWS` | 32-bit RGBA TGA sequence |
+| Sony TGA | `.SWS` | 32-bit RGBA TGA sequence (Sony MVS naming) |
 
-| | |
-|---|---|
-| macOS | Apple Silicon (M-series). macOS 12 or later. |
-| ffmpeg | Bundled inside the .app. No separate installation required. |
-| Video standards | 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all confirmed against K-Watch reference files |
-| Input formats | MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG stills |
-| Output format | .SWS (Grass Valley Kahuna native) |
+### 1.2 Supported Standards
 
-### 1.2 Key Differences from K-Watch
+All nine standards below have been confirmed against K-Watch reference files and verified on a live Grass Valley Kahuna mainframe.
 
-- Runs natively on macOS - no Windows or Parallels required
-- Accepts a wider range of input formats (K-Watch is limited to MOV and AVI)
-- Batch convert via file picker in addition to Watch Folder service
-- Built-in SWS preview and extraction tools
+| Standard | fps | Region |
+|---|---|---|
+| 1080i/50 | 25 | UK / Europe |
+| 1080i/59.94 | 29.97 | USA / Japan |
+| 1080i/60 | 30 | — |
+| 1080p/25 | 25 | UK / Europe |
+| 1080p/50 | 50 | UK / Europe |
+| 1080p/59.94 | 59.94 | USA / Japan |
+| 1080p/60 | 60 | — |
+| 720p/50 | 50 | — |
+| 720p/59.94 | 59.94 | USA / Japan |
 
-> **NOTE** MacHuna replicates the K-Watch conversion functionality. It does not replicate K-Manager Pro's network upload to mainframe or project synchronisation features.
+### 1.3 Key Differences from K-Watch
+
+- Runs natively on macOS — no Windows, no Parallels
+- Accepts a wider range of input formats (K-Watch supports MOV and AVI only)
+- Converts between Kahuna, Kayenne, and Sony MVS formats in one app
+- Built-in Video Player for checking .SWS files without a Kahuna
+
+> **NOTE** MacHuna replicates K-Watch's conversion functionality. It does not replicate K-Manager Pro's network upload to mainframe or project synchronisation features.
 
 ---
 
 ## 2. Installation
 
-MacHuna is distributed as a self-contained .app bundle. No separate software installation is required.
+MacHuna is distributed as a self-contained `.app` bundle. ffmpeg is bundled inside — no separate installation required.
 
 ### 2.1 First Launch
 
-- Copy MacHuna.app to your Applications folder or run it from any location
-- On first launch, right-click the app and select Open to bypass macOS Gatekeeper
-- Subsequent launches can be performed by double-clicking normally
+1. Copy `MacHuna.app` to your Applications folder, or run it from any location
+2. On first launch, right-click the app and choose **Open** to bypass macOS Gatekeeper
+3. Subsequent launches work by double-clicking normally
 
-> **NOTE** Gatekeeper may show a warning on first launch because the app is not signed with an Apple Developer certificate. This is expected for internal tools.
+> **NOTE** Gatekeeper may warn that the app is from an unidentified developer. This is expected — MacHuna is not signed with an Apple Developer certificate. Right-click → Open bypasses this check.
 
 ### 2.2 Settings
 
@@ -75,333 +87,389 @@ MacHuna saves all settings automatically on quit. Settings are stored at:
 ~/.kwatch_settings.json
 ```
 
-Settings include Watch Folder path, Destination Folder path, video standard, all checkboxes, start number, window size, and Hula settings. To reset to defaults, delete this file.
+To reset to defaults, quit MacHuna and delete this file.
 
 ---
 
 ## 3. Main Window
 
-The MacHuna window is divided into four sections: Watch Folder, Destination Folder, Settings, and Batch Convert. A scrolling log area runs along the bottom.
+The MacHuna window has three rows:
 
-### 3.1 Watch Folder
-
-The Watch Folder is monitored continuously when the service is running. Any compatible file dropped into this folder is automatically detected and converted.
-
-- Set the path using the Browse button or by typing directly
-- TGA sequences must use the Watch Folder - batch convert does not support sequences
-- Files are processed in the order they are detected
-
-> **NOTE** K-Watch naming conventions apply for TGA sequences. See Section 5 for details.
-
-### 3.2 Destination Folder
-
-Converted .SWS files are written here. The folder is created automatically if it does not exist.
-
-- For Watch Folder conversions, this is where .SWS files are placed
-- For Batch Convert, this is also the destination
-- The SWS Player file picker defaults to this folder for convenience
-
-### 3.3 Settings
-
-| Setting | Description |
+| Row | Purpose |
 |---|---|
-| Video Standard | Select the target video standard. 1080p/50 is the most common for UK/European broadcast. All listed standards have been confirmed against K-Watch reference files. If you select an interlaced standard with a progressive source, MacHuna will log a warning -- see Progressive to Interlaced note below. |
-| Split >4GB (FAT32) | Enabled by default. Files larger than 4GB are automatically split into 2GB chunks in the K-Watch split file format. Required for FAT32-formatted USB drives. |
-| Delete source after conversion | If ticked, the source file is deleted after a successful conversion. Off by default. |
-| Ignore alpha/key | If ticked, no key plane is written. The .SWS file contains fill only, with header fields zeroed to match K-Watch no-alpha behaviour. Use for fill-only content. |
-| Include audio | On by default. Audio is extracted and embedded in the .SWS file where present in the source. See Section 6 for audio format details. |
-| Auto play | Sets the Auto Play flag in the SWS header. The Kahuna will begin playback automatically when the clip is loaded. |
-| Loop play | Sets the Loop Play flag in the SWS header. The Kahuna will loop the clip continuously. |
+| **Destination Folder** | Where converted files are written |
+| **Convert** | Open files, choose output format, convert |
+| **Log** | Conversion progress and errors |
 
-### 3.4 Start Watching / Stop / Cancel Batch
-
-The Start Watching button launches the Watch Folder service. MacHuna monitors the Watch Folder in the background and converts files as they arrive. Click Stop to end the service -- this also kills any ffmpeg process currently running, stopping the current conversion immediately.
-
-The Cancel Batch button appears in the main button row and is enabled automatically when a batch conversion is running via Open Files. Clicking it kills the current ffmpeg process and stops the batch after that file. The conversion log is not written if the batch is cancelled.
-
-> **NOTE** The service continues running until Stop is clicked or the application is quit. Quitting MacHuna while the service is running will stop the service cleanly.
-
-> **NOTE — Progressive to Interlaced Conversion:** MacHuna can write an interlaced header for any source file, but it cannot currently produce genuine interlaced pixel data from a progressive source. If you select an interlaced standard (1080i/50, 1080i/59.94, 1080i/60) and the source is progressive, MacHuna will log a warning and continue. The resulting file will load on the Kahuna but will play back at double speed. For correct interlaced output, use a native interlaced source file or convert via K-Watch.
+The Convert row adapts automatically based on what files you open. MacHuna detects the input type and shows only the controls that are relevant.
 
 ---
 
-## 4. Batch Convert
+## 4. Converting Files
 
-Batch Convert allows manual conversion of MOV, MP4, and still image files using a file picker. It is the recommended workflow for converting individual clips and stills outside of a watch folder environment.
+The workflow is the same regardless of what you are converting or what you are converting it to:
 
-### 4.1 Workflow
+1. Set your **Destination Folder**
+2. Click **Open Files…** and select a folder
+3. MacHuna scans the folder, detects the input type, and populates the file list
+4. Choose your **Output** format from the dropdown
+5. Set any options that appear (standard, clip name, field order, etc.)
+6. Click **Convert**
 
-- Set the Destination Folder
-- Set the Start Number - this is the file number assigned to the first converted file. Subsequent files are numbered sequentially.
-- Click Open Files and select one or more files
-- Files are sorted alphabetically and converted in that order
-- A conversion log (.txt) is written to the Destination Folder on completion
-- The Start Number field auto-increments after each batch for back-to-back sessions
+A conversion log is written to the Destination Folder when the batch completes.
 
-> **NOTE** Batch Convert is for MOVs and single-frame stills only. TGA sequences must use the Watch Folder service.
+### 4.1 Input Type Detection
 
-### 4.2 Output Naming
+MacHuna reads the contents of the folder you open and determines the input type automatically:
 
-- Stills: 1.SWS, 2.SWS, 3.SWS ...
-- Clips: 1.SWS, 2.SWS, 3.SWS ...
-- Large files (>4GB): a folder named 1.SWS containing 01_OF_03._XX, 02_OF_03._XX etc.
+| Files found in folder | Detected as | Available outputs |
+|---|---|---|
+| `.SWS` files only | SWS source | Kahuna SWS, Kayenne MOV, Kayenne TGA, Sony TGA |
+| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Sony TGA |
+| TGA sequences and/or stills | TGA / stills source | Kahuna SWS |
+| Mix of SWS and other files | Error — shown in summary | — |
 
-### 4.3 SWS Player Button
+> **NOTE** If you see a "mixed input" error, the folder contains both `.SWS` files and other file types. Move them into separate folders and convert each folder independently.
 
-The SWS Player button opens the built-in preview player. See Section 7 for full details.
+### 4.2 The File List
 
-### 4.4 Hula Button
+The file list shows one entry per item to be converted:
 
-The Hula button opens the Hula SWS Extractor. See Section 8 for full details.
+- **TGA sequences** are collapsed to a single line: `TNTS201  (30 frames)` — you do not need to select individual frames
+- **Video files** appear by filename
+- **Stills** appear by filename
+
+Click entries to select or deselect them. By default, all files are selected.
+
+### 4.3 Numbering
+
+For Kahuna SWS output, the **Start Number** field sets the number assigned to the first output file. Subsequent files are numbered sequentially.
+
+**Use source file number** — tick this when re-converting K-Watch named files (e.g. `TNTS201_30_0001.tga`). MacHuna reads the slot number from the filename rather than the Start Number. Useful when a conversion needs to replace a specific existing slot on the Kahuna.
+
+### 4.4 Cancel
+
+Click **Cancel** during a conversion to stop after the current file. The conversion log is not written if cancelled mid-batch.
 
 ---
 
-## 5. TGA Sequence Conversion
+## 5. Kahuna SWS Output
 
-TGA sequences represent multi-frame clips stored as individual numbered still images. MacHuna converts them to .SWS clips via the Watch Folder service using the ffmpeg concat demuxer.
+When outputting to Kahuna SWS, the following options are available:
 
-### 5.1 Naming Convention
-
-MacHuna uses the K-Watch naming convention to identify TGA sequences. Files must be named:
-
-```
-NAME{NUM}[F][K][A]_{TOTAL}_{SEQ:04d}.TGA
-```
-
-For example: `wipe1FA_53_0001.TGA`, `wipe1FA_53_0002.TGA` ... `wipe1FA_53_0053.TGA`
-
-| Part | Description |
+| Option | Description |
 |---|---|
-| NAME | Clip name prefix (e.g. wipe) |
-| {NUM} | File number (e.g. 1) |
-| [F][K][A] | Optional flags: F=fill, K=key, A=audio |
-| {TOTAL} | Total frame count |
-| {SEQ:04d} | 4-digit zero-padded frame sequence number |
+| **Standard** | Target video standard. 1080p/50 is most common for UK/European broadcast. |
+| **Split >4GB** | On by default. Files over 4GB are split into 2GB FAT32-safe chunks. See Section 10. |
+| **Ignore alpha** | No key plane is written. Output is fill-only, matching K-Watch no-alpha behaviour. Use for fill-only content or when the Kahuna output does not use a downstream keyer. |
+| **Auto play** | Sets the Auto Play flag in the SWS header. The Kahuna begins playback when the clip is loaded. |
+| **Loop play** | Sets the Loop Play flag in the SWS header. The Kahuna loops the clip continuously. |
+| **TGA source interlaced** | See Section 7.2. |
+| **Include audio** | Embeds audio from the source into the .SWS file. Shown only when audio is detected in the source. See Section 8. |
 
-> **IMPORTANT** After the first character of the clip name, avoid using the letters A, F or K in upper case. The parser reads filenames right to left and will interpret them as Audio, Fill or Key flags, causing the sequence to be misidentified.
+### 5.1 Progressive to Interlaced (P→I)
 
-### 5.2 Alpha / Key Handling
+When converting a progressive source to an interlaced standard, MacHuna field-weaves pairs of progressive frames into genuine interlaced frames. The frame count halves — a 50fps progressive source becomes 25fps interlaced output. This is the correct behaviour for the Kahuna.
 
-- If the TGA files contain an alpha channel, the key plane is extracted automatically
+Example: 100 frames of 1080p/50 source → 50 frames of 1080i/50 output.
+
+### 5.2 Interlaced to Progressive (I→P)
+
+When converting an interlaced source to a progressive standard, MacHuna bob-deinterlaces to produce the correct number of progressive frames. Playback speed on the Kahuna is preserved.
+
+Example: 50 frames of 1080i/50 source → 100 frames of 1080p/50 output.
+
+---
+
+## 6. Extraction Outputs — Kayenne and Sony MVS
+
+> **IMPORTANT — Hardware Status**
+> The extraction output paths have been confirmed correct by code analysis. However, Kayenne MOV and Kayenne TGA outputs have **never been loaded on a live Kayenne desk**, and Sony TGA clip naming has **never been verified on a live Sony MVS**. MacHuna will warn you before converting to these targets. Use with that caveat in mind and verify the first import on your desk carefully.
+
+### 6.1 Output Targets
+
+| Output | Format | Destination desk |
+|---|---|---|
+| **Kayenne MOV** | ProRes 4444 with embedded alpha. BT.709. Audio muxed if present. | Grass Valley Kayenne ClipStore / Image Store |
+| **Kayenne TGA** | 32-bit RGBA TGA sequence. Frames numbered `0001.tga` onwards. One subfolder per SWS. | Grass Valley Kayenne Image Store |
+| **Sony TGA** | 32-bit RGBA TGA sequence. Frames numbered `XXXX0000.tga` (4-character clip name + frame number). One subfolder per SWS. | Sony MVS Image Store |
+
+### 6.2 Workflow
+
+1. Open a folder of `.SWS` files
+2. Select the output target from the **Output** dropdown
+3. Set any options shown (Standard, Clip name, Field order, Include audio)
+4. Click **Convert**
+
+### 6.3 Standard (TGA outputs)
+
+For Kayenne TGA and Sony TGA, select the **Standard** matching your target desk's video standard. This determines whether MacHuna applies field-weaving (for interlaced output standards) or extracts frames as-is (for progressive standards).
+
+- **Progressive standard selected:** frames extracted directly from the SWS
+- **Interlaced standard selected:** if the source SWS is already interlaced, frames are passed through. If the source is progressive, pairs of frames are field-woven into interlaced output.
+
+MacHuna logs a note describing what it did for each file.
+
+### 6.4 Field Order (TGA outputs)
+
+A **BFF / TFF** toggle appears for interlaced standards, and always for Sony TGA. BFF (Bottom Field First) is assumed for PAL/50Hz. If you see motion artefacts or comb effects on the desk after import, switch to TFF and reconvert.
+
+### 6.5 Sony TGA — Clip Name
+
+Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
+
+If you are converting multiple distinct clips in one batch, be aware they will all share the same clip name. Convert each clip separately if they need to appear as separate clips on the desk.
+
+### 6.6 Kayenne MOV — Include Audio
+
+If the source `.SWS` files contain audio, an **Include audio** option appears. Tick this to mux the audio into the ProRes MOV output.
+
+### 6.7 Output Structure
+
+| Output | File naming |
+|---|---|
+| Kayenne MOV | `0001.mov`, `0002.mov` … written flat into the Destination Folder |
+| Kayenne TGA | Subfolder per SWS, named after the SWS stem. Frames `0001.tga` … inside. |
+| Sony TGA | Subfolder per SWS, named after the 4-character clip name. Frames `XXXX0000.tga` … inside. |
+
+### 6.8 ProRes 4444 Round-Trip Quality
+
+Converting SWS → Kayenne MOV → SWS involves a YCbCr/RGB/YCbCr colour space round-trip and ProRes encoding. ProRes 4444 is a high-quality intermediate and the generational loss per pass is very small, but it is not lossless. For production use, a single conversion pass is the intended workflow.
+
+---
+
+## 7. TGA Sequences
+
+TGA sequences are multi-frame clips stored as individually numbered still images. MacHuna handles them through the folder browser — you do not need to select individual frames.
+
+### 7.1 In the Folder Browser
+
+When you open a folder containing a TGA sequence, MacHuna collapses the entire sequence to a single entry:
+
+```
+TNTS201  (30 frames)
+```
+
+Select this entry and convert as normal. MacHuna handles the frame ordering automatically.
+
+### 7.2 TGA Source Already Interlaced
+
+If you are re-wrapping TGA frames that were previously extracted from an interlaced SWS (e.g. via MacHuna's extraction outputs), tick **TGA source already interlaced**. This tells MacHuna to pass frames through directly without applying field-weaving. Without this, MacHuna would incorrectly treat the already-interlaced frames as progressive and weave them again.
+
+### 7.3 Alpha Channel
+
+- If TGA files have an alpha channel, the key plane is extracted automatically
 - If no alpha is present and Ignore alpha is off, a solid white key plane is generated
-- If Ignore alpha is ticked, no key plane is written regardless of alpha content
+- If Ignore alpha is ticked, no key plane is written regardless
+
+### 7.4 Audio
+
+Audio is not supported in TGA sequence conversions.
 
 ---
 
-## 6. Audio
+## 8. Audio
 
-MacHuna extracts audio from source files and embeds it in the .SWS file in the K-Watch native format.
+MacHuna extracts audio from source files and embeds it in the `.SWS` file in K-Watch native format.
 
-### 6.1 Audio Format
+### 8.1 Audio Format
 
 | | |
 |---|---|
 | Encoding | 16-bit signed little-endian PCM |
 | Sample rate | 48,000 Hz |
 | Channels | 16 channels interleaved |
-| Channel mapping | Ch1 = Left, Ch3 = Right, all others silent (K-Watch convention) |
-| Samples per frame | 48000 / fps (e.g. 960 at 50fps, 1920 at 25fps) |
+| Channel mapping | Ch1 = Left, Ch3 = Right, all others silent |
+| Samples per frame | 48000 ÷ fps (e.g. 960 samples at 50fps, 1920 at 25fps) |
 
-### 6.2 Notes for Engineers
+The channel mapping (L=Ch1, R=Ch3) matches the K-Watch convention, confirmed by hex analysis of K-Watch reference files. MacHuna uses an explicit ffmpeg pan filter — a straight `-ac 16` upmix does not produce the correct layout.
 
-- Audio is appended after the key plane in the .SWS file
-- The channel mapping (L=Ch1, R=Ch3) is confirmed by hex analysis of K-Watch reference files. A straight ffmpeg -ac 16 upmix is incorrect - MacHuna uses an explicit pan filter.
-- Audio detection in third-party .SWS files uses the audio offset and format flag fields (0x1E8 and 0x1EC). The audio frame size field (0x1C2) is unreliable across workflows and is not used.
-- TGA sequence audio is not supported.
+### 8.2 Notes
+
+- Audio is appended after the key plane in the `.SWS` file
+- If the source has no audio and Include audio is ticked, the option is simply ignored — no error
+- Audio detection in third-party `.SWS` files uses the audio offset and format flag fields (0x1E8 and 0x1EC). The audio frame size field at 0x1C2 is unreliable across workflows and is not used for detection
 
 ---
 
-## 7. SWS Preview Player
+## 9. Video Player
 
-The built-in SWS Player allows preview of any .SWS file directly from MacHuna without needing a Kahuna mainframe. It is launched via the SWS Player button in the Batch Convert row.
+The built-in Video Player lets you check a `.SWS` file — or any supported video — without needing a Kahuna mainframe. Click the **Video Player** button to open it.
 
-### 7.1 Display Layout
+### 9.1 Accepted Inputs
 
-The player shows four panels:
+| Input | Fill / Key / Composite | Audio |
+|---|---|---|
+| `.SWS` | Yes | Yes (if present in file) |
+| `.TGA` sequence (pick any frame) | Yes (if TGAs have alpha) | No |
+| `.MOV`, `.MP4`, `.MXF`, `.MKV`, `.AVI` | Yes (alpha preserved for ProRes 4444 etc.) | Yes |
 
-- **Fill** - the video content plane
-- **Key** - the alpha/key plane (greyscale)
-- **Composite** - fill composited over a chequerboard using the key as alpha, showing transparency
-- **Audio** - VU meters for left and right channels
+When opening a TGA sequence, pick any frame from the sequence — MacHuna loads the whole sequence and prompts for the frame rate (25fps default).
 
-### 7.2 Transport Controls
+### 9.2 Display Layout
+
+| Panel | Content |
+|---|---|
+| **Fill** | The video content plane |
+| **Key** | The alpha/key plane (greyscale) |
+| **Composite** | Fill composited over a chequerboard using the key as alpha — shows transparency |
+| **Audio** | VU meters for left and right channels |
+
+### 9.3 Transport Controls
 
 | Control | Action |
 |---|---|
-| Cue | Return to the first frame |
+| Cue | Jump to the first frame |
 | Play | Begin playback at the clip's native frame rate |
 | Pause | Pause at the current frame |
 | Stop | Stop and return to the first frame |
 
-### 7.3 Notes
+### 9.4 Notes
 
 - Multiple player windows can be open simultaneously
-- The file picker defaults to the configured Destination Folder
-- Audio playback requires sounddevice to be installed (`pip3.12 install sounddevice`). If not installed, the player opens without audio but metering is still shown.
-- Split .SWS files (>4GB, multi-chunk) are not currently supported in the player
+- Split `.SWS` files (>4GB, multi-chunk) cannot currently be previewed
+- Audio playback uses the sounddevice library. If not installed, the player opens without audio but VU meters are still drawn
 
 ---
 
-## 8. Hula SWS Extractor
+## 10. Large File Support (>4GB)
 
-Hula converts .SWS files back to standard media formats for use on other vision mixing desks. It is launched via the Hula button in the Batch Convert row.
+Files larger than 4GB are automatically split into 2GB chunks when **Split >4GB** is enabled (on by default). The split format exactly matches K-Watch output and has been confirmed working on a live Kahuna mainframe.
 
-Hula is also available as a standalone application ([DNSVision/Hula](https://github.com/DNSVision/Hula)) for use on machines without MacHuna.
-
-### 8.1 Output Targets
-
-| Target | Format | Use |
-|---|---|---|
-| Kayenne MOV | ProRes 4444 with embedded alpha channel. BT.709. Audio muxed where present. | Grass Valley Kayenne ClipStore or Image Store |
-| Kayenne TGA | 32-bit RGBA TGA sequence. Frames numbered 0001.tga onwards. Subfolder per clip. | Grass Valley Kayenne Image Store |
-| Sony MVS TGA | 32-bit RGBA TGA sequence. Frames numbered XXXX0000.tga onwards where XXXX is a 4-character clip name. Subfolder per clip. | Sony MVS Image Store |
-
-### 8.2 Workflow
-
-- Set a Destination Folder
-- Select one or more .SWS files using Open Files
-- Select the output target
-- For Sony MVS TGA, enter a 4-character alphanumeric clip name (e.g. WIPE)
-- Click Convert
-
-### 8.3 Output Structure
-
-TGA outputs are written to subfolders named after the source SWS file stem, inside the chosen Destination Folder. MOV outputs are written flat into the Destination Folder, numbered 0001.mov, 0002.mov etc.
-
-### 8.4 Sony MVS Clip Name
-
-The Sony MVS groups all TGA files sharing the same 4-character name prefix into a single clip on import, sorted by the numeric prefix. Import each subfolder separately on the desk to keep clips distinct. All clips in a single Hula batch share the same clip name - a warning is shown in the UI.
-
-### 8.5 Kayenne TGA Notes
-
-Frames are numbered 0001.tga onwards. The first frame must not be 0000 - this is a confirmed Kayenne requirement. The Seq button must be enabled on the desk when loading.
-
-### 8.6 ProRes 4444 Quality
-
-A round trip from .SWS to ProRes MOV and back to .SWS will produce a small amount of image degradation due to the YCbCr/RGB/YCbCr conversion and ProRes encoding. ProRes 4444 is a high-quality intermediate format and the degradation per generation is very small. For production use, a single conversion pass is the intended workflow.
-
----
-
-## 9. Large File Support (>4GB)
-
-Files larger than 4GB are automatically split into 2GB chunks when the Split >4GB option is enabled (on by default). The split format exactly matches K-Watch output and has been confirmed working on a live Kahuna mainframe.
-
-### 9.1 Split File Structure
+### 10.1 Split File Structure
 
 ```
-1.SWS/
-  01_OF_03._XX   (header + video data, exactly 2GB)
+201.SWS/
+  01_OF_03._XX   (512-byte header + video data, exactly 2GB)
   02_OF_03._XX   (video data, exactly 2GB)
   03_OF_03._XX   (video data, remainder)
 ```
 
-- Chunk 1 contains the 512-byte header followed by video data
-- All subsequent chunks contain raw video data only
+- Chunk 1 contains the SWS header followed by video data
+- Subsequent chunks contain raw video data only
 - The header in chunk 1 carries the total frame count across all chunks
 - Audio is not supported in split files
 
-> **NOTE** When transferring to Kahuna via USB, the entire .SWS folder (e.g. 1.SWS/) must be copied, not the individual chunk files.
+> **IMPORTANT** When transferring to a Kahuna via USB, copy the entire `.SWS` folder (e.g. `201.SWS/`), not the individual chunk files inside it.
 
 ---
 
-## 10. SWS Format Reference
+## 11. SWS Format Reference
 
-This section is intended for support engineers and developers. It documents the SWS binary format as reverse-engineered from K-Watch reference files and verified on a live Kahuna mainframe.
+This section is for support engineers and developers. It documents the SWS binary format as reverse-engineered from K-Watch reference files and verified against a live Grass Valley Kahuna mainframe.
 
-### 10.1 File Layout
+### 11.1 File Layout
 
-| Offset | Content |
+| Range | Content |
 |---|---|
-| 0x000 - 0x1FF | 512-byte header (big-endian) |
-| 0x200 - N | Fill plane: v210 big-endian, plane_size x frame_count bytes |
-| N - M | Key plane: v210 big-endian, same size as fill plane (absent if play_count == 0) |
-| M - EOF | Audio data: 16-bit LE PCM, 16ch, 48kHz (absent if audio offset == 0) |
+| `0x000 – 0x1FF` | 512-byte header (big-endian) |
+| `0x200 – N` | Fill plane: v210 big-endian, `plane_size × frame_count` bytes |
+| `N – M` | Key plane: v210 big-endian, same size as fill plane (absent if `play_count == 0`) |
+| `M – EOF` | Audio data: 16-bit LE PCM, 16ch, 48kHz (absent if audio offset == 0) |
 
-### 10.2 Key Header Fields
+### 11.2 Key Header Fields
 
 | Offset | Type | Description |
 |---|---|---|
-| 0x188 | uint32 BE | Video standard code (OR'd with playback flags) |
-| 0x190 | uint32 BE | Width in pixels |
-| 0x194 | uint32 BE | Height in pixels |
-| 0x1A0 | uint32 BE | Plane size (bytes per frame) |
-| 0x1A4 | uint32 BE | Frame count |
-| 0x1A8 | uint32 BE | Play count (= frame count; 0 if no key plane) |
-| 0x1B4 | uint32 BE | (plane_size x frame_count + 512) / 32; 0 if no key |
-| 0x1C2 | uint16 BE | Audio frame size: 0x1680 if audio present (unreliable - do not use for detection) |
-| 0x1CC | uint32 BE | Total file size |
-| 0x1E8 | uint32 BE | Audio data offset / 32 (0 if no audio) |
-| 0x1EC | uint32 BE | Audio format flag: 0x03000000 if audio present |
+| `0x188` | uint32 BE | Video standard code (OR'd with playback flags — see 11.4) |
+| `0x18C` | uint32 BE | Format variant code (unambiguous fps lookup — all nine values are unique) |
+| `0x190` | uint32 BE | Width in pixels |
+| `0x194` | uint32 BE | Height in pixels (fill plane) |
+| `0x1A0` | uint32 BE | Plane size (bytes per frame, fill or key) |
+| `0x1A4` | uint32 BE | Frame count |
+| `0x1A8` | uint32 BE | Play count (= frame count; 0 if no key plane) |
+| `0x1B4` | uint32 BE | `(plane_size × frame_count + 512) / 32`; 0 if no key |
+| `0x1C2` | uint16 BE | Audio frame size — unreliable, do not use for detection |
+| `0x1CC` | uint32 BE | Total file size in bytes |
+| `0x1E8` | uint32 BE | Audio data offset ÷ 32 (0 if no audio) |
+| `0x1EC` | uint32 BE | Audio format flag: `0x03000000` if audio present |
 
-### 10.3 Audio Detection
+### 11.3 Audio Detection
 
-Reliable audio detection: aud_offset (0x1E8) > 0 AND aud_fmt (0x1EC) == 0x03000000. The audio frame size field at 0x1C2 is not reliable - K-Watch writes 0x1680, but third-party tools may write different values.
+Reliable method: `aud_offset (0x1E8) > 0` AND `aud_fmt (0x1EC) == 0x03000000`.
 
-### 10.4 Playback Flags
+Do not rely on the audio frame size field at `0x1C2`. K-Watch writes `0x1680`, but third-party tools may write different values. MacHuna uses the offset and format flag fields for all audio detection.
 
-Bits 2 (0x04) and 3 (0x08) of the low byte at 0x188 are OR'd into the video standard code:
+### 11.4 Playback Flags
 
-- Bit 2 (0x04): Auto Play
-- Bit 3 (0x08): Loop Play
+Bits 2 (`0x04`) and 3 (`0x08`) of the low byte at `0x188` are OR'd into the video standard code:
 
-Example for 1080i50 base code 0x4923: Auto Play only = 0x4927, Loop Play only = 0x492B, both = 0x492F.
+| Flag | Bit | Value |
+|---|---|---|
+| Auto Play | 2 | `0x04` |
+| Loop Play | 3 | `0x08` |
+
+Example for 1080i/50 base code `0x4923`:
+
+| State | Value |
+|---|---|
+| Neither | `0x4923` |
+| Auto Play only | `0x4927` |
+| Loop Play only | `0x492B` |
+| Both | `0x492F` |
+
+### 11.5 Interlaced Flag
+
+Bit 15 (`0x8000`) of `0x188` is set for all interlaced standards. Standard codes for interlaced formats are `0xC923` (1080i/50), `0xC924` (1080i/59.94), `0xC925` (1080i/60). The interlaced flag is OR'd into these automatically.
 
 ---
 
-## 11. Troubleshooting
-
-### Watch Folder not picking up files
-
-- Confirm the service is running (Start Watching button should be greyed out, Stop should be active)
-- Check the file naming convention if converting TGA sequences - files must match the K-Watch pattern
-- Check the Log area for error messages
-
-### Batch Convert not converting
-
-- For Watch Folder conversion, MOV/MP4 filenames must end with a number (e.g. Clip1.mov). This is not required for Batch Convert via Open Files.
-- Check the Destination Folder is set
-- Check the Log for ffmpeg errors
+## 12. Troubleshooting
 
 ### Kahuna showing black key / no key
 
-- If Ignore alpha is ticked, no key plane is written - this is correct behaviour
-- If the source file has no alpha channel and Ignore alpha is off, a solid white key is generated automatically
-- Check source file has a valid alpha channel if a real key is expected
+- If **Ignore alpha** is ticked, no key plane is written — correct behaviour
+- If the source has no alpha channel and Ignore alpha is off, a solid white key is generated automatically
+- If you are expecting a real key but getting white, check your source file has a valid alpha channel
 
 ### Audio not playing on Kahuna
 
-- Confirm Include audio is ticked in Settings
-- Confirm the source file has an audio track
-- Audio is 16-bit LE PCM at 48kHz. If the source is at a different sample rate, ffmpeg resamples automatically
+- Confirm **Include audio** is ticked
+- Confirm the source file has an audio track (MacHuna hides Include audio if no audio is detected)
+- Audio is resampled to 48kHz by ffmpeg if the source is at a different rate — this is automatic
 
 ### File >4GB not loading on Kahuna
 
-- Confirm Split >4GB is enabled
-- Ensure the entire .SWS folder (e.g. 1.SWS/) is copied to the USB drive, not individual chunk files
-- FAT32-formatted USB drives are required for split files
+- Confirm **Split >4GB** is enabled
+- Copy the entire `.SWS` folder to the USB drive, not the individual chunk files inside it
+- The USB drive must be FAT32-formatted
 
-### Hula - MOV not recognised by MacHuna
+### Conversion fails with ffmpeg error
 
-- Hula-generated MOVs use the ProRes 4444 codec with embedded alpha
-- When converting back via MacHuna Batch Convert, ensure the file is named with a trailing number (e.g. Clip1.mov)
-- For Watch Folder conversion, the K-Watch naming convention applies
+- Check the Log area for the ffmpeg error message
+- Confirm the source file is not corrupted — try opening it in another application
+- Confirm the Destination Folder path exists and is writable
+
+### Extraction output not loading on Kayenne or Sony MVS
+
+- Note that Kayenne MOV and Kayenne TGA outputs have not been confirmed on a live Kayenne desk
+- Sony TGA clip naming has not been confirmed on a live Sony MVS
+- Check that the correct Standard is selected for the target desk's video format
+- For Sony TGA: confirm the 4-character clip name matches your expected import workflow
+- For interlaced output: if motion artefacts appear, try switching the Field Order toggle (BFF ↔ TFF)
+
+### TGA sequence not appearing as a single entry in the file list
+
+- Confirm the TGA files are in the same folder with no other file types present
+- MacHuna detects TGA sequences by parsing numbered filenames — files must be numbered sequentially
+
+### File plays at double speed on Kahuna
+
+This can happen if:
+- A progressive source was converted to a Kahuna SWS without using the progressive standard, and there is a mismatch between the frame count and the interlaced header
+- A TGA sequence from an interlaced source was converted without ticking **TGA source already interlaced** — MacHuna field-weaved the already-interlaced frames, halving the frame count again
+
+Check the conversion log for any warnings about P→I or interlaced detection.
 
 ---
 
-## 12. Known Limitations
+## 13. Known Limitations
 
-- Apple Silicon only - Intel Mac builds are not supported
-- Split .SWS files (>4GB) cannot be previewed in the SWS Player
-- TGA sequence audio is not supported
-- HLG Rec.2020 colour space is not implemented (requires a reference HLG .SWS file to verify header values)
-- Sony MVS 50i output is not yet implemented - planned for a future release
-
----
-
-## 13. Related Projects
-
-- [DNSVision/MacHuna](https://github.com/DNSVision/MacHuna)
-- [DNSVision/Hula](https://github.com/DNSVision/Hula) - standalone SWS extractor
+- **Apple Silicon only** — Intel Mac builds are not supported
+- **Split .SWS files** cannot be previewed in the Video Player
+- **TGA sequence audio** is not supported
+- **HLG Rec.2020** colour space is not implemented (requires a reference HLG .SWS file to reverse-engineer the header values)
+- **Extraction outputs unconfirmed on hardware** — Kayenne MOV, Kayenne TGA, and Sony MVS TGA naming have not been verified on live desks. MacHuna will warn you before converting to these targets.
 
 ---
 
