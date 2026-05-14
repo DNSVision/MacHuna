@@ -11,6 +11,7 @@ All notable changes to MacHuna are documented here.
 
 ### Fixed
 - **TGA fps picker dialog unresponsive on macOS.** The frame-rate dialog that appears after selecting a TGA sequence could appear behind the player window or fail to accept clicks. Fixed by calling `transient()` and `grab_set()` after the window is fully rendered, and adding `focus_force()`.
+- **Video Player window title.** Title bar still read "SWS Preview Player" despite the rename in v1.5.33; now correctly shows "Video Player".
 
 ---
 
