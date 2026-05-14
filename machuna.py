@@ -1142,6 +1142,9 @@ class EIFHeader:
         self.video_end   = struct.unpack_from('<I', raw, 0x080)[0]
         self.fps         = 25.0    # not encoded in header; caller sets this
         self.has_key     = False
+        # TODO: locate audio section in .eif tail — files with a companion .eaf and
+        # flags bit 2 set are believed to contain audio; 829,564 bytes follow video_end
+        # in 0003.eif but the boundary between key video and audio is unknown.
         self.has_audio   = False
         self.loop_play   = False
         self.auto_play   = False
