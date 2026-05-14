@@ -1017,7 +1017,7 @@ def parse_filename(filename: str) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────
-#  SWS Preview Player
+#  Video Player
 #  Integrated from SWSPlayer companion app (DNSVision/SWSPlayer).
 #  Launched as a tk.Toplevel child window from the MacHuna GUI.
 # ─────────────────────────────────────────────────────────────
@@ -1599,11 +1599,11 @@ def _player_compute_rms(pcm_bytes: bytes, frame_idx: int, fps: float) -> tuple:
 
 
 class SWSPlayer(tk.Toplevel):
-    """SWS Preview Player window -- launched from MacHuna as a non-modal Toplevel."""
+    """Video Player window -- launched from MacHuna as a non-modal Toplevel."""
 
     def __init__(self, parent, initial_dir: str = ''):
         super().__init__(parent)
-        self.title("SWS Preview Player")
+        self.title("Video Player")
         self.resizable(False, False)
         self._initial_dir = initial_dir
 
@@ -1811,7 +1811,7 @@ class SWSPlayer(tk.Toplevel):
             messagebox.showerror("Invalid File", str(e), parent=self)
             return
 
-        self.title(f"SWS Preview Player — {Path(path).name}")
+        self.title(f"Video Player — {Path(path).name}")
         flags = []
         if header.auto_play:  flags.append("Auto Play")
         if header.loop_play:  flags.append("Loop Play")
@@ -1857,7 +1857,7 @@ class SWSPlayer(tk.Toplevel):
         tga_files = _tga_sequence_files(path)
         n         = len(tga_files)
         folder    = os.path.dirname(os.path.abspath(path))
-        self.title(f"SWS Preview Player — {Path(folder).name}")
+        self.title(f"Video Player — {Path(folder).name}")
         self._info_var.set(f"TGA sequence  {n}frms  {fps}fps — loading...")
         self._status_var.set("Loading TGA frames...")
         self._progress['value'] = 0
@@ -1881,7 +1881,7 @@ class SWSPlayer(tk.Toplevel):
 
     def _load_video(self, path: str):
         self._reset_display()
-        self.title(f"SWS Preview Player — {Path(path).name}")
+        self.title(f"Video Player — {Path(path).name}")
         self._info_var.set("Video — loading...")
         self._status_var.set("Extracting frames...")
         self._progress['value'] = 0
