@@ -4,10 +4,39 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.43 — 2026-05-14
+
+### Added
+- **Kayenne EIF output.** MOV/TGA sequences/SWS files can now be converted to Kayenne `.eif` format. Select "Kayenne EIF" from the Output dropdown. An UNCONFIRMED warning is shown (pending hardware verification on a live Kayenne desk). EIF is always 1920×1080; sources of other sizes are scaled. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps). The output file uses the source filename stem as both filename and clip name.
+
+---
+
+## v1.5.42 — 2026-05-14
+
+### Fixed
+- **EIF frame rate now read from header.** `0x0FC` in the EIF header stores the frame duration in microseconds (40000 µs = 25 fps, 20000 µs = 50 fps). The Video Player no longer prompts for frame rate when opening an EIF file — it is detected automatically.
+- **EIF key channel now correctly reported.** Video Player info bar was showing "Key: No" for EIF files despite always having a key. Fixed by passing `has_key=True` to the player header.
+
+---
+
+## v1.5.41 — 2026-05-14
+
+### Fixed
+- **EIF key/alpha channel now decoded.** `bits[29:20]` of each EIF word is the key level (10-bit limited range: 64=transparent, 940=opaque), not a constant framing marker as previously assumed. For fill clips, this is always 940 (fully opaque). For wipe/key clips, it contains the actual wipe ramp or alpha matte. The Video Player now shows the key in the key panel and the correctly composited image (over chequerboard) in the composite panel.
+
+---
+
+## v1.5.40 — 2026-05-14
+
+### Fixed
+- **EIF colour decode corrected.** EIF pixel format reverse-engineered from real mountain bike footage (UCI DOWNHILL clip). Each 32-bit LE word: bits[29:20]=key, bits[19:10]=Y luma, bits[9:0]=chroma (even columns=Cb, odd=Cr, 4:2:2). Each unit is 360 rows × 1920 columns; three units stack vertically to form 1920×1080. Previous decode treated data as standard v210 groups, forcing the key bits into chroma positions and producing entirely wrong colours (pink/magenta). Fill colours now decode correctly.
+
+---
+
 ## v1.5.39 — 2026-05-14
 
 ### New
-- **EIF playback in Video Player (experimental).** The Video Player now opens Grass Valley Kayenne `.eif` files. EIF is Kayenne's native clip format — v210 little-endian video in a GV-proprietary container. MacHuna reads the header (clip name, frame count, video data offsets), decodes unit 0 of each logical frame triplet, and displays it in the fill panel with full transport controls. The format is partially decoded: the exact role of units 1 and 2 within each triplet (fill bottom / key) is not yet confirmed. No audio support yet; no key plane yet. Frame rate is not encoded in the header — the fps prompt appears on open as with TGA sequences.
+- **EIF playback in Video Player (experimental).** The Video Player now opens Grass Valley Kayenne `.eif` files. EIF is Kayenne's native clip format with a proprietary pixel encoding. MacHuna reads the header (clip name, frame count, video data offsets), decodes all three units per frame, and displays the full 1920×1080 image in the fill panel with full transport controls. No audio or key plane support yet. Frame rate is not encoded in the header — the fps prompt appears on open as with TGA sequences.
 
 ---
 

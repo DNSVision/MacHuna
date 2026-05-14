@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.39"
+VERSION = "1.5.43"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -934,6 +934,328 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
 
 # ─────────────────────────────────────────────────────────────
+#  EIF output converters
+# ─────────────────────────────────────────────────────────────
+
+_EIF_HDR_SIZE   = 18260       # = 0x4754 = video_start
+_EIF_UNIT_ROWS  = 360         # rows per unit
+_EIF_UNIT_COLS  = 1920        # columns (fixed for EIF)
+_EIF_PLANE_SIZE = 5_529_600   # v210 frame bytes at 1920×1080
+
+# 40-byte extension block inside audio strl LIST (identical in all real EIF files).
+# Contains audio format info (48kHz/16-bit/stereo) followed by 'JUNK' FOURCC.
+_EIF_AUDIO_EXT = bytes.fromhex(
+    '0100000080bb000000ee0200040010004c495354'
+    'c4f365006d6f766900000000008000004a554e4b'
+)
+
+
+def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
+    """Build 18260-byte EIF file header (Grass Valley Kayenne format).
+
+    [UNCONFIRMED: generated EIF output pending hardware verification on a live Kayenne]
+    """
+    is_25  = abs(fps - 25.0) <= abs(fps - 50.0)
+    dur_us = 40000 if is_25 else 20000
+    fps_i  = 25    if is_25 else 50
+    flags  = 0x07  if is_25 else 0x03
+    unk064 = 0x84  if is_25 else 0xA4
+    # 8-byte movi chunk identifier (fps-dependent, confirmed from real EIF files)
+    movi_tag = b'RIFFRIFF' if is_25 else b'\x00\x02\x01\x04\x00\x02\x01\x04'
+
+    video_end = _EIF_HDR_SIZE + frame_count * 3 * _EIF_UNIT_BYTES
+
+    buf = bytearray(_EIF_HDR_SIZE)
+
+    # ── EIF-specific metadata section (0x000–0x0DB) ──
+    struct.pack_into('<I', buf, 0x000, 0x0004A5EB)          # magic
+    name_b = clip_name.encode('ascii', errors='replace')[:31]
+    buf[0x004:0x004 + len(name_b)] = name_b                 # clip name
+    struct.pack_into('<I', buf, 0x060, flags)
+    struct.pack_into('<I', buf, 0x064, 0x000104A4 | (unk064 & 0xFF))
+    struct.pack_into('<I', buf, 0x06C, frame_count)
+    struct.pack_into('<I', buf, 0x070, _EIF_HDR_SIZE)        # video_start
+    struct.pack_into('<I', buf, 0x080, video_end)
+    struct.pack_into('<I', buf, 0x0A8, 0x002D0050)           # thumbnail 80×45
+    struct.pack_into('<I', buf, 0x0AC, 1)                    # thumbnail frame count
+    struct.pack_into('<I', buf, 0x0B0, 0x00010000)
+    struct.pack_into('<I', buf, 0x0B4, 0x000000DC)           # AVI RIFF start = 220
+
+    # ── Embedded AVI RIFF (0x0DC–0x4753) ──
+    # RIFF header — size field left as 0 (Kayenne uses EIF fields directly)
+    buf[0x0DC:0x0E4] = b'RIFF\x00\x00\x00\x00'
+    buf[0x0E4:0x0E8] = b'AVI '
+
+    # hdrl LIST: size 0x138 = 312
+    buf[0x0E8:0x0EC] = b'LIST'
+    struct.pack_into('<I', buf, 0x0EC, 0x138)
+    buf[0x0F0:0x0F4] = b'hdrl'
+
+    # avih chunk (56 bytes)
+    buf[0x0F4:0x0F8] = b'avih'
+    struct.pack_into('<I', buf, 0x0F8, 56)
+    struct.pack_into('<I', buf, 0x0FC, dur_us)               # dwMicroSecPerFrame
+    struct.pack_into('<I', buf, 0x100, 0x000C9450)           # dwMaxBytesPerSec
+    struct.pack_into('<I', buf, 0x108, 0x00000810)           # dwFlags
+    struct.pack_into('<I', buf, 0x10C, 1)                    # dwTotalFrames
+    struct.pack_into('<I', buf, 0x114, 2)                    # dwStreams
+    struct.pack_into('<I', buf, 0x118, 0x0015CD68)           # dwSuggestedBufferSize
+    struct.pack_into('<I', buf, 0x11C, 80)                   # dwWidth
+    struct.pack_into('<I', buf, 0x120, 45)                   # dwHeight
+
+    # Video strl LIST: size 0x74 = 116
+    buf[0x134:0x138] = b'LIST'
+    struct.pack_into('<I', buf, 0x138, 0x74)
+    buf[0x13C:0x140] = b'strl'
+    buf[0x140:0x144] = b'strh'
+    struct.pack_into('<I', buf, 0x144, 56)
+    buf[0x148:0x14C] = b'vids'
+    struct.pack_into('<I', buf, 0x15C, 1)                    # dwScale
+    struct.pack_into('<I', buf, 0x160, fps_i)                # dwRate
+    struct.pack_into('<I', buf, 0x168, 1)                    # dwLength (thumbnail)
+    struct.pack_into('<I', buf, 0x16C, 10800)                # dwSuggestedBufferSize
+    struct.pack_into('<H', buf, 0x17C, 80)                   # rcFrame right
+    struct.pack_into('<H', buf, 0x17E, 45)                   # rcFrame bottom
+
+    # Video strf (BITMAPINFOHEADER, 40 bytes)
+    buf[0x180:0x184] = b'strf'
+    struct.pack_into('<I', buf, 0x184, 40)
+    struct.pack_into('<I', buf, 0x188, 40)                   # biSize
+    struct.pack_into('<I', buf, 0x18C, 80)                   # biWidth
+    struct.pack_into('<I', buf, 0x190, 45)                   # biHeight
+    struct.pack_into('<H', buf, 0x194, 1)                    # biPlanes
+    struct.pack_into('<H', buf, 0x196, 24)                   # biBitCount (RGB24)
+    struct.pack_into('<I', buf, 0x19C, 10800)                # biSizeImage
+
+    # Audio strl LIST: size 0x70 = 112
+    buf[0x1B0:0x1B4] = b'LIST'
+    struct.pack_into('<I', buf, 0x1B4, 0x70)
+    buf[0x1B8:0x1BC] = b'strl'
+    buf[0x1BC:0x1C0] = b'strh'
+    struct.pack_into('<I', buf, 0x1C0, 56)
+    buf[0x1C4:0x1C8] = b'auds'
+    buf[0x1C8:0x1CC] = b'    '                              # fccHandler (4 spaces, as in real files)
+    struct.pack_into('<I', buf, 0x1D8, 1)                    # dwScale
+    struct.pack_into('<I', buf, 0x1DC, 48000)                # dwRate
+    struct.pack_into('<I', buf, 0x1E8, 0x10B0)               # dwSuggestedBufferSize
+    struct.pack_into('<I', buf, 0x1F0, 4)                    # dwSampleSize
+
+    # Audio strf (empty)
+    buf[0x1FC:0x200] = b'strf'
+
+    # Audio extension + 'JUNK' FOURCC (40 constant bytes, confirmed from all real EIF files)
+    buf[0x204:0x22C] = _EIF_AUDIO_EXT
+    struct.pack_into('<I', buf, 0x22C, 1696)                 # JUNK size
+
+    # movi LIST: size 0x2A3C = 10812; chunk tag (8 bytes) + 10800-byte black thumbnail
+    buf[0x8D0:0x8D4] = b'LIST'
+    struct.pack_into('<I', buf, 0x8D4, 10812)
+    buf[0x8D8:0x8DC] = b'movi'
+    buf[0x8DC:0x8E4] = movi_tag                             # fps-dependent chunk identifier
+
+    return bytes(buf)
+
+
+def _encode_eif_frame_from_yuv(yuv, key_yuv=None) -> tuple:
+    """Encode float32 YCbCr (1080×1920×3, 10-bit limited range) to EIF unit bytes.
+
+    yuv:     shape (1080, 1920, 3), Y/Cb/Cr in [64, 940/960] range
+    key_yuv: same shape, Y channel used as key (64=transparent, 940=opaque), or None (white)
+    Returns: (unit0_bytes, unit1_bytes, unit2_bytes) each _EIF_UNIT_BYTES long
+    """
+    H, W = 1080, 1920
+    Y  = np.clip(np.round(yuv[:, :, 0]), 64, 940).astype(np.int32)
+    Cb = np.clip(np.round(yuv[:, :, 1]), 64, 960).astype(np.int32)
+    Cr = np.clip(np.round(yuv[:, :, 2]), 64, 960).astype(np.int32)
+    K  = (np.clip(np.round(key_yuv[:, :, 0]), 64, 940).astype(np.int32)
+          if key_yuv is not None else np.full((H, W), 940, dtype=np.int32))
+    C  = np.empty((H, W), dtype=np.int32)
+    C[:, 0::2] = Cb[:, 0::2]   # even columns: Cb
+    C[:, 1::2] = Cr[:, 0::2]   # odd columns: Cr from the even column to the left
+    words = ((K << 20) | (Y << 10) | C).astype(np.dtype('<u4'))
+    data  = words.tobytes()
+    u     = _EIF_UNIT_BYTES
+    return data[:u], data[u:2*u], data[2*u:]
+
+
+def _encode_eif_frame_from_rgba(rgba) -> tuple:
+    """Encode 1080×1920 RGBA (or RGB) uint8 to EIF unit bytes via BT.709 encoding.
+
+    Returns: (unit0_bytes, unit1_bytes, unit2_bytes) each _EIF_UNIT_BYTES long
+    """
+    H, W = 1080, 1920
+    r = rgba[:, :, 0].astype(np.float32) / 255.0
+    g = rgba[:, :, 1].astype(np.float32) / 255.0
+    b = rgba[:, :, 2].astype(np.float32) / 255.0
+    yn  = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    cbn = (b - yn) / 1.8556
+    crn = (r - yn) / 1.5748
+    Y  = np.clip(yn  * 876.0 + 64.0, 64, 940).astype(np.int32)
+    Cb = np.clip(cbn * 896.0 + 512.0, 64, 960).astype(np.int32)
+    Cr = np.clip(crn * 896.0 + 512.0, 64, 960).astype(np.int32)
+    if rgba.shape[2] == 4:
+        K = np.clip(rgba[:, :, 3].astype(np.float32) / 255.0 * 876.0 + 64.0,
+                    64, 940).astype(np.int32)
+    else:
+        K = np.full((H, W), 940, dtype=np.int32)
+    C  = np.empty((H, W), dtype=np.int32)
+    C[:, 0::2] = Cb[:, 0::2]
+    C[:, 1::2] = Cr[:, 0::2]
+    words = ((K << 20) | (Y << 10) | C).astype(np.dtype('<u4'))
+    data  = words.tobytes()
+    u     = _EIF_UNIT_BYTES
+    return data[:u], data[u:2*u], data[2*u:]
+
+
+def _eif_tail(fps: float) -> bytes:
+    """128-byte tail sentinel matching the fps-specific pattern used by real Kayenne files."""
+    pat = b'\x52\x49\x46\x46' if abs(fps - 25.0) <= abs(fps - 50.0) else b'\x00\x02\x01\x04'
+    return pat * 32
+
+
+def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
+                         cancel_event=None) -> str:
+    """Convert a video clip (MOV/MP4/etc.) to Kayenne EIF format.
+
+    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    """
+    log(f"Converting to EIF: {os.path.basename(input_path)}")
+    info   = get_video_info(input_path)
+    fps_in = info['fps']
+    fps    = 25.0 if abs(fps_in - 25.0) <= abs(fps_in - 50.0) else 50.0
+    if abs(fps_in - fps) > 1.0:
+        log(f"  Note: source {fps_in:.3g}fps → EIF {fps:.0f}fps")
+
+    stem      = Path(input_path).stem
+    clip_name = stem[:31].upper()
+    dest_path = os.path.join(dest_dir, stem + '.eif')
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fill_v210 = os.path.join(tmp, 'fill.v210')
+        key_path  = convert_to_v210(input_path, fill_v210,
+                                    width=1920, height=1080,
+                                    extract_alpha=info['has_alpha'])
+        frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
+        if frame_count == 0:
+            raise ValueError("No complete frames extracted from source.")
+
+        log(f"  {info['width']}×{info['height']} @ {fps_in:.3g}fps → "
+            f"EIF 1920×1080 @ {fps:.0f}fps, {frame_count} frame(s)")
+
+        header = _build_eif_header(clip_name, frame_count, fps)
+        key_fh = open(key_path, 'rb') if key_path else None
+        try:
+            with open(dest_path, 'wb') as out, open(fill_v210, 'rb') as fill_fh:
+                out.write(header)
+                for i in range(frame_count):
+                    if cancel_event and cancel_event.is_set():
+                        log("  Cancelled.")
+                        return dest_path
+                    yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                    kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                            if key_fh else None)
+                    u0, u1, u2 = _encode_eif_frame_from_yuv(yuv, kyuv)
+                    out.write(u0); out.write(u1); out.write(u2)
+                    if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                        log(f"  Frame {i + 1}/{frame_count}")
+                out.write(_eif_tail(fps))
+        finally:
+            if key_fh:
+                key_fh.close()
+
+    log(f"  Done → {dest_path}")
+    return dest_path
+
+
+def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
+                             fps: float, log=print, cancel_event=None) -> str:
+    """Convert a TGA sequence to Kayenne EIF format.
+
+    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    """
+    frame_count = len(tga_files)
+    fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
+    dest_path = os.path.join(dest_dir, clip_name + '.eif')
+    log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
+
+    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
+    with open(dest_path, 'wb') as out:
+        out.write(header)
+        for i, path in enumerate(tga_files):
+            if cancel_event and cancel_event.is_set():
+                log("  Cancelled.")
+                return dest_path
+            img = Image.open(path)
+            if img.size != (1920, 1080):
+                img = img.resize((1920, 1080), Image.BILINEAR)
+            img = img.convert('RGBA')
+            rgba = np.array(img)
+            u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+            out.write(u0); out.write(u1); out.write(u2)
+            if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                log(f"  Frame {i + 1}/{frame_count}")
+        out.write(_eif_tail(fps))
+
+    log(f"  Done → {dest_path}")
+    return dest_path
+
+
+def convert_sws_to_eif(sws_path: str, dest_dir: str,
+                        log=print, cancel_event=None) -> str:
+    """Convert a Kahuna SWS clip to Kayenne EIF format.
+
+    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    """
+    h    = HulaSWSHeader(sws_path)
+    log(f"  {h}")
+    fps  = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
+    stem = Path(sws_path).stem
+    dest_path = os.path.join(dest_dir, stem + '.eif')
+    log(f"  {h.frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
+
+    need_resize = (h.width != 1920 or h.height != 1080)
+    if need_resize:
+        log(f"  Scaling {h.width}×{h.height} → 1920×1080")
+
+    header   = _build_eif_header(stem[:31].upper(), h.frame_count, fps)
+    fill_off = SWS_HEADER_SIZE
+    key_off  = SWS_HEADER_SIZE + h.plane_size * h.frame_count
+
+    with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
+        out.write(header)
+        for i in range(h.frame_count):
+            if cancel_event and cancel_event.is_set():
+                log("  Cancelled.")
+                return dest_path
+            sws_fh.seek(fill_off + i * h.plane_size)
+            fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+            key_yuv  = None
+            if h.has_key:
+                sws_fh.seek(key_off + i * h.plane_size)
+                key_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+
+            if need_resize:
+                rgb   = _yuv_to_rgb8(fill_yuv)
+                alpha = _yuv_to_gray8(key_yuv) if key_yuv is not None else None
+                rgb   = np.array(Image.fromarray(rgb, 'RGB').resize((1920, 1080), Image.BILINEAR))
+                if alpha is not None:
+                    alpha = np.array(Image.fromarray(alpha, 'L').resize((1920, 1080), Image.BILINEAR))
+                    rgba  = np.dstack([rgb, alpha])
+                else:
+                    rgba  = np.dstack([rgb, np.full((1080, 1920), 255, np.uint8)])
+                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+            else:
+                u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
+            out.write(u0); out.write(u1); out.write(u2)
+            if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
+                log(f"  Frame {i + 1}/{h.frame_count}")
+        out.write(_eif_tail(fps))
+
+    log(f"  Done → {dest_path}")
+    return dest_path
+
+
+# ─────────────────────────────────────────────────────────────
 #  File naming parser (K-Watch conventions)
 # ─────────────────────────────────────────────────────────────
 
@@ -1125,14 +1447,17 @@ class SWSHeader:
 
 
 class EIFHeader:
-    """Parsed .eif file header (Grass Valley Kayenne format — partially decoded).
-    Unit role within each triplet (fill top / fill bottom / key) is not yet confirmed.
+    """Parsed .eif file header (Grass Valley Kayenne format).
+
+    Confirmed word layout: bits[29:20]=key (10-bit, 64=transparent, 940=opaque),
+    bits[19:10]=Y luma, bits[9:0]=chroma C (even cols=Cb, odd cols=Cr).
+    Three units of 360 rows each stack vertically to form 1920×1080 per frame.
     """
 
     def __init__(self, path: str):
         with open(path, 'rb') as f:
-            raw = f.read(0x090)
-        if len(raw) < 0x090:
+            raw = f.read(0x100)
+        if len(raw) < 0x100:
             raise ValueError("File too small to be a valid EIF file.")
         name_raw         = raw[0x004:0x004 + 32]
         self.clip_name   = name_raw.split(b'\x00')[0].decode('ascii', errors='replace').strip()
@@ -1140,11 +1465,12 @@ class EIFHeader:
         self.frame_count = struct.unpack_from('<I', raw, 0x06C)[0]
         self.video_start = struct.unpack_from('<I', raw, 0x070)[0]
         self.video_end   = struct.unpack_from('<I', raw, 0x080)[0]
-        self.fps         = 25.0    # not encoded in header; caller sets this
-        self.has_key     = False
-        # TODO: locate audio section in .eif tail — files with a companion .eaf and
-        # flags bit 2 set are believed to contain audio; 829,564 bytes follow video_end
-        # in 0003.eif but the boundary between key video and audio is unknown.
+        # 0x0FC: frame duration in microseconds (40000=25fps, 20000=50fps)
+        dur_us           = struct.unpack_from('<I', raw, 0x0FC)[0]
+        self.fps         = round(1_000_000.0 / dur_us, 6) if dur_us else 25.0
+        self.has_key     = True
+        # TODO: locate audio section — companion .eaf files are believed to carry
+        # audio; tail bytes after video_end have not yet been decoded.
         self.has_audio   = False
         self.loop_play   = False
         self.auto_play   = False
@@ -1238,49 +1564,51 @@ def _player_decode_gray(raw_be: bytes, width: int, height: int, frame_count: int
     return arrays
 
 
-_EIF_UNIT_BYTES = 2_764_800  # 1920×540 v210 LE: 540 lines × 5120 bytes/line
+_EIF_UNIT_BYTES = 2_764_800  # 360 rows × 1920 px × 4 bytes/px
 
 
-def _decode_eif_unit_rgb(raw_le: bytes) -> Image.Image:
-    """Decode one v210 LE unit (1920×540) to a PIL RGB Image at PANEL_W×PANEL_H.
-    Displays unit 0 of each logical triplet; units 1 and 2 role not yet confirmed.
+def _decode_eif_frame(u0: bytes, u1: bytes, u2: bytes):
+    """Decode three EIF units → (fill_img, key_img, composite_img) at PANEL_W×PANEL_H.
+
+    EIF word layout (32-bit LE): bits[29:20]=key (10-bit limited, 64=transparent,
+    940=opaque), bits[19:10]=Y luma, bits[9:0]=chroma C (even cols=Cb, odd=Cr, 4:2:2).
+    Three units of 360 rows each stack vertically to form 1920×1080.
     """
-    width, height = 1920, 540
-    words = np.frombuffer(raw_le, dtype='<u4').copy()
-    # 1920×540: line_bytes=5120 (no padding), 1280 words/line, 320 groups/line
-    frame = words.reshape(height, -1)
-    groups = frame.shape[1] // 4
-    frame  = frame[:, :groups * 4].reshape(height, groups, 4)
+    WIDTH, ROWS = 1920, 360
 
-    w0, w1, w2, w3 = frame[:,:,0], frame[:,:,1], frame[:,:,2], frame[:,:,3]
-    cb0 = ((w0 >>  0) & 0x3FF).astype(np.float32)
-    y0  = ((w0 >> 10) & 0x3FF).astype(np.float32)
-    cr0 = ((w0 >> 20) & 0x3FF).astype(np.float32)
-    y1  = ((w1 >>  0) & 0x3FF).astype(np.float32)
-    cb2 = ((w1 >> 10) & 0x3FF).astype(np.float32)
-    y2  = ((w1 >> 20) & 0x3FF).astype(np.float32)
-    cr2 = ((w2 >>  0) & 0x3FF).astype(np.float32)
-    y3  = ((w2 >> 10) & 0x3FF).astype(np.float32)
-    cb4 = ((w2 >> 20) & 0x3FF).astype(np.float32)
-    y4  = ((w3 >>  0) & 0x3FF).astype(np.float32)
-    cr4 = ((w3 >> 10) & 0x3FF).astype(np.float32)
-    y5  = ((w3 >> 20) & 0x3FF).astype(np.float32)
+    def _unit_arrays(raw: bytes):
+        words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH)
+        key = ((words >> 20) & 0x3FF).astype(np.float32)
+        Y   = ((words >> 10) & 0x3FF).astype(np.float32)
+        C   = ((words >>  0) & 0x3FF).astype(np.float32)
+        Cb = np.empty_like(Y); Cr = np.empty_like(Y)
+        Cb[:, 0::2] = C[:, 0::2]
+        Cb[:, 1::2] = C[:, 0:-1:2]   # propagate Cb rightward to odd columns
+        Cr[:, 1::2] = C[:, 1::2]
+        Cr[:, 0::2] = C[:, 1::2]     # propagate Cr leftward to even columns
+        return np.stack([Y, Cb, Cr], axis=2), key
 
-    yuv = np.zeros((height, groups * 6, 3), dtype=np.float32)
-    yuv[:, 0::6, 0] = y0;  yuv[:, 0::6, 1] = cb0; yuv[:, 0::6, 2] = cr0
-    yuv[:, 1::6, 0] = y1;  yuv[:, 1::6, 1] = cb0; yuv[:, 1::6, 2] = cr0
-    yuv[:, 2::6, 0] = y2;  yuv[:, 2::6, 1] = cb2; yuv[:, 2::6, 2] = cr2
-    yuv[:, 3::6, 0] = y3;  yuv[:, 3::6, 1] = cb2; yuv[:, 3::6, 2] = cr2
-    yuv[:, 4::6, 0] = y4;  yuv[:, 4::6, 1] = cb4; yuv[:, 4::6, 2] = cr4
-    yuv[:, 5::6, 0] = y5;  yuv[:, 5::6, 1] = cb4; yuv[:, 5::6, 2] = cr4
+    yuv0, k0 = _unit_arrays(u0)
+    yuv1, k1 = _unit_arrays(u1)
+    yuv2, k2 = _unit_arrays(u2)
 
-    rgb = _yuv_to_rgb8(yuv[:, :width, :])
-    return Image.fromarray(rgb, 'RGB').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+    yuv_full = np.concatenate([yuv0, yuv1, yuv2], axis=0)   # 1080×1920×3
+    key_full = np.concatenate([k0,   k1,   k2  ], axis=0)   # 1080×1920
+
+    fill_rgb = _yuv_to_rgb8(yuv_full)
+    key_8    = np.clip((key_full - 64.0) / 876.0 * 255.0, 0, 255).astype(np.uint8)
+
+    fill_img = Image.fromarray(fill_rgb, 'RGB').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+    key_img  = Image.fromarray(key_8,   'L'  ).resize((PANEL_W, PANEL_H), Image.BILINEAR)
+    key_rs   = np.array(key_img)
+    comp_img = Image.fromarray(_make_composite(np.array(fill_img), key_rs), 'RGB')
+
+    return fill_img, key_img, comp_img
 
 
 def _load_eif_frames(path: str, header, progress_cb=None):
-    """Load EIF frames into a list of [fill_img, None, fill_img].
-    Reads unit 0 of each logical triplet (unit index N*3).
+    """Load EIF frames into a list of [fill_img, key_img, composite_img].
+    Each frame = three 360-row units stacked vertically to form 1920×1080.
     """
     n = header.frame_count
     frames = []
@@ -1289,9 +1617,10 @@ def _load_eif_frames(path: str, header, progress_cb=None):
             if progress_cb:
                 progress_cb(int(i / n * 95), f"Decoding frame {i + 1}/{n}...")
             f.seek(header.video_start + i * 3 * _EIF_UNIT_BYTES)
-            raw = f.read(_EIF_UNIT_BYTES)
-            img = _decode_eif_unit_rgb(raw)
-            frames.append([img, None, img])
+            u0 = f.read(_EIF_UNIT_BYTES)
+            u1 = f.read(_EIF_UNIT_BYTES)
+            u2 = f.read(_EIF_UNIT_BYTES)
+            frames.append(list(_decode_eif_frame(u0, u1, u2)))
     if progress_cb:
         progress_cb(100, "Ready.")
     return frames
@@ -1993,20 +2322,17 @@ class SWSPlayer(tk.Toplevel):
         threading.Thread(target=load, daemon=True).start()
 
     def _load_eif(self, path: str):
-        fps = self._ask_fps(label="Select frame rate for this EIF clip:")
-        if fps is None:
-            return
         self._reset_display()
         try:
             header = EIFHeader(path)
         except Exception as e:
             messagebox.showerror("Invalid File", str(e), parent=self)
             return
-        header.fps = fps
+        fps  = header.fps
         n    = header.frame_count
         name = header.clip_name or Path(path).stem
         self.title(f"Video Player — {name}")
-        self._info_var.set(f"EIF  {name}  {n}frms  {fps}fps — loading...")
+        self._info_var.set(f"EIF  {name}  {n}frms  {fps:.3f}fps — loading...")
         self._status_var.set("Loading EIF frames...")
         self._progress['value'] = 0
         self.update()
@@ -2016,7 +2342,7 @@ class SWSPlayer(tk.Toplevel):
                 self.after(0, lambda: self._on_progress(pct, msg))
             try:
                 frames = _load_eif_frames(path, header, progress)
-                hdr    = _PlayerHeader(fps=fps, frame_count=n, has_key=False)
+                hdr    = _PlayerHeader(fps=fps, frame_count=n, has_key=True)
                 cache  = _GenericFrameCache(path, hdr)
                 cache.frames = frames
                 self.after(0, lambda: self._on_load_complete(cache, hdr))
@@ -3047,6 +3373,7 @@ def launch_gui():
     OUTPUT_KAHUNA_SWS  = "Kahuna SWS"
     OUTPUT_KAYENNE_MOV = "Kayenne MOV"
     OUTPUT_KAYENNE_TGA = "Kayenne TGA"
+    OUTPUT_KAYENNE_EIF = "Kayenne EIF"
     OUTPUT_SONY_TGA    = "Sony TGA"
 
     # ── State ──
@@ -3202,9 +3529,9 @@ def launch_gui():
     def _update_output_options():
         itype = _input_type[0]
         if itype == 'from_sws':
-            opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype == 'mov_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype == 'to_sws_only':
             opts = [OUTPUT_KAHUNA_SWS]
         else:
@@ -3353,6 +3680,14 @@ def launch_gui():
                     "or Sony MVS desk.\n\nProceed anyway?"):
                 return
 
+        # Warning for unconfirmed EIF output
+        if out == OUTPUT_KAYENNE_EIF:
+            if not _ask_confirm(root,
+                    "Kayenne EIF output has not been tested on hardware.\n\n"
+                    "The output may not load correctly on a live Kayenne desk.\n\n"
+                    "Proceed anyway?"):
+                return
+
         if out == OUTPUT_SONY_TGA and len(clip_name_var.get().strip()) != 4:
             messagebox.showerror("Convert",
                                  "Clip name must be exactly 4 characters for Sony TGA output.",
@@ -3434,6 +3769,31 @@ def launch_gui():
                             field_order=field_order_var.get(),
                             log=log)
 
+        def _run_to_eif():
+            fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(std_var.get(), 0x08), 25.0)
+            for item in _selected_items:
+                if batch_cancel_event.is_set():
+                    log("Batch cancelled.")
+                    break
+                try:
+                    if item['type'] == 'tga_seq':
+                        base = item['base'].rstrip('._- ') or 'CLIP'
+                        convert_tga_seq_to_eif(
+                            item['files'], d, base, fps,
+                            log=log, cancel_event=batch_cancel_event)
+                    elif item['type'] == 'clip':
+                        convert_clip_to_eif(
+                            item['path'], d,
+                            log=log, cancel_event=batch_cancel_event)
+                    elif item['type'] == 'sws':
+                        convert_sws_to_eif(
+                            item['path'], d,
+                            log=log, cancel_event=batch_cancel_event)
+                except Exception as e:
+                    import traceback
+                    name = item.get('base') or Path(item.get('path', '')).name
+                    log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
+
         def worker():
             batch_cancel_event.clear()
             root.after(0, lambda: cancel_btn.config(state='normal'))
@@ -3441,6 +3801,8 @@ def launch_gui():
             try:
                 if out == OUTPUT_KAHUNA_SWS:
                     _run_to_sws()
+                elif out == OUTPUT_KAYENNE_EIF:
+                    _run_to_eif()
                 else:
                     _run_from_sws()
             finally:

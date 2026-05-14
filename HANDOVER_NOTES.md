@@ -4,18 +4,41 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.5.41)
+
+### v1.5.41 — EIF key channel decoded; v1.5.40 — EIF colour decode fixed
+
+EIF pixel format fully reverse-engineered from a real mountain bike clip (UCI DOWNHILL WORLD CUP title card, file `0003.eif`).
+
+**Confirmed EIF pixel encoding:**
+- Each 32-bit LE word = one pixel: `bits[29:20]` = constant framing marker (0x3AC = 940 decimal), `bits[19:10]` = Y luma, `bits[9:0]` = chroma C
+- Chroma assignment: **even columns = Cb, odd columns = Cr** (standard 4:2:2 horizontal subsampling)
+- Each unit is **360 rows × 1920 columns** (not 540×1920 as previously assumed)
+- Three units stacked vertically = **1920×1080** complete frame
+
+The previous decode treated the data as standard v210 4-word groups, which forced the constant `0x3AC` framing marker into Cr/Y/Cb positions — producing entirely wrong colours (pink/magenta/wrong-colour output). Images now decode correctly with natural colours.
+
+**v1.5.41 — key channel confirmed:**
+- `bits[29:20]` of every EIF word = key level (10-bit limited: 64=transparent, 940=opaque)
+- For fill clips (e.g. DOWNHILL title card): key is always 940 = fully opaque
+- For wipe/key clips (e.g. 0301.eif): key ramps from 64 to 940 and back, producing the correct wipe matte
+- `EIFHeader.has_key = True` always; fill, key, and composite panels all populated
+
+**Still unknown:**
+- Tail section after `video_end` — suspected audio or some index; not yet decoded
+- Audio: companion `.eaf` files believed to carry audio; `has_audio` remains False for now
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.39)
 
 ### v1.5.39 — EIF playback (experimental)
 
 Grass Valley Kayenne `.eif` format reverse-engineered via hex analysis of a live Kayenne-produced file. Confirmed findings:
 
-- **Container**: GV proprietary header (220 bytes) + RIFF/AVI thumbnail + EIF metadata + pre-video fill + v210 LE video data
+- **Container**: GV proprietary header (220 bytes) + RIFF/AVI thumbnail + EIF metadata + pre-video fill + video data
 - **Header fields** (all little-endian): clip name at `0x004` (null-terminated ASCII), flags at `0x060`, logical frame count at `0x06C`, video start at `0x070`, video end at `0x080`
-- **Video data**: v210 little-endian, 1920×540 per unit, 2,764,800 bytes/unit, logical frame = 3 consecutive units
-- **What's decoded**: unit 0 of each logical triplet displayed in fill panel; full transport works
-- **What's NOT yet decoded**: exact role of units 1 and 2 (fill bottom / key); audio section location; video standard / fps (user prompted on open)
-- **EIF write support**: next step once unit roles are confirmed — would allow MacHuna to write directly to Kayenne without conversion
+- **Video data**: 360 rows × 1920 cols × 4 bytes/pixel, 2,764,800 bytes/unit, 3 units per frame stacked vertically = 1920×1080
 
 ---
 
@@ -205,7 +228,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.37
+- **MacHuna:** v1.5.43
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
