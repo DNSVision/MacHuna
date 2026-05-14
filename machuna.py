@@ -1710,6 +1710,7 @@ class SWSPlayer(tk.Toplevel):
     def _open_file(self):
         path = filedialog.askopenfilename(
             title="Open File",
+            parent=self,
             initialdir=self._initial_dir if self._initial_dir else None,
             filetypes=[
                 ("Supported files",
@@ -1852,7 +1853,7 @@ class SWSPlayer(tk.Toplevel):
         dlg = tk.Toplevel(self)
         dlg.title("Frame Rate")
         dlg.resizable(False, False)
-        dlg.grab_set()
+        dlg.transient(self)
 
         tk.Label(dlg, text="Select frame rate for this TGA sequence:",
                  font=('Helvetica', 12)).pack(padx=16, pady=(16, 8))
@@ -1882,6 +1883,8 @@ class SWSPlayer(tk.Toplevel):
         px = self.winfo_x() + (self.winfo_width()  - dlg.winfo_width())  // 2
         py = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
         dlg.geometry(f"+{px}+{py}")
+        dlg.grab_set()
+        dlg.focus_force()
 
         self.wait_window(dlg)
         return result[0]
