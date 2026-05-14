@@ -4,6 +4,15 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.5.38)
+
+### v1.5.38 — Video Player folder picker + fps dialog fix
+
+- **Video Player folder picker**: Open… in the player now prompts for a folder (not a file). Scans for SWS, TGA sequences, and video files; TGA sequences collapsed to one entry per sequence. Shows a single-select list; double-click or Open loads the item. Mirrors the Convert window's existing folder browser behaviour. If only one item is in the folder, it loads directly.
+- **TGA fps picker fix**: The frame-rate dialog after selecting a TGA sequence could appear behind the window or be unresponsive. Fixed by correctly sequencing `transient()`, `update_idletasks()`, `grab_set()`, and `focus_force()`.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.33)
 
 ### v1.5.33 — Unified format-in / format-out interface

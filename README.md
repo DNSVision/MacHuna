@@ -95,10 +95,12 @@ A conversion log is written to the destination folder on completion.
 
 ### Video Player
 
-Click the **Video Player** button to open the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls. Accepts:
+Click the **Video Player** button to open the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls.
+
+Click **Open…** and select a folder. The player scans the folder and lists all playable items — TGA sequences are shown as one entry per sequence. Double-click or press **Open** to load. Supports:
 
 - **.SWS** — full fill, key, composite, and audio meter display
-- **.TGA** (pick any frame from a sequence) — loads the whole sequence; prompts for frame rate (25fps default); fill, key, and composite shown if the TGAs have an alpha channel
+- **TGA sequences** — prompts for frame rate (25fps default); fill, key, and composite shown if the TGAs have an alpha channel
 - **.MOV, .MP4, .MXF, .MKV, .AVI** — frames extracted via ffmpeg; alpha channel preserved for formats that carry it (e.g. ProRes 4444); audio meters active
 
 ### Large Files (>4GB)

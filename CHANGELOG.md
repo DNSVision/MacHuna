@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.38 — 2026-05-14
+
+### Improved
+- **Video Player now uses folder-based file picker.** Clicking Open… in the Video Player now prompts for a folder rather than an individual file. The player scans the folder and shows a list of all playable items — TGA sequences are collapsed to one entry per sequence (same behaviour as the main Convert window). Double-click or press Open to load; if the folder contains only one item it loads directly without showing the list.
+
+### Fixed
+- **TGA fps picker dialog unresponsive on macOS.** The frame-rate dialog that appears after selecting a TGA sequence could appear behind the player window or fail to accept clicks. Fixed by calling `transient()` and `grab_set()` after the window is fully rendered, and adding `focus_force()`.
+
+---
+
 ## v1.5.37 — 2026-05-14
 
 ### Fixed

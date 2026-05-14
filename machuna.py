@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.37"
+VERSION = "1.5.38"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1699,7 +1699,7 @@ class SWSPlayer(tk.Toplevel):
         # Status / progress
         status_frame = tk.Frame(self)
         status_frame.pack(fill='x', padx=pad, pady=(0, pad))
-        self._status_var = tk.StringVar(value="Open a .SWS, .MOV, .MP4, .MXF or .TGA file to begin.")
+        self._status_var = tk.StringVar(value="Click Open… to select a folder containing SWS, TGA, or video files.")
         tk.Label(status_frame, textvariable=self._status_var,
                  font=('Helvetica', 10), anchor='w').pack(side='left', fill='x', expand=True)
         self._progress = ttk.Progressbar(status_frame, length=200, mode='determinate')
@@ -1708,29 +1708,87 @@ class SWSPlayer(tk.Toplevel):
     # ── File open ────────────────────────────────────────────
 
     def _open_file(self):
-        path = filedialog.askopenfilename(
-            title="Open File",
+        folder = filedialog.askdirectory(
+            title="Select Folder",
             parent=self,
             initialdir=self._initial_dir if self._initial_dir else None,
-            filetypes=[
-                ("Supported files",
-                 "*.SWS *.sws *.tga *.TGA *.mov *.MOV *.mp4 *.MP4 "
-                 "*.mxf *.MXF *.mkv *.MKV *.avi *.AVI"),
-                ("Grass Valley SWS", "*.SWS *.sws"),
-                ("TGA sequence (pick any frame)", "*.tga *.TGA"),
-                ("Video files", "*.mov *.MOV *.mp4 *.MP4 *.mxf *.MXF *.mkv *.MKV *.avi *.AVI"),
-                ("All files", "*.*"),
-            ]
         )
-        if not path:
+        if not folder:
             return
-        ext = Path(path).suffix.lower()
-        if ext == '.sws':
-            self._load_sws(path)
-        elif ext == '.tga':
-            self._load_tga(path)
+        self._initial_dir = folder
+
+        items = _scan_folder_for_player(folder)
+        if not items:
+            messagebox.showinfo("No Supported Files",
+                                "No supported files found in that folder.",
+                                parent=self)
+            return
+
+        if len(items) == 1:
+            self._load_from_item(items[0])
+            return
+
+        chosen = self._pick_from_folder(items, Path(folder).name)
+        if chosen:
+            self._load_from_item(chosen)
+
+    def _pick_from_folder(self, items: list, folder_name: str):
+        """Show a single-select dialog listing all playable items in a folder."""
+        result = [None]
+        dlg = tk.Toplevel(self)
+        dlg.title("Open File")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+
+        ttk.Label(dlg, text=f"Folder: {folder_name}",
+                  font=('Helvetica', 11, 'bold')).pack(anchor='w', padx=8, pady=(8, 4))
+
+        list_frame = ttk.Frame(dlg)
+        list_frame.pack(fill='both', expand=True, padx=8, pady=2)
+        lb = tk.Listbox(list_frame, selectmode='single', height=min(len(items), 16),
+                        width=60, font=('Menlo', 11))
+        sb = ttk.Scrollbar(list_frame, command=lb.yview)
+        lb.config(yscrollcommand=sb.set)
+        lb.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+
+        for item in items:
+            lb.insert('end', '  ' + item['display'])
+        lb.select_set(0)
+
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(fill='x', padx=8, pady=8)
+
+        def ok():
+            sel = lb.curselection()
+            if sel:
+                result[0] = items[sel[0]]
+            dlg.destroy()
+
+        def cancel():
+            dlg.destroy()
+
+        ttk.Button(btn_frame, text="Cancel", command=cancel).pack(side='right', padx=4)
+        ttk.Button(btn_frame, text="Open",   command=ok).pack(side='right', padx=4)
+        lb.bind('<Double-1>', lambda _e: ok())
+
+        dlg.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width()  - dlg.winfo_width())  // 2
+        py = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{px}+{py}")
+        dlg.grab_set()
+        dlg.focus_force()
+
+        self.wait_window(dlg)
+        return result[0]
+
+    def _load_from_item(self, item: dict):
+        if item['type'] == 'sws':
+            self._load_sws(item['path'])
+        elif item['type'] == 'tga_seq':
+            self._load_tga(item['files'][0])
         else:
-            self._load_video(path)
+            self._load_video(item['path'])
 
     def _reset_display(self):
         self._on_stop()
@@ -2672,6 +2730,42 @@ def _scan_folder_for_items(folder: str) -> list:
             'source_num': meta['file_num'] if meta else None,
             'display': fname,
         })
+
+    return items
+
+
+def _scan_folder_for_player(folder: str) -> list:
+    """Scan folder for files the player can open. TGA sequences collapsed to one entry."""
+    video_exts = {'.mov', '.mp4', '.avi', '.mxf', '.mkv'}
+    sequences  = _find_tga_sequences(folder)
+    seq_frames = {f for _, files in sequences for f in files}
+    items = []
+
+    for fname in sorted(os.listdir(folder)):
+        fpath = os.path.join(folder, fname)
+        if not os.path.isfile(fpath):
+            continue
+        if Path(fname).suffix.lower() == '.sws':
+            try:
+                h = HulaSWSHeader(fpath)
+                tc = _fmt_timecode(h.frame_count, h.fps)
+                display = f"{fname:<28}  {h.standard}  {h.frame_count}fr  {tc}"
+            except Exception:
+                display = fname
+            items.append({'type': 'sws', 'path': fpath, 'display': display})
+
+    for base, files in sequences:
+        items.append({
+            'type': 'tga_seq', 'files': files,
+            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
+        })
+
+    for fname in sorted(os.listdir(folder)):
+        fpath = os.path.join(folder, fname)
+        if not os.path.isfile(fpath):
+            continue
+        if Path(fname).suffix.lower() in video_exts and fpath not in seq_frames:
+            items.append({'type': 'clip', 'path': fpath, 'display': fname})
 
     return items
 
