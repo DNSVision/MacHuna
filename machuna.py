@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.43"
+VERSION = "1.6.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1114,7 +1114,7 @@ def _eif_tail(fps: float) -> bytes:
 
 
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
-                         cancel_event=None) -> str:
+                         cancel_event=None, out_name: str = None) -> str:
     """Convert a video clip (MOV/MP4/etc.) to Kayenne EIF format.
 
     [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
@@ -1128,7 +1128,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
 
     stem      = Path(input_path).stem
     clip_name = stem[:31].upper()
-    dest_path = os.path.join(dest_dir, stem + '.eif')
+    dest_path = os.path.join(dest_dir, (out_name or stem) + '.eif')
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_v210 = os.path.join(tmp, 'fill.v210')
@@ -1168,40 +1168,104 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
 
 
 def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
-                             fps: float, log=print, cancel_event=None) -> str:
+                             fps: float, log=print, cancel_event=None,
+                             out_name: str = None,
+                             source_interlaced: bool = False) -> str:
     """Convert a TGA sequence to Kayenne EIF format.
 
     [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
     """
-    frame_count = len(tga_files)
     fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
-    dest_path = os.path.join(dest_dir, clip_name + '.eif')
-    log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
+    dest_path = os.path.join(dest_dir, (out_name or clip_name) + '.eif')
 
-    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
-    with open(dest_path, 'wb') as out:
-        out.write(header)
-        for i, path in enumerate(tga_files):
-            if cancel_event and cancel_event.is_set():
-                log("  Cancelled.")
-                return dest_path
-            img = Image.open(path)
-            if img.size != (1920, 1080):
-                img = img.resize((1920, 1080), Image.BILINEAR)
-            img = img.convert('RGBA')
-            rgba = np.array(img)
-            u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
-            out.write(u0); out.write(u1); out.write(u2)
-            if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                log(f"  Frame {i + 1}/{frame_count}")
-        out.write(_eif_tail(fps))
+    if source_interlaced:
+        # Interlaced source → duplicate each frame for 25fps→50fps progressive output
+        fps_out = 50.0
+        info = get_video_info(tga_files[0])
+        has_alpha = info['has_alpha']
+        log(f"Converting TGA sequence to EIF (interlaced→progressive): "
+            f"{len(tga_files)} frame(s) @ {fps_out:.0f}fps → {os.path.basename(dest_path)}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            concat_file = os.path.join(tmp, 'concat.txt')
+            with open(concat_file, 'w') as cf:
+                for tga in tga_files:
+                    cf.write(f"file '{tga}'\n")
+                    cf.write(f"file '{tga}'\n")  # duplicate for i→p
+
+            fill_v210 = os.path.join(tmp, 'fill.v210')
+            ffmpeg = _get_ffmpeg_path('ffmpeg')
+            vf = 'scale=1920:1080' if info['width'] != 1920 or info['height'] != 1080 else None
+            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
+            if vf:
+                cmd += ['-vf', vf]
+            cmd += ['-colorspace', 'bt709', '-color_range', 'tv',
+                    '-f', 'rawvideo', '-vcodec', 'v210', fill_v210]
+            _run_ffmpeg(cmd, check=True)
+            _byteswap_v210(fill_v210)
+
+            key_v210 = None
+            if has_alpha:
+                key_v210 = os.path.join(tmp, 'key.v210')
+                vf_key = 'alphaextract'
+                if vf:
+                    vf_key = f'{vf_key},{vf}'
+                cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
+                           '-vf', vf_key, '-f', 'rawvideo', '-vcodec', 'v210', key_v210]
+                if _run_ffmpeg(cmd_key).returncode != 0:
+                    key_v210 = None
+                else:
+                    _byteswap_v210(key_v210)
+
+            frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
+            header = _build_eif_header(clip_name[:31].upper(), frame_count, fps_out)
+            key_fh = open(key_v210, 'rb') if key_v210 else None
+            try:
+                with open(dest_path, 'wb') as out_fh, open(fill_v210, 'rb') as fill_fh:
+                    out_fh.write(header)
+                    for i in range(frame_count):
+                        if cancel_event and cancel_event.is_set():
+                            log("  Cancelled.")
+                            return dest_path
+                        yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                        kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                                if key_fh else None)
+                        u0, u1, u2 = _encode_eif_frame_from_yuv(yuv, kyuv)
+                        out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
+                        if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                            log(f"  Frame {i + 1}/{frame_count}")
+                    out_fh.write(_eif_tail(fps_out))
+            finally:
+                if key_fh:
+                    key_fh.close()
+    else:
+        # Progressive source — fast PIL path
+        frame_count = len(tga_files)
+        log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
+        header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
+        with open(dest_path, 'wb') as out_fh:
+            out_fh.write(header)
+            for i, path in enumerate(tga_files):
+                if cancel_event and cancel_event.is_set():
+                    log("  Cancelled.")
+                    return dest_path
+                img = Image.open(path)
+                if img.size != (1920, 1080):
+                    img = img.resize((1920, 1080), Image.BILINEAR)
+                img = img.convert('RGBA')
+                rgba = np.array(img)
+                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+                out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
+                if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                    log(f"  Frame {i + 1}/{frame_count}")
+            out_fh.write(_eif_tail(fps))
 
     log(f"  Done → {dest_path}")
     return dest_path
 
 
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
-                        log=print, cancel_event=None) -> str:
+                        log=print, cancel_event=None, out_name: str = None) -> str:
     """Convert a Kahuna SWS clip to Kayenne EIF format.
 
     [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
@@ -1210,7 +1274,7 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     log(f"  {h}")
     fps  = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
     stem = Path(sws_path).stem
-    dest_path = os.path.join(dest_dir, stem + '.eif')
+    dest_path = os.path.join(dest_dir, (out_name or stem) + '.eif')
     log(f"  {h.frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
 
     need_resize = (h.width != 1920 or h.height != 1080)
@@ -1250,6 +1314,107 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
             if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
                 log(f"  Frame {i + 1}/{h.frame_count}")
         out.write(_eif_tail(fps))
+
+    log(f"  Done → {dest_path}")
+    return dest_path
+
+
+def _eif_frame_to_v210be(u0: bytes, u1: bytes, u2: bytes):
+    """Convert 3 EIF units to v210 BE (fill, key) for one 1920×1080 frame."""
+    import numpy as np
+    ROWS, WIDTH, G = 360, 1920, 320  # G = 1920/6 v210 groups per row
+
+    fill_chunks = []
+    key_chunks  = []
+    for raw in (u0, u1, u2):
+        words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH).astype(np.uint32)
+        K = (words >> 20) & 0x3FF
+        Y = (words >> 10) & 0x3FF
+        C = (words >>  0) & 0x3FF
+
+        Y = Y.reshape(ROWS, G, 6)
+        C = C.reshape(ROWS, G, 6)  # C[:,g,0]=Cb0, C[:,g,1]=Cr0, C[:,g,2]=Cb2, …
+        K = K.reshape(ROWS, G, 6)
+
+        Cb0, Cr0 = C[:,:,0], C[:,:,1]
+        Cb2, Cr2 = C[:,:,2], C[:,:,3]
+        Cb4, Cr4 = C[:,:,4], C[:,:,5]
+        Y0,Y1,Y2,Y3,Y4,Y5 = Y[:,:,0],Y[:,:,1],Y[:,:,2],Y[:,:,3],Y[:,:,4],Y[:,:,5]
+
+        w0 = Cb0 | (Y0 << 10) | (Cr0 << 20)
+        w1 = Y1  | (Cb2 << 10) | (Y2 << 20)
+        w2 = Cr2 | (Y3 << 10)  | (Cb4 << 20)
+        w3 = Y4  | (Cr4 << 10) | (Y5 << 20)
+        fill_le = np.stack([w0,w1,w2,w3], axis=2).reshape(ROWS, G*4).astype('<u4')
+        fill_chunks.append(fill_le.byteswap().tobytes())
+
+        KY0,KY1,KY2,KY3,KY4,KY5 = K[:,:,0],K[:,:,1],K[:,:,2],K[:,:,3],K[:,:,4],K[:,:,5]
+        KC = np.full((ROWS, G), 512, dtype=np.uint32)
+        kw0 = KC  | (KY0 << 10) | (KC  << 20)
+        kw1 = KY1 | (KC  << 10) | (KY2 << 20)
+        kw2 = KC  | (KY3 << 10) | (KC  << 20)
+        kw3 = KY4 | (KC  << 10) | (KY5 << 20)
+        key_le = np.stack([kw0,kw1,kw2,kw3], axis=2).reshape(ROWS, G*4).astype('<u4')
+        key_chunks.append(key_le.byteswap().tobytes())
+
+    return b''.join(fill_chunks), b''.join(key_chunks)
+
+
+def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
+                        video_standard: str = '1080p25',
+                        split_fat32: bool = True,
+                        log=print, cancel_event=None) -> str:
+    """Convert a Kayenne EIF clip to Kahuna SWS format.
+
+    video_standard is ignored — standard is derived from EIF fps (25→1080p25, 50→1080p50)
+    so the SWS frame rate always matches the source EIF.
+    """
+    h = EIFHeader(eif_path)
+    # Auto-derive standard from EIF fps — EIF is always 1920×1080 progressive
+    video_standard = '1080p50' if abs(h.fps - 50.0) < 1.0 else '1080p25'
+    log(f"Converting EIF to SWS: {os.path.basename(eif_path)}")
+    log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps → {video_standard}")
+
+    frame_count = h.frame_count
+    plane_size  = _EIF_PLANE_SIZE  # 1920×1080 v210
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fill_path = os.path.join(tmp, 'fill.v210')
+        key_path  = os.path.join(tmp, 'key.v210')
+
+        with open(eif_path, 'rb') as eif_fh, \
+             open(fill_path, 'wb') as fill_fh, \
+             open(key_path,  'wb') as key_fh:
+            for i in range(frame_count):
+                if cancel_event and cancel_event.is_set():
+                    log("  Cancelled.")
+                    return ''
+                eif_fh.seek(h.video_start + i * 3 * _EIF_UNIT_BYTES)
+                u0 = eif_fh.read(_EIF_UNIT_BYTES)
+                u1 = eif_fh.read(_EIF_UNIT_BYTES)
+                u2 = eif_fh.read(_EIF_UNIT_BYTES)
+                fill_be, key_be = _eif_frame_to_v210be(u0, u1, u2)
+                fill_fh.write(fill_be)
+                key_fh.write(key_be)
+                if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                    log(f"  Frame {i + 1}/{frame_count}")
+
+        clip_name = h.clip_name or Path(eif_path).stem
+        hdr = build_sws_header(
+            source_filename=os.path.basename(eif_path),
+            clip_name=clip_name,
+            width=1920, height=1080,
+            frame_count=frame_count,
+            plane_size=plane_size,
+            video_standard=video_standard,
+            is_still=(frame_count == 1),
+            fps=h.fps,
+            has_audio=False,
+            has_key=True,
+        )
+        dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
+        write_sws(dest_path, fill_path, key_path, hdr, split_fat32,
+                  frame_count=frame_count, log=log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -1624,6 +1789,36 @@ def _load_eif_frames(path: str, header, progress_cb=None):
     if progress_cb:
         progress_cb(100, "Ready.")
     return frames
+
+
+def _decode_eif_frame_rgba(u0: bytes, u1: bytes, u2: bytes):
+    """Decode three EIF units → full-res 1920×1080 RGBA PIL image."""
+    import numpy as np
+    WIDTH, ROWS = 1920, 360
+
+    def _unit_arrays(raw):
+        words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH)
+        key = ((words >> 20) & 0x3FF).astype(np.float32)
+        Y   = ((words >> 10) & 0x3FF).astype(np.float32)
+        C   = ((words >>  0) & 0x3FF).astype(np.float32)
+        Cb = np.empty_like(Y); Cr = np.empty_like(Y)
+        Cb[:, 0::2] = C[:, 0::2]
+        Cb[:, 1::2] = C[:, 0:-1:2]
+        Cr[:, 1::2] = C[:, 1::2]
+        Cr[:, 0::2] = C[:, 1::2]
+        return np.stack([Y, Cb, Cr], axis=2), key
+
+    yuv0, k0 = _unit_arrays(u0)
+    yuv1, k1 = _unit_arrays(u1)
+    yuv2, k2 = _unit_arrays(u2)
+
+    yuv_full = np.concatenate([yuv0, yuv1, yuv2], axis=0)
+    key_full = np.concatenate([k0,   k1,   k2  ], axis=0)
+
+    fill_rgb = _yuv_to_rgb8(yuv_full)
+    key_8    = np.clip((key_full - 64.0) / 876.0 * 255.0, 0, 255).astype(np.uint8)
+    rgba     = np.dstack([fill_rgb, key_8])
+    return Image.fromarray(rgba, 'RGBA')
 
 
 _CHECKER = None
@@ -2122,29 +2317,24 @@ class SWSPlayer(tk.Toplevel):
     # ── File open ────────────────────────────────────────────
 
     def _open_file(self):
-        folder = filedialog.askdirectory(
-            title="Select Folder",
+        path = filedialog.askopenfilename(
+            title="Open File",
             parent=self,
             initialdir=self._initial_dir if self._initial_dir else None,
         )
-        if not folder:
+        if not path:
             return
-        self._initial_dir = folder
+        self._initial_dir = str(Path(path).parent)
 
-        items = _scan_folder_for_player(folder)
-        if not items:
-            messagebox.showinfo("No Supported Files",
-                                "No supported files found in that folder.",
-                                parent=self)
-            return
-
-        if len(items) == 1:
-            self._load_from_item(items[0])
-            return
-
-        chosen = self._pick_from_folder(items, Path(folder).name)
-        if chosen:
-            self._load_from_item(chosen)
+        ext = Path(path).suffix.lower()
+        if ext == '.sws':
+            self._load_sws(path)
+        elif ext == '.eif':
+            self._load_eif(path)
+        elif ext == '.tga':
+            self._load_tga(path)
+        else:
+            self._load_video(path)
 
     def _pick_from_folder(self, items: list, folder_name: str):
         """Show a single-select dialog listing all playable items in a folder."""
@@ -2235,7 +2425,7 @@ class SWSPlayer(tk.Toplevel):
         std = header.standard.replace('/', '')
         tc  = _fmt_timecode(header.frame_count, header.fps)
         self._info_var.set(
-            f"{std}  {header.frame_count}frms  {tc}  "
+            f"SWS  {std}  {header.frame_count}frms  {tc}  "
             f"Key: {'Yes' if header.has_key else 'No'}  "
             f"Audio: {'Yes' if header.has_audio else 'No'}"
             f"{flags_str}"
@@ -2274,6 +2464,7 @@ class SWSPlayer(tk.Toplevel):
         n         = len(tga_files)
         folder    = os.path.dirname(os.path.abspath(path))
         self.title(f"Video Player — {Path(folder).name}")
+        self._format_label = "TGA"
         self._info_var.set(f"TGA sequence  {n}frms  {fps}fps — loading...")
         self._status_var.set("Loading TGA frames...")
         self._progress['value'] = 0
@@ -2298,6 +2489,7 @@ class SWSPlayer(tk.Toplevel):
     def _load_video(self, path: str):
         self._reset_display()
         self.title(f"Video Player — {Path(path).name}")
+        self._format_label = Path(path).suffix.upper().lstrip('.')
         self._info_var.set("Video — loading...")
         self._status_var.set("Extracting frames...")
         self._progress['value'] = 0
@@ -2332,6 +2524,7 @@ class SWSPlayer(tk.Toplevel):
         n    = header.frame_count
         name = header.clip_name or Path(path).stem
         self.title(f"Video Player — {name}")
+        self._format_label = "EIF"
         self._info_var.set(f"EIF  {name}  {n}frms  {fps:.3f}fps — loading...")
         self._status_var.set("Loading EIF frames...")
         self._progress['value'] = 0
@@ -2421,8 +2614,10 @@ class SWSPlayer(tk.Toplevel):
         if isinstance(header, _PlayerHeader):
             tc      = _fmt_timecode(n, header.fps)
             fps_str = f"{header.fps:.3f}".rstrip('0').rstrip('.')
+            fmt     = getattr(self, '_format_label', '')
+            prefix  = f"{fmt}  " if fmt else ""
             self._info_var.set(
-                f"{fps_str}fps  {n}frms  {tc}  "
+                f"{prefix}{fps_str}fps  {n}frms  {tc}  "
                 f"Key: {'Yes' if header.has_key else 'No'}  Audio: {'Yes' if header.has_audio else 'No'}"
             )
 
@@ -2795,6 +2990,84 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
     return dest_dir
 
 
+def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
+                              target: str = None, clip_name: str = 'WIPE',
+                              log=print):
+    """Convert one EIF file to a Kayenne or Sony TGA sequence subfolder."""
+    if target is None:
+        target = HULA_TARGET_KAYENNE_TGA
+    h    = EIFHeader(eif_path)
+    stem = Path(eif_path).stem
+    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    dest_dir = os.path.join(dest_parent, folder)
+    os.makedirs(dest_dir, exist_ok=True)
+    cn = clip_name.upper()[:4].ljust(4)
+    log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
+    log(f"  Decoding {h.frame_count} frame(s)...")
+    with open(eif_path, 'rb') as f:
+        for i in range(h.frame_count):
+            f.seek(h.video_start + i * 3 * _EIF_UNIT_BYTES)
+            u0 = f.read(_EIF_UNIT_BYTES)
+            u1 = f.read(_EIF_UNIT_BYTES)
+            u2 = f.read(_EIF_UNIT_BYTES)
+            rgba_img = _decode_eif_frame_rgba(u0, u1, u2)
+            filename = f"{cn}{i:04d}.tga" if target == HULA_TARGET_SONY_TGA else f"{i + 1:04d}.tga"
+            rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
+            if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
+                log(f"  Frame {i + 1}/{h.frame_count}")
+    log(f"  Done → {dest_dir}  ({h.frame_count} TGA files)")
+    return dest_dir
+
+
+def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
+                                          target: str = None,
+                                          clip_name: str = 'WIPE',
+                                          field_order: str = 'BFF', log=print):
+    """Convert a 50fps EIF to an interlaced TGA sequence by field-weaving frame pairs."""
+    if target is None:
+        target = HULA_TARGET_KAYENNE_TGA
+    h = EIFHeader(eif_path)
+    if h.fps < 48.0:
+        raise ValueError(
+            f"{Path(eif_path).name} is {h.fps:.0f}fps — "
+            f"interlaced output requires a 50fps source."
+        )
+    stem      = Path(eif_path).stem
+    folder    = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    dest_dir  = os.path.join(dest_parent, folder)
+    os.makedirs(dest_dir, exist_ok=True)
+    cn        = clip_name.upper()[:4].ljust(4)
+    n         = h.frame_count
+    out_count = n // 2
+    if n % 2:
+        log(f"  Warning: odd frame count ({n}) — last source frame skipped")
+    log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
+    log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
+
+    import numpy as np
+    with open(eif_path, 'rb') as f:
+        for i in range(out_count):
+            rgba_frames = []
+            for j in (2 * i, 2 * i + 1):
+                f.seek(h.video_start + j * 3 * _EIF_UNIT_BYTES)
+                u0 = f.read(_EIF_UNIT_BYTES)
+                u1 = f.read(_EIF_UNIT_BYTES)
+                u2 = f.read(_EIF_UNIT_BYTES)
+                rgba_frames.append(np.array(_decode_eif_frame_rgba(u0, u1, u2)))
+            a, b = rgba_frames
+            out = np.empty_like(a)
+            if field_order == 'TFF':
+                out[0::2] = a[0::2]; out[1::2] = b[1::2]
+            else:  # BFF
+                out[1::2] = a[1::2]; out[0::2] = b[0::2]
+            filename = f"{cn}{i:04d}.tga" if target == HULA_TARGET_SONY_TGA else f"{i + 1:04d}.tga"
+            Image.fromarray(out, 'RGBA').save(os.path.join(dest_dir, filename), format='TGA')
+            if (i + 1) % 10 == 0 or i + 1 == out_count:
+                log(f"  Frame {i + 1}/{out_count}")
+    log(f"  Done → {dest_dir}  ({out_count} TGA files)")
+    return dest_dir
+
+
 def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
                                   target: str = HULA_TARGET_SONY_TGA,
                                   clip_name: str = 'WIPE',
@@ -3000,7 +3273,16 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
         log(f"\n[{idx}/{len(input_paths)}] {os.path.basename(path)}")
         try:
             ext = Path(path).suffix.lower()
-            if ext == '.mov':
+            if ext == '.eif':
+                if interlaced:
+                    _hula_convert_eif_to_tga_interlaced(
+                        path, dest_dir, target=target,
+                        clip_name=clip_name, field_order=field_order, log=log)
+                else:
+                    _hula_convert_eif_to_tga(
+                        path, dest_dir, target=target,
+                        clip_name=clip_name, log=log)
+            elif ext == '.mov':
                 if target == HULA_TARGET_KAYENNE_MOV:
                     raise ValueError(
                         "MOV input is not supported for Kayenne MOV output. "
@@ -3075,6 +3357,7 @@ def _scan_folder_unified(folder: str) -> tuple:
     seq_frames   = {f for _, files in sequences for f in files}
 
     sws_items = []
+    eif_items = []
     vid_items = []
     still_items = []
 
@@ -3091,6 +3374,14 @@ def _scan_folder_unified(folder: str) -> tuple:
             except Exception:
                 display = fname
             sws_items.append({'type': 'sws', 'path': fpath,
+                               'display': display, 'source_num': None})
+        elif ext == '.eif':
+            try:
+                h = EIFHeader(fpath)
+                display = f"{fname:<28}  EIF  {h.frame_count}fr  {h.fps:.0f}fps"
+            except Exception:
+                display = fname
+            eif_items.append({'type': 'eif', 'path': fpath,
                                'display': display, 'source_num': None})
         elif ext in video_exts and fpath not in seq_frames:
             meta = parse_filename(fname)
@@ -3113,9 +3404,15 @@ def _scan_folder_unified(folder: str) -> tuple:
         })
 
     has_sws    = bool(sws_items)
+    has_eif    = bool(eif_items)
     has_vid    = bool(vid_items)
     has_stills = bool(still_items)
     has_seqs   = bool(seq_items)
+
+    if has_eif and not has_vid and not has_stills and not has_seqs:
+        if has_sws:
+            return eif_items + sws_items, 'mixed_eif_sws', False, False
+        return eif_items, 'from_eif', False, False
 
     if has_sws and (has_vid or has_stills or has_seqs):
         return [], 'mixed_error', False, False
@@ -3288,7 +3585,8 @@ def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
             f.write(f"Standard: {standard}\n")
             f.write(f"{'=' * 40}\n\n")
             for fnum, name, status in results:
-                f.write(f"{fnum:4d}  {name:<{max_len}}  [{status}]\n")
+                fnum_str = fnum if isinstance(fnum, str) else f"{fnum:4d}"
+                f.write(f"{fnum_str}  {name:<{max_len}}  [{status}]\n")
         log_fn(f"Conversion log saved: {log_filename}")
     except Exception as e:
         log_fn(f"  Could not write log file: {e}")
@@ -3392,6 +3690,7 @@ def launch_gui():
     source_interlaced_var = tk.BooleanVar(value=False)
     start_num_var         = tk.IntVar(value=1)
     use_source_num_var    = tk.BooleanVar(value=False)
+    eif_slot_var          = tk.StringVar(value='0001')
     clip_name_var         = tk.StringVar(value='WIPE')
     field_order_var       = tk.StringVar(value='BFF')
     output_var            = tk.StringVar()
@@ -3470,6 +3769,13 @@ def launch_gui():
     ttk.Checkbutton(frm_row_hula_mov, text="Include audio",
                     variable=include_audio_var).pack(side='left', **pad)
 
+    frm_row_eif = tk.Frame(frm_convert)
+    ttk.Label(frm_row_eif, text="Start slot:").pack(side='left', padx=(8, 4), pady=4)
+    ttk.Spinbox(frm_row_eif, from_=1, to=9999, textvariable=eif_slot_var,
+                format='%04.0f', width=6).pack(side='left', pady=4)
+    ttk.Label(frm_row_eif, text="(output named 0001.eif, 0002.eif … increments per clip)",
+              foreground='#888888').pack(side='left', padx=(8, 0), pady=4)
+
     # Action row
     batch_cancel_event = threading.Event()
     cancel_btn  = ttk.Button(frm_row_open, text="✕  Cancel", state='disabled')
@@ -3493,7 +3799,7 @@ def launch_gui():
         out = output_var.get()
         is_interlaced_std = 'i' in std_var.get()
         for frm in (frm_row_std, frm_row_flags, frm_row_tga_opts,
-                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering):
+                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering, frm_row_eif):
             frm.pack_forget()
         if not out:
             return
@@ -3525,15 +3831,23 @@ def launch_gui():
             if is_sony or is_interlaced_std:
                 frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
                 frm_row_hula_tga.pack(**bf)
+        elif out == OUTPUT_KAYENNE_EIF:
+            chk_tga_int.pack_forget()
+            if _has_tga_seq[0]:
+                chk_tga_int.pack(side='left', **pad)
+                frm_row_tga_opts.pack(**bf)
+            frm_row_eif.pack(**bf)
 
     def _update_output_options():
         itype = _input_type[0]
         if itype == 'from_sws':
             opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
+        elif itype in ('from_eif', 'mixed_eif_sws'):
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA, OUTPUT_KAYENNE_EIF]
         elif itype == 'mov_only':
             opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype == 'to_sws_only':
-            opts = [OUTPUT_KAHUNA_SWS]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF]
         else:
             opts = []
         output_cb['values'] = opts
@@ -3718,7 +4032,14 @@ def launch_gui():
                 if not (use_src and item['source_num']):
                     next_slot += 1
                 try:
-                    if item['type'] == 'tga_seq':
+                    if item['type'] == 'eif':
+                        convert_eif_to_sws(
+                            item['path'], fnum, d,
+                            video_standard=std_var.get(),
+                            split_fat32=split_var.get(),
+                            log=log, cancel_event=batch_cancel_event)
+                        results.append((fnum, Path(item['path']).stem, 'OK'))
+                    elif item['type'] == 'tga_seq':
                         convert_tga_sequence(
                             item['files'], fnum, d,
                             std_var.get(), split_var.get(), False, log,
@@ -3770,29 +4091,44 @@ def launch_gui():
                             log=log)
 
         def _run_to_eif():
-            fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(std_var.get(), 0x08), 25.0)
+            fps       = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(std_var.get(), 0x08), 25.0)
+            next_slot = int(eif_slot_var.get() or 1)
+            results   = []
+            cancelled = False
             for item in _selected_items:
                 if batch_cancel_event.is_set():
                     log("Batch cancelled.")
+                    cancelled = True
                     break
+                out_name = f"{next_slot:04d}"
+                name = item.get('base', '').rstrip('._- ') or Path(item.get('path', '')).stem
                 try:
                     if item['type'] == 'tga_seq':
                         base = item['base'].rstrip('._- ') or 'CLIP'
                         convert_tga_seq_to_eif(
                             item['files'], d, base, fps,
-                            log=log, cancel_event=batch_cancel_event)
+                            log=log, cancel_event=batch_cancel_event,
+                            out_name=out_name,
+                            source_interlaced=source_interlaced_var.get())
                     elif item['type'] == 'clip':
                         convert_clip_to_eif(
                             item['path'], d,
-                            log=log, cancel_event=batch_cancel_event)
+                            log=log, cancel_event=batch_cancel_event,
+                            out_name=out_name)
                     elif item['type'] == 'sws':
                         convert_sws_to_eif(
                             item['path'], d,
-                            log=log, cancel_event=batch_cancel_event)
+                            log=log, cancel_event=batch_cancel_event,
+                            out_name=out_name)
+                    results.append((out_name, name, 'OK'))
+                    next_slot += 1
                 except Exception as e:
                     import traceback
-                    name = item.get('base') or Path(item.get('path', '')).name
                     log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
+                    results.append((out_name, name, f'ERROR: {e}'))
+            if results and not cancelled:
+                _write_batch_log(results, d, std_var.get(), log)
+            root.after(0, lambda v=next_slot: eif_slot_var.set(f"{v:04d}"))
 
         def worker():
             batch_cancel_event.clear()

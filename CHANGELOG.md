@@ -4,6 +4,58 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.0 — 2026-05-14
+
+### Added — EIF read/write (Grass Valley Kayenne native format)
+
+This release adds comprehensive EIF support: MacHuna can now read, write, and convert Kayenne `.eif` files in every direction. EIF is Kayenne's native clip format, reverse-engineered from real Kayenne-produced files.
+
+**EIF as a conversion output (TGA seq / MOV / SWS → EIF):**
+- New **Kayenne EIF** option in the Output dropdown. Converts any supported input to `.eif` format ready for Kayenne ClipStore / Image Store.
+- Slot naming spinbox: output files are named `0001.eif`, `0002.eif` etc. (4-digit zero-padded), incrementing per batch item. Kayenne requires this naming convention.
+- **TGA source interlaced** option available when converting TGA sequences to EIF. When ticked, MacHuna uses ffmpeg frame duplication (each frame listed twice in the concat file) to convert 25fps interlaced TGA frames to 50fps progressive EIF — the same approach used for TGA→SWS interlaced conversion.
+- A conversion log is written to the destination folder after each EIF batch (consistent with SWS batch behaviour).
+- EIF is always 1920×1080 progressive. Sources of other sizes are scaled. Frame rate rounded to nearest supported rate (25fps or 50fps). Output is `UNCONFIRMED` pending live Kayenne hardware test.
+
+**EIF as a conversion input (EIF → SWS / Kayenne TGA / Sony TGA):**
+- EIF files are now visible in the main conversion picker. Folders containing only `.eif` files are detected as `from_eif`; folders with a mix of `.eif` and `.sws` files are detected as `mixed_eif_sws`. Both expose all output options.
+- **EIF → Kahuna SWS** — lossless direct YCbCr repack. Both formats store 10-bit BT.709 limited-range YCbCr; MacHuna maps EIF bit-fields directly to v210 BE words with no RGB round-trip. Output standard is auto-derived from EIF fps (25fps → 1080p25, 50fps → 1080p50); the user's Standard dropdown selection is ignored to prevent frame-rate mismatch. `UNCONFIRMED` pending Kahuna hardware test.
+- **EIF → Kayenne TGA** — decodes EIF frames to full-resolution 1920×1080 RGBA TGA sequence. Progressive output: one TGA per EIF frame. Interlaced output: pairs of EIF frames field-woven to produce 50i TGA. Naming: `0001.tga`, `0002.tga` … `UNCONFIRMED` pending Kayenne hardware test.
+- **EIF → Sony TGA** — decodes EIF frames to 32-bit RGBA TGA sequence. Progressive output (1:1 frame mapping) or interlaced output (field-woven pairs). Naming: `{clip_name}{frame:04d}.tga` (4-char clip name prefix). `UNCONFIRMED` pending Sony MVS hardware test.
+
+### Added — Video Player improvements
+
+- **File picker replaces folder picker.** The Video Player **Open…** button now opens a standard file picker rather than a folder picker. Files in the destination folder can be clicked directly without navigating into the folder. All file types remain supported; extension routing is handled in code after the pick.
+- **Format label in info strip.** The player header row now shows the format of the loaded file for all types: `SWS`, `TGA`, `MOV`, `EIF`. Previously only EIF had a format indicator.
+
+### Added — EIF Video Player improvements (backported from v1.5.39–v1.5.43)
+
+*(These were released as patch versions but are grouped here as part of the v1.6.0 EIF feature set.)*
+
+- **EIF frame rate auto-detected from header** (v1.5.42) — `0x0FC` stores frame duration in microseconds (40000 µs = 25fps, 20000 µs = 50fps). No fps prompt on open.
+- **EIF key channel decoded** (v1.5.41) — `bits[29:20]` of each EIF word = key level (10-bit limited range: 64=transparent, 940=opaque). Wipe mattes and alpha channels now visible in key and composite panels.
+- **EIF colour decode corrected** (v1.5.40) — Full pixel format reverse-engineered from real Kayenne footage (UCI Downhill World Cup title card). Each 32-bit LE word: bits[29:20]=key, bits[19:10]=Y, bits[9:0]=chroma C (even columns=Cb, odd=Cr, 4:2:2). Three 360-row units stack vertically to form 1920×1080.
+- **EIF playback** (v1.5.39) — Grass Valley Kayenne `.eif` files open in the Video Player with full transport controls and quad display.
+
+### Fixed
+
+- **EIF→SWS double-speed playback.** When a 25fps EIF was converted to SWS with a 50fps standard selected, the output SWS had a 50fps header but only 25fps worth of frames — playing at double speed. MacHuna now auto-derives the output standard from the EIF fps, overriding the user's Standard dropdown selection for this conversion path.
+
+### Known limitations and unconfirmed items (EIF)
+
+The EIF write and conversion paths are coded and verified by analysis against real Kayenne-produced reference files, but none have been tested on live Kayenne hardware. Full detail in DEVELOPMENT_NOTES.md under "EIF hardware unknowns and roadmap".
+
+- **EIF write output** — UNCONFIRMED. Never loaded on a live Kayenne ClipStore / Image Store.
+- **25fps EIF movi chunk tag** — UNCONFIRMED. No 25fps reference EIF files were available for comparison; the 8-byte movi chunk tag at 0x8DC is assumed (`b'RIFFRIFF'`) rather than confirmed from hardware.
+- **EIF tail length (128 vs 140 bytes)** — KNOWN GAP. Generated files use a 128-byte tail sentinel. Real files with frame count ≥ 36 have a 140-byte tail. Unknown whether Kayenne validates tail length.
+- **EIF audio (.eaf companion files)** — NOT IMPLEMENTED. Kayenne companion `.eaf` files are suspected to carry audio. `has_audio` is always False. EIF audio format entirely unknown.
+- **EIF→Kayenne TGA / EIF→Sony TGA** — UNCONFIRMED on hardware.
+- **EIF→SWS lossless repack** — UNCONFIRMED on Kahuna hardware (round-trip verified in software only).
+- **1080i content in EIF** — UNKNOWN. EIF is always stored progressively. How Kayenne handles originally-interlaced content is unknown.
+- **Clip name and slot range requirements** — UNKNOWN. Whether Kayenne validates the embedded clip name or requires contiguous slot numbers is unconfirmed.
+
+---
+
 ## v1.5.43 — 2026-05-14
 
 ### Added

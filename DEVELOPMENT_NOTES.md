@@ -8,8 +8,8 @@ This document is for continuity between development sessions. If starting a new 
 
 MacHuna is a macOS application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It was built collaboratively between David Steer (DNS Vision Limited) and Claude (Anthropic) with no prior coding experience on David's part.
 
-**Current version:** v1.5.43
-**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.5.43: Kayenne EIF output added — MOV/TGA/SWS → .eif conversion with full header construction (18260-byte header verified byte-for-byte against real Kayenne clips), BT.709 YCbCr encoding, 4:2:2 chroma subsampling, key channel, tail sentinel; UNCONFIRMED pending hardware test. v1.5.42: EIF frame rate auto-detected from header (0x0FC = frame duration in µs; 40000=25fps, 20000=50fps); Video Player no longer prompts for frame rate and correctly reports key present. v1.5.41: EIF key channel decoded — bits[29:20] = key level (64=transparent, 940=opaque); wipes and alpha mattes now visible in Video Player key and composite panels. v1.5.40: EIF colour decode fixed — pixel format fully reverse-engineered from real clip (UCI DOWNHILL footage); each 32-bit word = key[29:20] + Y[19:10] + C[9:0] (even=Cb, odd=Cr); three 360-row units stack vertically to form 1920×1080. v1.5.39: EIF playback in Video Player (experimental) — Kayenne native .eif format reverse-engineered; header fields confirmed (clip name 0x004, frame count 0x06C, video start 0x070, video end 0x080). v1.5.38: Video Player now uses folder-based file picker (matches Convert window — TGA sequences collapsed to one entry per sequence); fixed TGA fps picker dialog unresponsive on macOS (transient/grab_set ordering). v1.5.37: Sony TGA multi-file guard — error dialog blocks conversion if more than one clip is selected (all would write to the same folder, second overwrites first). v1.5.36: Fixed MOV → Sony TGA output folder naming (was using MOV filename stem instead of 4-char clip name). v1.5.35: Docs update — TGA sequence naming convention flexibility explicitly documented in README and USER_MANUAL. v1.5.34: Fixed TGA sequence detection for files without a separator between base name and frame number (e.g. FEDX0000.tga). v1.5.33: Unified format-in / format-out interface — MacHuna and Hula merged into a single Convert section; input autodetection drives the Output dropdown; adaptive controls show only what is relevant to the current conversion; MOV → TGA path surfaced with hardware-unconfirmed warning; Sony TGA output folder now named after clip name; "SWS Player" renamed "Video Player"; HulaWindow no longer launched from GUI. v1.5.32: Watch Folder and Slot Override removed (MacHuna is a field tool, not a server app); smart folder browser replaces file picker (TGA sequences collapsed to one entry per sequence); i→p TGA conversion fixed (frame duplication preserves duration); "Include audio" moved to folder browser dialog, shown only when audio detected; "TGA source already interlaced" label shortened. v1.5.31: Hula bugfixes — interlaced SWS → interlaced TGA routing bug fixed; Hula MOV encoder now uses _run_ffmpeg so Stop/Cancel works. v1.5.30: Fixed i→p double-speed bug (bob deinterlace via yadif) + TGA i→i double-speed bug ("TGA source already interlaced" checkbox skips tinterlace). v1.5.29: Watch Folder TGA batch: single combined log + auto-stop when batch complete. v1.5.28: Fixed SWS Player crash when opening/playing a second file with audio (heap corruption — stop() was closing PortAudio stream from main thread while audio thread was in write(); fix: stop() now only signals + joins, audio thread closes its own stream in finally). v1.5.27: SWS Player now accepts TGA sequences and MOV/MP4/MXF/AVI. v1.5.26: Batch Convert confirmation dialog (custom Toplevel, no app icon). v1.5.25: Slot override field in Settings, two-row Settings layout, Batch Convert button visibility fix, default window size 960×460. v1.5.24: Fixed TGA sequence P→I conversion (missing tinterlace filter + wrong frame count). v1.5.23: Open in Finder buttons on Watch Folder, Destination Folder, and Hula Destination Folder rows. v1.5.22: Hula GUI redesigned — full standard dropdown (all 9 formats), MOV input support, Kayenne/Sony TGA targets consolidated (Kayenne TGA UNCONFIRMED). v1.5.21: Hula Sony MVS 25i source guard (rejects non-1080p50 input). v1.5.20: Hula Sony MVS 25i TGA output (field-woven, BFF/TFF toggle). v1.5.19: Compact broadcast metadata display in SWS Player and Hula (standard/frms/duration). v1.5.18: P→I transcoding via tinterlace (TFF, unconfirmed on 1080i hardware). v1.5.17: Interlaced standard codes corrected (0xc923 for all interlaced, 0x8000 = interlaced flag). v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
+**Current version:** v1.6.0
+**Status:** Tested on a live Grass Valley Kahuna mainframe. Core conversion confirmed working. v1.6.0: Full EIF feature set — EIF read (Video Player), EIF write (TGA/MOV/SWS → .eif with slot naming 0001.eif+), EIF→SWS lossless YCbCr repack, EIF→Kayenne TGA, EIF→Sony TGA, TGA source interlaced option for EIF output, mixed EIF+SWS folder detection, Player file picker (folder→file), format label in Player info strip. All EIF write/conversion paths UNCONFIRMED pending hardware test on live Kayenne desk. v1.5.43: Kayenne EIF output added — MOV/TGA/SWS → .eif conversion with full header construction (18260-byte header verified byte-for-byte against real Kayenne clips), BT.709 YCbCr encoding, 4:2:2 chroma subsampling, key channel, tail sentinel; UNCONFIRMED pending hardware test. v1.5.42: EIF frame rate auto-detected from header (0x0FC = frame duration in µs; 40000=25fps, 20000=50fps); Video Player no longer prompts for frame rate and correctly reports key present. v1.5.41: EIF key channel decoded — bits[29:20] = key level (64=transparent, 940=opaque); wipes and alpha mattes now visible in Video Player key and composite panels. v1.5.40: EIF colour decode fixed — pixel format fully reverse-engineered from real clip (UCI DOWNHILL footage); each 32-bit word = key[29:20] + Y[19:10] + C[9:0] (even=Cb, odd=Cr); three 360-row units stack vertically to form 1920×1080. v1.5.39: EIF playback in Video Player (experimental) — Kayenne native .eif format reverse-engineered; header fields confirmed (clip name 0x004, frame count 0x06C, video start 0x070, video end 0x080). v1.5.38: Video Player now uses folder-based file picker (matches Convert window — TGA sequences collapsed to one entry per sequence); fixed TGA fps picker dialog unresponsive on macOS (transient/grab_set ordering). v1.5.37: Sony TGA multi-file guard — error dialog blocks conversion if more than one clip is selected (all would write to the same folder, second overwrites first). v1.5.36: Fixed MOV → Sony TGA output folder naming (was using MOV filename stem instead of 4-char clip name). v1.5.35: Docs update — TGA sequence naming convention flexibility explicitly documented in README and USER_MANUAL. v1.5.34: Fixed TGA sequence detection for files without a separator between base name and frame number (e.g. FEDX0000.tga). v1.5.33: Unified format-in / format-out interface — MacHuna and Hula merged into a single Convert section; input autodetection drives the Output dropdown; adaptive controls show only what is relevant to the current conversion; MOV → TGA path surfaced with hardware-unconfirmed warning; Sony TGA output folder now named after clip name; "SWS Player" renamed "Video Player"; HulaWindow no longer launched from GUI. v1.5.32: Watch Folder and Slot Override removed (MacHuna is a field tool, not a server app); smart folder browser replaces file picker (TGA sequences collapsed to one entry per sequence); i→p TGA conversion fixed (frame duplication preserves duration); "Include audio" moved to folder browser dialog, shown only when audio detected; "TGA source already interlaced" label shortened. v1.5.31: Hula bugfixes — interlaced SWS → interlaced TGA routing bug fixed; Hula MOV encoder now uses _run_ffmpeg so Stop/Cancel works. v1.5.30: Fixed i→p double-speed bug (bob deinterlace via yadif) + TGA i→i double-speed bug ("TGA source already interlaced" checkbox skips tinterlace). v1.5.29: Watch Folder TGA batch: single combined log + auto-stop when batch complete. v1.5.28: Fixed SWS Player crash when opening/playing a second file with audio (heap corruption — stop() was closing PortAudio stream from main thread while audio thread was in write(); fix: stop() now only signals + joins, audio thread closes its own stream in finally). v1.5.27: SWS Player now accepts TGA sequences and MOV/MP4/MXF/AVI. v1.5.26: Batch Convert confirmation dialog (custom Toplevel, no app icon). v1.5.25: Slot override field in Settings, two-row Settings layout, Batch Convert button visibility fix, default window size 960×460. v1.5.24: Fixed TGA sequence P→I conversion (missing tinterlace filter + wrong frame count). v1.5.23: Open in Finder buttons on Watch Folder, Destination Folder, and Hula Destination Folder rows. v1.5.22: Hula GUI redesigned — full standard dropdown (all 9 formats), MOV input support, Kayenne/Sony TGA targets consolidated (Kayenne TGA UNCONFIRMED). v1.5.21: Hula Sony MVS 25i source guard (rejects non-1080p50 input). v1.5.20: Hula Sony MVS 25i TGA output (field-woven, BFF/TFF toggle). v1.5.19: Compact broadcast metadata display in SWS Player and Hula (standard/frms/duration). v1.5.18: P→I transcoding via tinterlace (TFF, unconfirmed on 1080i hardware). v1.5.17: Interlaced standard codes corrected (0xc923 for all interlaced, 0x8000 = interlaced flag). v1.5.16: TGA removed from Batch Convert file picker. v1.5.15: SWSPlayer playback jitter fixed via absolute timing. v1.5.14: SWSPlayer interlaced playback speed fixed (field rate vs frame rate). v1.5.13: SWSPlayer and Hula fps lookup fixed for all standards. v1.5.12: All ffmpeg calls now go through _run_ffmpeg - Stop/Cancel works for all conversion paths. v1.5.11: Ignore alpha for TGA sequences fixed. v1.5.10: FORMAT_VARIANTS lookup table applied - format variant (0x18C) now correct for all nine standards. v1.5.9: Unverified standards removed from dropdown. v1.5.8: All nine video standards fully confirmed by K-Watch hex analysis; progressive-to-interlaced mismatch warning added. v1.5.7: Stop button kills ffmpeg immediately; Cancel Batch button added. v1.5.5: Format variant field (0x18C) initial fix. v1.5.4: Window size persistence. v1.5.0: Hula SWS Extractor integrated. v1.4.0: SWS Preview Player integrated. v1.3.0: Large file split (>4GB) confirmed working on live Kahuna.
 **Repository:** https://github.com/DNSVision/MacHuna
 **Dev machine:** MacBook Air M1 (all dev and building must happen here)
 
@@ -67,6 +67,16 @@ git push
 9. ~~**Manual reorder in batch convert**~~ -- Dropped. Alphabetical ordering is sufficient.
 10. ~~**Standalone preview viewer**~~ -- DONE. SWS Player built as companion app (DNSVision/SWSPlayer) and integrated into MacHuna in v1.4.0. All player code folded into machuna.py -- SWSHeader, PlayerFrameCache, PlayerAudio, numpy v210 decoder, composite and meter functions. tkinter and Pillow imports moved to top level to support the player classes.
 11. ~~**Integrate preview into main app**~~ -- DONE. SWS Player button added to top-right of Batch Convert row. Opens SWSPlayer as a non-modal tk.Toplevel child window. File picker opens at the configured Destination Folder. Multiple player windows can be open simultaneously. Closing the player does not affect MacHuna.
+
+### EIF Roadmap (Priority Order)
+
+1. **Hardware test — EIF write** (HIGH PRIORITY) — Load a MacHuna-generated `.eif` file onto a live Kayenne desk. Confirm playback, frame count, speed, colours, and key. See "Priority hardware test steps" in the EIF section above. This is the most important outstanding test.
+2. **25fps EIF movi tag verification** — Obtain a real 25fps Kayenne-produced `.eif` file. Compare hex at offset 0x8DC to verify or correct the movi chunk tag. No code change needed until a reference file is available.
+3. **EIF audio (.eaf files)** — Source a real `.eaf` companion file from a Kayenne operator. Hex-analyse to understand the audio format. Implement read and write once the format is known.
+4. **EIF tail length (128 vs 140 bytes)** — Determine whether Kayenne validates the tail length difference. Obtain a reference file with fc < 36 and fc ≥ 36 to compare. If Kayenne is strict, extend MacHuna's tail to 140 bytes for all files.
+5. **EIF→Kayenne MOV** — Implement EIF to ProRes 4444 MOV conversion (decode EIF frames → ffmpeg encode). Not yet coded.
+6. **1080i content in EIF** — Determine how Kayenne stores originally-interlaced content. This will inform whether the interlaced TGA→EIF frame-duplication path produces correct output.
+7. **Clip name and slot validation** — Verify whether Kayenne enforces a match between the embedded clip name (0x004) and the filename stem, and whether slot numbers must be contiguous.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
@@ -133,6 +143,120 @@ A thorough code review (May 2026) identified the following items that are coded 
 | **MOV → TGA** | UNCONFIRMED | Full path (MOV input + TGA target) is coded and routes correctly, but has never been tested on hardware. |
 
 **How to hardware-test:** Convert a known clip in MacHuna to SWS, then round-trip it back through MacHuna's extraction outputs. Load the result onto the target desk and verify correct playback, frame count, and field order. The Kayenne and Sony tests are independent — access to each desk is needed separately.
+
+---
+
+## EIF Format (Grass Valley Kayenne Native)
+
+Added in v1.5.39–v1.6.0. MacHuna can read and write Grass Valley Kayenne `.eif` clips. The format was fully reverse-engineered from real Kayenne-produced files (UCI Downhill World Cup title card, 50fps, file `0003.eif`).
+
+### File Layout
+```
+[0x000 - 0x4753]  18260-byte header (GV magic + clip name + RIFF/AVI thumbnail + metadata)
+[0x4754 - N]      Video data: frame_count × 3 units × 2,764,800 bytes/unit
+[N - EOF]         128-byte tail sentinel (fps-dependent repeating pattern)
+```
+
+Total video data size: `frame_count × 3 × (360 × 1920 × 4)` bytes.
+
+### Pixel Encoding (32-bit LE word per pixel)
+
+| Bits | Field | Description |
+|------|-------|-------------|
+| [29:20] | key | 10-bit limited range: 64 = transparent, 940 = opaque |
+| [19:10] | Y | Luma (BT.709 limited range 64–940) |
+| [9:0] | C | Chroma: even columns = Cb, odd columns = Cr (4:2:2 horizontal) |
+
+Each frame is stored as three contiguous 360-row units stacked vertically:
+- Unit 0: rows 0–359
+- Unit 1: rows 360–719
+- Unit 2: rows 720–1079
+
+One unit = 360 × 1920 × 4 = 2,764,800 bytes. One complete frame = 8,294,400 bytes.
+
+### Key Header Fields (all little-endian)
+
+| Offset | Size | Field | Notes |
+|--------|------|-------|-------|
+| 0x000 | 4 bytes | Magic | `EB A5 04 00` (constant) |
+| 0x004 | 32 bytes | Clip name | Null-terminated ASCII |
+| 0x058 | 8 bytes | Timestamp | Windows FILETIME (varies per file) |
+| 0x060 | 4 bytes | Flags | 0x03=50fps, 0x07=25fps |
+| 0x064 | 4 bytes | Rate code | 0x000104A4=50fps, 0x00010484=25fps |
+| 0x06C | 4 bytes | Frame count | Logical frames (units = frame_count × 3) |
+| 0x070 | 4 bytes | video_start | Byte offset to first unit |
+| 0x080 | 4 bytes | video_end | Byte offset after last unit |
+| 0x0A8 | 16 bytes | Thumbnail meta | Constant: 80×45 RGB24, AVI start at 220 |
+| 0x0DC | — | AVI RIFF | Size field = 0; Kayenne ignores it |
+| 0x0E8 | — | hdrl LIST | Size 312 |
+| 0x0F4 | — | avih | Size 56; 0x0FC = frame duration in µs |
+| 0x0FC | 4 bytes | dur_us | Frame duration: 40000 = 25fps, 20000 = 50fps |
+| 0x134 | — | Video strl | 80×45 RGB24 thumbnail stream |
+| 0x1B0 | — | Audio strl | Size 112, dwRate=48000, empty strf |
+| 0x204 | 40 bytes | Fixed block | Constant in all real files |
+| 0x22C | — | JUNK | Size 1696; zeros |
+| 0x8D0 | — | movi LIST | Size 10812 |
+| 0x8DC | 8 bytes | movi chunk tag | 50fps: `\x00\x02\x01\x04\x00\x02\x01\x04`; 25fps: assumed `b'RIFFRIFF'` (UNCONFIRMED) |
+| 0x8E4 | 10800 bytes | Thumbnail | 80×45 RGB24 (zeros = black in generated files) |
+| 0x3324 | — | Zeros | Padding to video_start |
+
+### Tail Sentinel (after video_end)
+- Pattern: 4-byte fps-dependent value repeated.
+- 50fps: `\x00\x02\x01\x04` × 32 = 128 bytes
+- 25fps: `\x52\x49\x46\x46` × 32 = 128 bytes (assumed)
+- Real files with frame_count ≥ 36 have 140-byte tails. Generated files use 128 bytes. See EIF hardware unknowns.
+
+### Lossless EIF ↔ SWS Round-Trip
+
+EIF and SWS both store 10-bit BT.709 limited-range YCbCr. MacHuna maps EIF bit-fields directly to v210 BE words without any RGB conversion:
+- EIF word → Y[19:10], Cb[9:0] (even cols), Cr[9:0] (odd cols), key[29:20]
+- v210 BE group (6 pixels): word0 = Cb0|(Y0<<10)|(Cr0<<20), word1 = Y1|(Cb2<<10)|(Y2<<20), word2 = Cr2|(Y3<<10)|(Cb4<<20), word3 = Y4|(Cr4<<10)|(Y5<<20), then byteswapped LE→BE
+- Key: same layout with KC=512 neutral chroma substituted for actual chroma
+
+This is implemented in `_eif_frame_to_v210be(u0, u1, u2)`. The round-trip is lossless — no quantisation noise, no colour shift. Verified in software (SWS output replays correctly in Video Player); UNCONFIRMED on Kahuna hardware.
+
+### Code Structure in machuna.py
+
+| Function | Purpose |
+|----------|---------|
+| `_build_eif_header(clip_name, frame_count, fps)` | Builds the 18260-byte EIF header |
+| `_encode_eif_frame_from_yuv(y_plane, cb_plane, cr_plane, k_plane)` | Encodes one EIF frame (3 units) from v210 YCbCr planes |
+| `_encode_eif_frame_from_rgba(img_rgba)` | Encodes one EIF frame from a PIL RGBA image |
+| `_decode_eif_frame(u0, u1, u2)` | Decodes 3 EIF units to PIL Image (downscaled, Video Player) |
+| `_decode_eif_frame_rgba(u0, u1, u2)` | Decodes 3 EIF units to full-res 1920×1080 PIL RGBA (conversions) |
+| `_load_eif_frames(path, log)` | Loads all frames from an EIF file into memory |
+| `_eif_frame_to_v210be(u0, u1, u2)` | Converts 3 EIF units directly to v210 BE fill+key (lossless) |
+| `convert_clip_to_eif(...)` | MOV/video → EIF |
+| `convert_tga_seq_to_eif(...)` | TGA sequence → EIF (with optional source_interlaced path) |
+| `convert_sws_to_eif(...)` | SWS → EIF |
+| `convert_eif_to_sws(...)` | EIF → SWS (lossless repack) |
+| `_hula_convert_eif_to_tga(...)` | EIF → Kayenne TGA or Sony TGA (progressive) |
+| `_hula_convert_eif_to_tga_interlaced(...)` | EIF → interlaced TGA (field-woven pairs) |
+
+### EIF Hardware Unknowns and Roadmap
+
+All EIF write paths are coded and verified against real Kayenne reference files by hex analysis. None have been tested on live Kayenne hardware. The following items need hardware or reference-file access to resolve:
+
+| Item | Status | Detail |
+|------|--------|--------|
+| **EIF write — Kayenne hardware test** | UNCONFIRMED | Generated `.eif` files have never been loaded on a live Kayenne ClipStore or Image Store. Header matches real clips byte-for-byte (excluding timestamp and clip name). Priority: HIGH — the most important test to run. |
+| **25fps EIF movi chunk tag** | UNCONFIRMED | The 8-byte movi chunk tag at 0x8DC for 25fps EIF is assumed to be `b'RIFFRIFF'` (i.e. the ASCII bytes `RIFF` repeated). No 25fps reference files were available. The 50fps value `\x00\x02\x01\x04\x00\x02\x01\x04` is confirmed. Fix requires a real 25fps Kayenne-produced `.eif` file for hex comparison. |
+| **Tail length: 128 vs 140 bytes** | KNOWN GAP | MacHuna-generated files have a 128-byte tail sentinel. Real Kayenne files with frame_count ≥ 36 have 140-byte tails (difference is 12 bytes of unknown content). Unknown if Kayenne validates tail length. Low risk — the extra bytes may be padding. |
+| **EIF→Kayenne TGA** | UNCONFIRMED | Coded and working by analysis; never loaded on a Kayenne Image Store. |
+| **EIF→Sony TGA** | UNCONFIRMED | Coded and working by analysis; never imported on a Sony MVS. |
+| **EIF→Kahuna SWS (lossless)** | UNCONFIRMED | Round-trip verified in software (Video Player confirms correct output). Unconfirmed on Kahuna hardware. |
+| **EIF→Kayenne MOV** | NOT IMPLEMENTED | No EIF→MOV path exists. Would require decoding EIF frames and encoding to ProRes 4444 via ffmpeg. |
+| **EIF audio (.eaf companion files)** | NOT IMPLEMENTED | Kayenne companion `.eaf` files are suspected to carry audio. `has_audio` is always False. Audio format entirely unknown. Needs hex analysis of a real `.eaf` file. |
+| **1080i content in EIF** | UNKNOWN | EIF is always stored progressively. How a Kayenne desk handles originally-interlaced content (whether it stores as 50fps progressive, 25fps field-pairs, or some other format) is unknown. This affects the interlaced TGA→EIF path (currently uses frame duplication). |
+| **Embedded clip name on Kayenne import** | UNKNOWN | Whether the Kayenne reads or validates the clip name at header offset 0x004 is unconfirmed. MacHuna writes the source filename stem. If Kayenne enforces specific naming, the clip name field may need to match the slot filename stem. |
+| **Slot number range and contiguity** | UNKNOWN | Whether the Kayenne requires EIF clips to be numbered from a specific starting slot (e.g. 0001) or requires contiguous numbers is unconfirmed. MacHuna uses the slot spinbox value as the starting number. |
+
+**Priority hardware test steps:**
+1. Use MacHuna to convert a known short TGA sequence (e.g. 10 frames, 50fps) to EIF → name it `0001.eif`
+2. Copy to a USB drive formatted correctly for Kayenne
+3. Import on a live Kayenne ClipStore / Image Store
+4. Verify: file appears, frame count correct, playback correct speed, colours correct, key correct
+5. If clips with audio need testing: source a real `.eaf` file from a Kayenne operator for hex analysis before implementing
 
 ### Standalone repo (archived)
 

@@ -4,6 +4,38 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.6.0)
+
+### v1.6.0 — Full EIF feature set
+
+This release completed the EIF (Grass Valley Kayenne native format) feature set. EIF was reverse-engineered from real Kayenne-produced files across v1.5.39–v1.5.43, with all conversion paths added in v1.6.0.
+
+**What was added:**
+- EIF as a conversion output: TGA sequences, MOV, and SWS files can all be converted to `.eif`. Slot naming uses 4-digit zero-padded filenames (0001.eif, 0002.eif…) matching Kayenne's naming convention. A slot spinbox lets the user set the starting slot number.
+- TGA source interlaced option for EIF output: uses ffmpeg frame duplication (same concat-repeat approach as TGA→SWS interlaced path) to produce 50fps progressive EIF from 25fps interlaced TGA.
+- Batch log written to destination folder after EIF batches.
+- EIF as a conversion input: EIF files now appear in the main conversion picker. Folders with EIF only (`from_eif`) and mixed EIF+SWS (`mixed_eif_sws`) both route to EIF-aware outputs.
+- EIF → Kahuna SWS: lossless direct YCbCr repack using `_eif_frame_to_v210be`. No RGB round-trip. Output standard auto-derived from EIF fps (ignores user's Standard dropdown).
+- EIF → Kayenne TGA: full-res 1920×1080 RGBA TGA sequence, progressive or field-woven interlaced.
+- EIF → Sony TGA: 32-bit RGBA with 4-char clip name prefix, progressive or field-woven interlaced.
+- Video Player file picker changed from folder picker to standard file picker (files can be clicked directly).
+- Format label added to Player info strip for all formats (SWS, TGA, MOV, EIF).
+
+**What is NOT yet confirmed on hardware:**
+All EIF write paths are UNCONFIRMED pending a live Kayenne desk test. See DEVELOPMENT_NOTES.md "EIF Hardware Unknowns and Roadmap" for the full table and priority test steps. Key outstanding items:
+- EIF write output — never loaded on a live Kayenne desk
+- 25fps EIF movi chunk tag at 0x8DC — assumed, no 25fps reference file available
+- EIF→Kayenne TGA / EIF→Sony TGA — coded, never hardware-tested
+- EIF audio (.eaf companion files) — not implemented; format unknown
+- Tail length discrepancy (128 vs 140 bytes for fc≥36)
+
+**EIF pixel format (confirmed from real hardware):**
+- 32-bit LE word per pixel: bits[29:20]=key, bits[19:10]=Y, bits[9:0]=C (even=Cb, odd=Cr)
+- Three 360-row units stacked vertically = 1920×1080 per frame
+- Frame duration at header 0x0FC: 40000µs = 25fps, 20000µs = 50fps
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.41)
 
 ### v1.5.41 — EIF key channel decoded; v1.5.40 — EIF colour decode fixed
@@ -228,7 +260,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.5.43
+- **MacHuna:** v1.6.0
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
