@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.5.39 — 2026-05-14
+
+### New
+- **EIF playback in Video Player (experimental).** The Video Player now opens Grass Valley Kayenne `.eif` files. EIF is Kayenne's native clip format — v210 little-endian video in a GV-proprietary container. MacHuna reads the header (clip name, frame count, video data offsets), decodes unit 0 of each logical frame triplet, and displays it in the fill panel with full transport controls. The format is partially decoded: the exact role of units 1 and 2 within each triplet (fill bottom / key) is not yet confirmed. No audio support yet; no key plane yet. Frame rate is not encoded in the header — the fps prompt appears on open as with TGA sequences.
+
+---
+
 ## v1.5.38 — 2026-05-14
 
 ### Improved

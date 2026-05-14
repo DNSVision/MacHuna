@@ -102,6 +102,7 @@ Click **Open…** and select a folder. The player scans the folder and lists all
 - **.SWS** — full fill, key, composite, and audio meter display
 - **TGA sequences** — prompts for frame rate (25fps default); fill, key, and composite shown if the TGAs have an alpha channel
 - **.MOV, .MP4, .MXF, .MKV, .AVI** — frames extracted via ffmpeg; alpha channel preserved for formats that carry it (e.g. ProRes 4444); audio meters active
+- **.EIF** *(experimental)* — Grass Valley Kayenne native format; v210 LE video decoded directly from the container; fill panel only, no key or audio yet; frame rate prompted on open
 
 ### Large Files (>4GB)
 

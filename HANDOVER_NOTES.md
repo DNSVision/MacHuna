@@ -4,6 +4,21 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.5.39)
+
+### v1.5.39 — EIF playback (experimental)
+
+Grass Valley Kayenne `.eif` format reverse-engineered via hex analysis of a live Kayenne-produced file. Confirmed findings:
+
+- **Container**: GV proprietary header (220 bytes) + RIFF/AVI thumbnail + EIF metadata + pre-video fill + v210 LE video data
+- **Header fields** (all little-endian): clip name at `0x004` (null-terminated ASCII), flags at `0x060`, logical frame count at `0x06C`, video start at `0x070`, video end at `0x080`
+- **Video data**: v210 little-endian, 1920×540 per unit, 2,764,800 bytes/unit, logical frame = 3 consecutive units
+- **What's decoded**: unit 0 of each logical triplet displayed in fill panel; full transport works
+- **What's NOT yet decoded**: exact role of units 1 and 2 (fill bottom / key); audio section location; video standard / fps (user prompted on open)
+- **EIF write support**: next step once unit roles are confirmed — would allow MacHuna to write directly to Kayenne without conversion
+
+---
+
 ## Recent Session Notes (May 2026 — v1.5.38)
 
 ### v1.5.38 — Video Player folder picker + fps dialog fix

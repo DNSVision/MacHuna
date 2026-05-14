@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.5.38"
+VERSION = "1.5.39"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1124,6 +1124,29 @@ class SWSHeader:
         return 25.0
 
 
+class EIFHeader:
+    """Parsed .eif file header (Grass Valley Kayenne format — partially decoded).
+    Unit role within each triplet (fill top / fill bottom / key) is not yet confirmed.
+    """
+
+    def __init__(self, path: str):
+        with open(path, 'rb') as f:
+            raw = f.read(0x090)
+        if len(raw) < 0x090:
+            raise ValueError("File too small to be a valid EIF file.")
+        name_raw         = raw[0x004:0x004 + 32]
+        self.clip_name   = name_raw.split(b'\x00')[0].decode('ascii', errors='replace').strip()
+        self.flags       = struct.unpack_from('<I', raw, 0x060)[0]
+        self.frame_count = struct.unpack_from('<I', raw, 0x06C)[0]
+        self.video_start = struct.unpack_from('<I', raw, 0x070)[0]
+        self.video_end   = struct.unpack_from('<I', raw, 0x080)[0]
+        self.fps         = 25.0    # not encoded in header; caller sets this
+        self.has_key     = False
+        self.has_audio   = False
+        self.loop_play   = False
+        self.auto_play   = False
+
+
 def _v210_plane_to_yuv(raw_be: bytes, width: int, height: int,
                        frame_count: int) -> np.ndarray:
     """Decode big-endian v210 plane to float32 YCbCr (frame_count, H, W, 3).
@@ -1210,6 +1233,65 @@ def _player_decode_gray(raw_be: bytes, width: int, height: int, frame_count: int
         img = Image.fromarray(_yuv_to_gray8(yuv[f]), 'L')
         arrays.append(np.array(img.resize((PANEL_W, PANEL_H), Image.BILINEAR)))
     return arrays
+
+
+_EIF_UNIT_BYTES = 2_764_800  # 1920×540 v210 LE: 540 lines × 5120 bytes/line
+
+
+def _decode_eif_unit_rgb(raw_le: bytes) -> Image.Image:
+    """Decode one v210 LE unit (1920×540) to a PIL RGB Image at PANEL_W×PANEL_H.
+    Displays unit 0 of each logical triplet; units 1 and 2 role not yet confirmed.
+    """
+    width, height = 1920, 540
+    words = np.frombuffer(raw_le, dtype='<u4').copy()
+    # 1920×540: line_bytes=5120 (no padding), 1280 words/line, 320 groups/line
+    frame = words.reshape(height, -1)
+    groups = frame.shape[1] // 4
+    frame  = frame[:, :groups * 4].reshape(height, groups, 4)
+
+    w0, w1, w2, w3 = frame[:,:,0], frame[:,:,1], frame[:,:,2], frame[:,:,3]
+    cb0 = ((w0 >>  0) & 0x3FF).astype(np.float32)
+    y0  = ((w0 >> 10) & 0x3FF).astype(np.float32)
+    cr0 = ((w0 >> 20) & 0x3FF).astype(np.float32)
+    y1  = ((w1 >>  0) & 0x3FF).astype(np.float32)
+    cb2 = ((w1 >> 10) & 0x3FF).astype(np.float32)
+    y2  = ((w1 >> 20) & 0x3FF).astype(np.float32)
+    cr2 = ((w2 >>  0) & 0x3FF).astype(np.float32)
+    y3  = ((w2 >> 10) & 0x3FF).astype(np.float32)
+    cb4 = ((w2 >> 20) & 0x3FF).astype(np.float32)
+    y4  = ((w3 >>  0) & 0x3FF).astype(np.float32)
+    cr4 = ((w3 >> 10) & 0x3FF).astype(np.float32)
+    y5  = ((w3 >> 20) & 0x3FF).astype(np.float32)
+
+    yuv = np.zeros((height, groups * 6, 3), dtype=np.float32)
+    yuv[:, 0::6, 0] = y0;  yuv[:, 0::6, 1] = cb0; yuv[:, 0::6, 2] = cr0
+    yuv[:, 1::6, 0] = y1;  yuv[:, 1::6, 1] = cb0; yuv[:, 1::6, 2] = cr0
+    yuv[:, 2::6, 0] = y2;  yuv[:, 2::6, 1] = cb2; yuv[:, 2::6, 2] = cr2
+    yuv[:, 3::6, 0] = y3;  yuv[:, 3::6, 1] = cb2; yuv[:, 3::6, 2] = cr2
+    yuv[:, 4::6, 0] = y4;  yuv[:, 4::6, 1] = cb4; yuv[:, 4::6, 2] = cr4
+    yuv[:, 5::6, 0] = y5;  yuv[:, 5::6, 1] = cb4; yuv[:, 5::6, 2] = cr4
+
+    rgb = _yuv_to_rgb8(yuv[:, :width, :])
+    return Image.fromarray(rgb, 'RGB').resize((PANEL_W, PANEL_H), Image.BILINEAR)
+
+
+def _load_eif_frames(path: str, header, progress_cb=None):
+    """Load EIF frames into a list of [fill_img, None, fill_img].
+    Reads unit 0 of each logical triplet (unit index N*3).
+    """
+    n = header.frame_count
+    frames = []
+    with open(path, 'rb') as f:
+        for i in range(n):
+            if progress_cb:
+                progress_cb(int(i / n * 95), f"Decoding frame {i + 1}/{n}...")
+            f.seek(header.video_start + i * 3 * _EIF_UNIT_BYTES)
+            raw = f.read(_EIF_UNIT_BYTES)
+            img = _decode_eif_unit_rgb(raw)
+            frames.append([img, None, img])
+    if progress_cb:
+        progress_cb(100, "Ready.")
+    return frames
 
 
 _CHECKER = None
@@ -1787,6 +1869,8 @@ class SWSPlayer(tk.Toplevel):
             self._load_sws(item['path'])
         elif item['type'] == 'tga_seq':
             self._load_tga(item['files'][0])
+        elif item['type'] == 'eif':
+            self._load_eif(item['path'])
         else:
             self._load_video(item['path'])
 
@@ -1905,15 +1989,50 @@ class SWSPlayer(tk.Toplevel):
 
         threading.Thread(target=load, daemon=True).start()
 
-    def _ask_fps(self) -> Optional[float]:
-        """Show a small dialog to pick frame rate for a TGA sequence."""
+    def _load_eif(self, path: str):
+        fps = self._ask_fps(label="Select frame rate for this EIF clip:")
+        if fps is None:
+            return
+        self._reset_display()
+        try:
+            header = EIFHeader(path)
+        except Exception as e:
+            messagebox.showerror("Invalid File", str(e), parent=self)
+            return
+        header.fps = fps
+        n    = header.frame_count
+        name = header.clip_name or Path(path).stem
+        self.title(f"Video Player — {name}")
+        self._info_var.set(f"EIF  {name}  {n}frms  {fps}fps — loading...")
+        self._status_var.set("Loading EIF frames...")
+        self._progress['value'] = 0
+        self.update()
+
+        def load():
+            def progress(pct, msg):
+                self.after(0, lambda: self._on_progress(pct, msg))
+            try:
+                frames = _load_eif_frames(path, header, progress)
+                hdr    = _PlayerHeader(fps=fps, frame_count=n, has_key=False)
+                cache  = _GenericFrameCache(path, hdr)
+                cache.frames = frames
+                self.after(0, lambda: self._on_load_complete(cache, hdr))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                msg = str(e)
+                self.after(0, lambda m=msg: self._on_load_error(m))
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _ask_fps(self, label: str = "Select frame rate for this TGA sequence:") -> Optional[float]:
+        """Show a small dialog to pick frame rate."""
         result = [None]
         dlg = tk.Toplevel(self)
         dlg.title("Frame Rate")
         dlg.resizable(False, False)
         dlg.transient(self)
 
-        tk.Label(dlg, text="Select frame rate for this TGA sequence:",
+        tk.Label(dlg, text=label,
                  font=('Helvetica', 12)).pack(padx=16, pady=(16, 8))
 
         fps_var = tk.StringVar(value="25")
@@ -2745,7 +2864,8 @@ def _scan_folder_for_player(folder: str) -> list:
         fpath = os.path.join(folder, fname)
         if not os.path.isfile(fpath):
             continue
-        if Path(fname).suffix.lower() == '.sws':
+        ext = Path(fname).suffix.lower()
+        if ext == '.sws':
             try:
                 h = HulaSWSHeader(fpath)
                 tc = _fmt_timecode(h.frame_count, h.fps)
@@ -2753,6 +2873,14 @@ def _scan_folder_for_player(folder: str) -> list:
             except Exception:
                 display = fname
             items.append({'type': 'sws', 'path': fpath, 'display': display})
+        elif ext == '.eif':
+            try:
+                h = EIFHeader(fpath)
+                name = h.clip_name or Path(fname).stem
+                display = f"{fname:<28}  EIF  {h.frame_count}fr  clip: {name}"
+            except Exception:
+                display = fname
+            items.append({'type': 'eif', 'path': fpath, 'display': display})
 
     for base, files in sequences:
         items.append({
