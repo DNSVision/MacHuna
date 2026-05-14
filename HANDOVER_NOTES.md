@@ -4,6 +4,19 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.6.1)
+
+### v1.6.1 — Code cleanup
+
+Post-EIF deep review. No functional changes.
+
+- Removed five dead functions that were superseded by earlier refactors: `_pick_from_folder`, `_load_from_item` (replaced by `askopenfilename` direct picker), `_scan_folder_for_items`, `_scan_folder_for_player` (replaced by `_scan_folder_unified`), `_group_files_for_batch` (replaced by unified batch path).
+- Extracted shared EIF bit-decode logic into module-level `_eif_parse_unit(raw) -> (yuv, key)` helper; removed duplicated inner `_unit_arrays` from both `_decode_eif_frame` and `_decode_eif_frame_rgba`.
+- Moved `_EIF_UNIT_BYTES` constant from mid-file to the EIF constants block; removed three redundant `import numpy as np` from function bodies.
+- Fixed Video Player status bar: still read "select a folder" after the switch to file picker.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.6.0)
 
 ### v1.6.0 — Full EIF feature set
@@ -260,7 +273,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.6.0
+- **MacHuna:** v1.6.1
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

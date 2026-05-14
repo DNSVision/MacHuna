@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -940,6 +940,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 _EIF_HDR_SIZE   = 18260       # = 0x4754 = video_start
 _EIF_UNIT_ROWS  = 360         # rows per unit
 _EIF_UNIT_COLS  = 1920        # columns (fixed for EIF)
+_EIF_UNIT_BYTES = 2_764_800   # 360 rows × 1920 px × 4 bytes/px
 _EIF_PLANE_SIZE = 5_529_600   # v210 frame bytes at 1920×1080
 
 # 40-byte extension block inside audio strl LIST (identical in all real EIF files).
@@ -1321,7 +1322,6 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
 
 def _eif_frame_to_v210be(u0: bytes, u1: bytes, u2: bytes):
     """Convert 3 EIF units to v210 BE (fill, key) for one 1920×1080 frame."""
-    import numpy as np
     ROWS, WIDTH, G = 360, 1920, 320  # G = 1920/6 v210 groups per row
 
     fill_chunks = []
@@ -1729,33 +1729,30 @@ def _player_decode_gray(raw_be: bytes, width: int, height: int, frame_count: int
     return arrays
 
 
-_EIF_UNIT_BYTES = 2_764_800  # 360 rows × 1920 px × 4 bytes/px
+def _eif_parse_unit(raw: bytes) -> tuple:
+    """Decode one EIF unit (360×1920 pixels) → (yuv float32 360×1920×3, key float32 360×1920).
+
+    EIF word layout (32-bit LE): bits[29:20]=key, bits[19:10]=Y, bits[9:0]=C
+    (even columns = Cb, odd columns = Cr, 4:2:2 horizontal subsampling).
+    """
+    ROWS, WIDTH = 360, 1920
+    words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH)
+    key = ((words >> 20) & 0x3FF).astype(np.float32)
+    Y   = ((words >> 10) & 0x3FF).astype(np.float32)
+    C   = ((words >>  0) & 0x3FF).astype(np.float32)
+    Cb = np.empty_like(Y); Cr = np.empty_like(Y)
+    Cb[:, 0::2] = C[:, 0::2]
+    Cb[:, 1::2] = C[:, 0:-1:2]   # propagate Cb rightward to odd columns
+    Cr[:, 1::2] = C[:, 1::2]
+    Cr[:, 0::2] = C[:, 1::2]     # propagate Cr leftward to even columns
+    return np.stack([Y, Cb, Cr], axis=2), key
 
 
 def _decode_eif_frame(u0: bytes, u1: bytes, u2: bytes):
-    """Decode three EIF units → (fill_img, key_img, composite_img) at PANEL_W×PANEL_H.
-
-    EIF word layout (32-bit LE): bits[29:20]=key (10-bit limited, 64=transparent,
-    940=opaque), bits[19:10]=Y luma, bits[9:0]=chroma C (even cols=Cb, odd=Cr, 4:2:2).
-    Three units of 360 rows each stack vertically to form 1920×1080.
-    """
-    WIDTH, ROWS = 1920, 360
-
-    def _unit_arrays(raw: bytes):
-        words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH)
-        key = ((words >> 20) & 0x3FF).astype(np.float32)
-        Y   = ((words >> 10) & 0x3FF).astype(np.float32)
-        C   = ((words >>  0) & 0x3FF).astype(np.float32)
-        Cb = np.empty_like(Y); Cr = np.empty_like(Y)
-        Cb[:, 0::2] = C[:, 0::2]
-        Cb[:, 1::2] = C[:, 0:-1:2]   # propagate Cb rightward to odd columns
-        Cr[:, 1::2] = C[:, 1::2]
-        Cr[:, 0::2] = C[:, 1::2]     # propagate Cr leftward to even columns
-        return np.stack([Y, Cb, Cr], axis=2), key
-
-    yuv0, k0 = _unit_arrays(u0)
-    yuv1, k1 = _unit_arrays(u1)
-    yuv2, k2 = _unit_arrays(u2)
+    """Decode three EIF units → (fill_img, key_img, composite_img) at PANEL_W×PANEL_H."""
+    yuv0, k0 = _eif_parse_unit(u0)
+    yuv1, k1 = _eif_parse_unit(u1)
+    yuv2, k2 = _eif_parse_unit(u2)
 
     yuv_full = np.concatenate([yuv0, yuv1, yuv2], axis=0)   # 1080×1920×3
     key_full = np.concatenate([k0,   k1,   k2  ], axis=0)   # 1080×1920
@@ -1793,24 +1790,9 @@ def _load_eif_frames(path: str, header, progress_cb=None):
 
 def _decode_eif_frame_rgba(u0: bytes, u1: bytes, u2: bytes):
     """Decode three EIF units → full-res 1920×1080 RGBA PIL image."""
-    import numpy as np
-    WIDTH, ROWS = 1920, 360
-
-    def _unit_arrays(raw):
-        words = np.frombuffer(raw, dtype='<u4').reshape(ROWS, WIDTH)
-        key = ((words >> 20) & 0x3FF).astype(np.float32)
-        Y   = ((words >> 10) & 0x3FF).astype(np.float32)
-        C   = ((words >>  0) & 0x3FF).astype(np.float32)
-        Cb = np.empty_like(Y); Cr = np.empty_like(Y)
-        Cb[:, 0::2] = C[:, 0::2]
-        Cb[:, 1::2] = C[:, 0:-1:2]
-        Cr[:, 1::2] = C[:, 1::2]
-        Cr[:, 0::2] = C[:, 1::2]
-        return np.stack([Y, Cb, Cr], axis=2), key
-
-    yuv0, k0 = _unit_arrays(u0)
-    yuv1, k1 = _unit_arrays(u1)
-    yuv2, k2 = _unit_arrays(u2)
+    yuv0, k0 = _eif_parse_unit(u0)
+    yuv1, k1 = _eif_parse_unit(u1)
+    yuv2, k2 = _eif_parse_unit(u2)
 
     yuv_full = np.concatenate([yuv0, yuv1, yuv2], axis=0)
     key_full = np.concatenate([k0,   k1,   k2  ], axis=0)
@@ -2308,7 +2290,7 @@ class SWSPlayer(tk.Toplevel):
         # Status / progress
         status_frame = tk.Frame(self)
         status_frame.pack(fill='x', padx=pad, pady=(0, pad))
-        self._status_var = tk.StringVar(value="Click Open… to select a folder containing SWS, TGA, or video files.")
+        self._status_var = tk.StringVar(value="Click Open… to select an SWS, EIF, TGA, or video file.")
         tk.Label(status_frame, textvariable=self._status_var,
                  font=('Helvetica', 10), anchor='w').pack(side='left', fill='x', expand=True)
         self._progress = ttk.Progressbar(status_frame, length=200, mode='determinate')
@@ -2335,66 +2317,6 @@ class SWSPlayer(tk.Toplevel):
             self._load_tga(path)
         else:
             self._load_video(path)
-
-    def _pick_from_folder(self, items: list, folder_name: str):
-        """Show a single-select dialog listing all playable items in a folder."""
-        result = [None]
-        dlg = tk.Toplevel(self)
-        dlg.title("Open File")
-        dlg.resizable(False, False)
-        dlg.transient(self)
-
-        ttk.Label(dlg, text=f"Folder: {folder_name}",
-                  font=('Helvetica', 11, 'bold')).pack(anchor='w', padx=8, pady=(8, 4))
-
-        list_frame = ttk.Frame(dlg)
-        list_frame.pack(fill='both', expand=True, padx=8, pady=2)
-        lb = tk.Listbox(list_frame, selectmode='single', height=min(len(items), 16),
-                        width=60, font=('Menlo', 11))
-        sb = ttk.Scrollbar(list_frame, command=lb.yview)
-        lb.config(yscrollcommand=sb.set)
-        lb.pack(side='left', fill='both', expand=True)
-        sb.pack(side='right', fill='y')
-
-        for item in items:
-            lb.insert('end', '  ' + item['display'])
-        lb.select_set(0)
-
-        btn_frame = ttk.Frame(dlg)
-        btn_frame.pack(fill='x', padx=8, pady=8)
-
-        def ok():
-            sel = lb.curselection()
-            if sel:
-                result[0] = items[sel[0]]
-            dlg.destroy()
-
-        def cancel():
-            dlg.destroy()
-
-        ttk.Button(btn_frame, text="Cancel", command=cancel).pack(side='right', padx=4)
-        ttk.Button(btn_frame, text="Open",   command=ok).pack(side='right', padx=4)
-        lb.bind('<Double-1>', lambda _e: ok())
-
-        dlg.update_idletasks()
-        px = self.winfo_x() + (self.winfo_width()  - dlg.winfo_width())  // 2
-        py = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{px}+{py}")
-        dlg.grab_set()
-        dlg.focus_force()
-
-        self.wait_window(dlg)
-        return result[0]
-
-    def _load_from_item(self, item: dict):
-        if item['type'] == 'sws':
-            self._load_sws(item['path'])
-        elif item['type'] == 'tga_seq':
-            self._load_tga(item['files'][0])
-        elif item['type'] == 'eif':
-            self._load_eif(item['path'])
-        else:
-            self._load_video(item['path'])
 
     def _reset_display(self):
         self._on_stop()
@@ -3044,7 +2966,6 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
     log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
     log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
 
-    import numpy as np
     with open(eif_path, 'rb') as f:
         for i in range(out_count):
             rgba_frames = []
@@ -3443,132 +3364,6 @@ def _scan_folder_unified(folder: str) -> tuple:
 
     items = seq_items + vid_items + still_items
     return items, 'to_sws_only', has_aud, bool(seq_items)
-
-
-def _scan_folder_for_items(folder: str) -> list:
-    """Scan a folder and return items for the browser.
-    TGA sequences are collapsed to one entry; other files listed individually."""
-    supported = {'.mov', '.mp4', '.avi', '.mxf', '.png', '.bmp', '.jpg', '.jpeg', '.tga'}
-    sequences = _find_tga_sequences(folder)
-    seq_all_frames = {f for _, files in sequences for f in files}
-
-    items = []
-    for base, files in sequences:
-        kw = parse_filename(Path(files[0]).name)
-        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
-        items.append({
-            'type': 'tga_seq', 'base': base, 'files': files, 'source_num': source_num,
-            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
-        })
-
-    for fname in sorted(os.listdir(folder)):
-        fpath = os.path.join(folder, fname)
-        if not os.path.isfile(fpath):
-            continue
-        ext = Path(fname).suffix.lower()
-        if ext not in supported or fpath in seq_all_frames:
-            continue
-        meta = parse_filename(fname)
-        kind = 'clip' if ext in {'.mov', '.mp4', '.avi', '.mxf'} else 'still'
-        items.append({
-            'type': kind, 'path': fpath,
-            'source_num': meta['file_num'] if meta else None,
-            'display': fname,
-        })
-
-    return items
-
-
-def _scan_folder_for_player(folder: str) -> list:
-    """Scan folder for files the player can open. TGA sequences collapsed to one entry."""
-    video_exts = {'.mov', '.mp4', '.avi', '.mxf', '.mkv'}
-    sequences  = _find_tga_sequences(folder)
-    seq_frames = {f for _, files in sequences for f in files}
-    items = []
-
-    for fname in sorted(os.listdir(folder)):
-        fpath = os.path.join(folder, fname)
-        if not os.path.isfile(fpath):
-            continue
-        ext = Path(fname).suffix.lower()
-        if ext == '.sws':
-            try:
-                h = HulaSWSHeader(fpath)
-                tc = _fmt_timecode(h.frame_count, h.fps)
-                display = f"{fname:<28}  {h.standard}  {h.frame_count}fr  {tc}"
-            except Exception:
-                display = fname
-            items.append({'type': 'sws', 'path': fpath, 'display': display})
-        elif ext == '.eif':
-            try:
-                h = EIFHeader(fpath)
-                name = h.clip_name or Path(fname).stem
-                display = f"{fname:<28}  EIF  {h.frame_count}fr  clip: {name}"
-            except Exception:
-                display = fname
-            items.append({'type': 'eif', 'path': fpath, 'display': display})
-
-    for base, files in sequences:
-        items.append({
-            'type': 'tga_seq', 'files': files,
-            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
-        })
-
-    for fname in sorted(os.listdir(folder)):
-        fpath = os.path.join(folder, fname)
-        if not os.path.isfile(fpath):
-            continue
-        if Path(fname).suffix.lower() in video_exts and fpath not in seq_frames:
-            items.append({'type': 'clip', 'path': fpath, 'display': fname})
-
-    return items
-
-
-def _group_files_for_batch(paths: list) -> list:
-    """
-    Group a list of file paths for batch conversion.
-    TGA files with the same base name are combined into a single tga_seq item
-    (all siblings in the folder are collected, not just the selected frames).
-    Other files become individual clip/still items.
-    Returns a list of dicts sorted sequences-first then alphabetically.
-    """
-    tga_groups = {}   # base -> sorted file list (all siblings)
-    others     = []
-
-    for path in sorted(paths):
-        ext = Path(path).suffix.lower()
-        if ext == '.tga':
-            m = _GENERIC_TGA_RE.match(Path(path).stem)
-            if m:
-                base = m.group(1)
-                if base not in tga_groups:
-                    siblings = _tga_sequence_files(path)
-                    if len(siblings) >= 2:
-                        # Check K-Watch naming for embedded slot number
-                        kw = parse_filename(Path(path).name)
-                        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
-                        tga_groups[base] = {'files': siblings, 'source_num': source_num}
-                    else:
-                        meta = parse_filename(Path(path).name)
-                        others.append({'type': 'still', 'path': path,
-                                       'source_num': meta['file_num'] if meta else None})
-            else:
-                meta = parse_filename(Path(path).name)
-                others.append({'type': 'still', 'path': path,
-                               'source_num': meta['file_num'] if meta else None})
-        elif ext in {'.mov', '.mp4', '.avi', '.mxf'}:
-            meta = parse_filename(Path(path).name)
-            others.append({'type': 'clip', 'path': path,
-                           'source_num': meta['file_num'] if meta else None})
-        else:
-            meta = parse_filename(Path(path).name)
-            others.append({'type': 'still', 'path': path,
-                           'source_num': meta['file_num'] if meta else None})
-
-    seq_items = [{'type': 'tga_seq', 'base': base,
-                  'files': info['files'], 'source_num': info['source_num']}
-                 for base, info in sorted(tga_groups.items())]
-    return seq_items + others
 
 
 def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):

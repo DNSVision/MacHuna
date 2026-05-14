@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.1 — 2026-05-14
+
+### Changed — code cleanup
+- Removed five dead functions/methods left over from the folder-picker era: `_pick_from_folder`, `_load_from_item`, `_scan_folder_for_items`, `_scan_folder_for_player`, `_group_files_for_batch`
+- Extracted shared EIF bit-field decode logic into a module-level `_eif_parse_unit` helper; removed duplicated inner `_unit_arrays` functions from `_decode_eif_frame` and `_decode_eif_frame_rgba`
+- Moved `_EIF_UNIT_BYTES` constant to the EIF constants block; removed redundant `import numpy as np` from three functions
+- Fixed Video Player status bar text (still said "select a folder" after switch to file picker)
+
+---
+
 ## v1.6.0 — 2026-05-14
 
 ### Added — EIF read/write (Grass Valley Kayenne native format)
