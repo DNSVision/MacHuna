@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.2 — 2026-05-15
+
+### Fixed
+- **EIF→EIF conversion was silently broken.** The Output dropdown offered "Kayenne EIF" as an output option when the input folder contained EIF files, but `_run_to_eif()` had no handler for EIF input items — they were silently skipped with no output and no error. The option is now removed from the dropdown when the input type is EIF-only or mixed EIF+SWS. SWS→EIF from a mixed folder continues to work correctly via the SWS handler.
+
+---
+
 ## v1.6.1 — 2026-05-14
 
 ### Changed — code cleanup

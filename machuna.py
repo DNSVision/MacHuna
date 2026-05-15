@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3638,7 +3638,7 @@ def launch_gui():
         if itype == 'from_sws':
             opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype in ('from_eif', 'mixed_eif_sws'):
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA, OUTPUT_KAYENNE_EIF]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
         elif itype == 'mov_only':
             opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype == 'to_sws_only':

@@ -75,8 +75,8 @@ A conversion log is written to the destination folder on completion.
 | `.SWS` files only | SWS source | Kahuna SWS, Kayenne MOV, Kayenne TGA, Sony TGA |
 | Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Sony TGA, Kayenne EIF |
 | TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF |
-| `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA, Kayenne EIF |
-| Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, Kayenne TGA, Sony TGA, Kayenne EIF |
+| `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
+| Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of SWS and other non-EIF files | Error — shown in summary | — |
 
 #### Kahuna SWS output options

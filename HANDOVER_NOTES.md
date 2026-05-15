@@ -4,6 +4,18 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (May 2026 — v1.6.2)
+
+### v1.6.2 — EIF→EIF routing bug fixed; doc corrections
+
+- Removed "Kayenne EIF" from the Output dropdown when the input is EIF files (or a mixed EIF+SWS folder). EIF→EIF conversion was never implemented — `_run_to_eif()` has no handler for `item['type'] == 'eif'`, so EIF files were silently skipped. The option is now absent rather than offering a no-op. Sourcing SWS→EIF from a mixed folder still works via the SWS path.
+- Corrected README input detection table (removed Kayenne EIF from EIF source output options).
+- Updated HANDOVER_NOTES v1.5.41 historical notes (internal contradiction: bits[29:20] was described as a "constant framing marker" in the confirmed encoding section, then correctly as the key channel two paragraphs later).
+- Updated Feature Summary to include EIF features.
+- Updated project memory file version.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.6.1)
 
 ### v1.6.1 — Code cleanup
@@ -55,16 +67,15 @@ All EIF write paths are UNCONFIRMED pending a live Kayenne desk test. See DEVELO
 
 EIF pixel format fully reverse-engineered from a real mountain bike clip (UCI DOWNHILL WORLD CUP title card, file `0003.eif`).
 
-**Confirmed EIF pixel encoding:**
-- Each 32-bit LE word = one pixel: `bits[29:20]` = constant framing marker (0x3AC = 940 decimal), `bits[19:10]` = Y luma, `bits[9:0]` = chroma C
+**Confirmed EIF pixel encoding (final — as implemented):**
+- Each 32-bit LE word = one pixel: `bits[29:20]` = key (10-bit limited: 64=transparent, 940=opaque), `bits[19:10]` = Y luma, `bits[9:0]` = chroma C
 - Chroma assignment: **even columns = Cb, odd columns = Cr** (standard 4:2:2 horizontal subsampling)
-- Each unit is **360 rows × 1920 columns** (not 540×1920 as previously assumed)
+- Each unit is **360 rows × 1920 columns** (not 540×1920 as originally assumed)
 - Three units stacked vertically = **1920×1080** complete frame
 
-The previous decode treated the data as standard v210 4-word groups, which forced the constant `0x3AC` framing marker into Cr/Y/Cb positions — producing entirely wrong colours (pink/magenta/wrong-colour output). Images now decode correctly with natural colours.
+Note: v1.5.40 initially interpreted `bits[29:20]` as a "constant framing marker" (because wipe key clips have key=940=fully opaque throughout, which looks like a constant). v1.5.41 confirmed it is the key channel — wipe-pattern clips have key values that vary spatially and temporally. v210-based decode was entirely wrong; the current custom bit-field decode is correct.
 
-**v1.5.41 — key channel confirmed:**
-- `bits[29:20]` of every EIF word = key level (10-bit limited: 64=transparent, 940=opaque)
+**Key channel behaviour (confirmed v1.5.41):**
 - For fill clips (e.g. DOWNHILL title card): key is always 940 = fully opaque
 - For wipe/key clips (e.g. 0301.eif): key ramps from 64 to 940 and back, producing the correct wipe matte
 - `EIFHeader.has_key = True` always; fill, key, and composite panels all populated
@@ -273,7 +284,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.6.1
+- **MacHuna:** v1.6.2
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -362,8 +373,11 @@ git push
 - Audio: 16-bit LE PCM, 16ch, 48kHz, L=Ch1 R=Ch3 (K-Watch mapping)
 - Auto play / Loop play flags
 - Large file support: >4GB split into 2GB FAT32-safe chunks
-- Built-in Video Player (fill, key, composite, audio meters)
+- Built-in Video Player (fill, key, composite, audio meters) -- supports SWS, TGA sequences, MOV/MP4/MXF/AVI, and Kayenne EIF
 - Built-in extraction engine (SWS → Kayenne MOV, Kayenne TGA, Sony TGA)
+- **Kayenne EIF read** -- Video Player opens .eif files with fill, key, and composite panels; frame rate auto-detected from header
+- **Kayenne EIF write** (UNCONFIRMED on hardware) -- converts MOV, TGA sequences, and SWS to .eif with slot-numbered output (0001.eif, 0002.eif...)
+- **Kayenne EIF conversion** (UNCONFIRMED on hardware) -- EIF → Kahuna SWS (lossless YCbCr repack), EIF → Kayenne TGA, EIF → Sony TGA
 - Window size persisted between sessions
 - Settings saved to `~/.kwatch_settings.json`
 
