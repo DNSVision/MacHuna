@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2944,7 +2944,7 @@ def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
 def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
                                           target: str = None,
                                           clip_name: str = 'WIPE',
-                                          field_order: str = 'BFF', log=print):
+                                          field_order: str = 'TFF', log=print):
     """Convert a 50fps EIF to an interlaced TGA sequence by field-weaving frame pairs."""
     if target is None:
         target = HULA_TARGET_KAYENNE_TGA
@@ -2992,7 +2992,7 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
 def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
                                   target: str = HULA_TARGET_SONY_TGA,
                                   clip_name: str = 'WIPE',
-                                  field_order: str = 'BFF', log=print):
+                                  field_order: str = 'TFF', log=print):
     """Convert a progressive SWS to an interlaced TGA sequence by field-weaving.
 
     Each pair of consecutive source frames is woven into one interlaced frame.
@@ -3067,7 +3067,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
 def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                               target: str, standard: str,
                               clip_name: str = 'WIPE',
-                              field_order: str = 'BFF', log=print):
+                              field_order: str = 'TFF', log=print):
     """Convert a MOV file to a TGA sequence using the selected video standard.
 
     Progressive standards → direct frame extraction.
@@ -3184,7 +3184,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
 
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
-                    clip_name: str = 'WIPE', field_order: str = 'BFF',
+                    clip_name: str = 'WIPE', field_order: str = 'TFF',
                     log=print):
     """Convert a list of SWS or MOV files to the specified extraction target."""
     os.makedirs(dest_dir, exist_ok=True)
@@ -3487,7 +3487,7 @@ def launch_gui():
     use_source_num_var    = tk.BooleanVar(value=False)
     eif_slot_var          = tk.StringVar(value='0001')
     clip_name_var         = tk.StringVar(value='WIPE')
-    field_order_var       = tk.StringVar(value='BFF')
+    field_order_var       = tk.StringVar(value='TFF')
     output_var            = tk.StringVar()
 
     # ── Load saved settings ──
@@ -3556,7 +3556,7 @@ def launch_gui():
               foreground='#888888').pack(side='left')
     frm_field_inner = tk.Frame(frm_row_hula_tga)
     ttk.Label(frm_field_inner, text="Field order:").pack(side='left', padx=(0, 4))
-    for _fo in ('BFF', 'TFF'):
+    for _fo in ('TFF', 'BFF'):
         tk.Radiobutton(frm_field_inner, text=_fo,
                        variable=field_order_var, value=_fo).pack(side='left')
 

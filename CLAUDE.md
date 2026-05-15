@@ -50,7 +50,7 @@ MacHuna's extraction logic is correct by code analysis, but the following output
 - **Kayenne TGA output** — frame naming and format unconfirmed
 - **Sony MVS clip naming** — 4-char prefix convention unconfirmed on a live Sony MVS
 - **Interlaced SWS → MOV: interlace metadata** — ProRes container has no field-order flags; unknown whether a Kayenne desk requires them. Potential fix when confirmed: add `-field_order tb` (TFF) or `bb` (BFF) to `_hula_convert_mov` ffmpeg command
-- **Sony MVS 25i field order** — BFF assumed; toggle in UI if incorrect on hardware
+- **Sony MVS 25i field order** — TFF default (on engineer advice); BFF toggle retained in UI if incorrect on hardware
 - **MOV → TGA** — full path coded, never hardware-tested
 
 Full detail in `DEVELOPMENT_NOTES.md` under "Extraction output hardware unknowns".

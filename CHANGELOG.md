@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.3 — 2026-05-15
+
+### Changed
+- **Field order default changed from BFF to TFF.** On engineer advice, TFF is the correct default for 1080i HD in all known workflows. The BFF option is retained in the UI as a fallback. TFF now appears first (left) in the radio button pair. Applies to all TGA extraction outputs (Kayenne TGA, Sony TGA) and EIF→TGA paths.
+
+---
+
 ## v1.6.2 — 2026-05-15
 
 ### Fixed
