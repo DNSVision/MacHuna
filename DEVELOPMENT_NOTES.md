@@ -445,7 +445,7 @@ Note: The Audio Spec.pdf was written before full hex analysis and incorrectly st
 ## Format Transcoding (Progressive → Interlaced)
 
 ### Status
-Implemented in v1.5.18. Field order TFF — consistent with SMPTE spec for 1080i HD, unconfirmed on a 1080i Kahuna setup. Tested on 1080P Kahuna only (see Hardware Test below).
+Implemented in v1.5.18. Field order TFF — consistent with SMPTE spec for 1080i HD. Confirmed on Kahuna hardware (2026-05-15, see Hardware Tests below). Field order TFF vs BFF remains unconfirmed on a 1080i Kahuna setup — tested on 1080P Kahuna only.
 
 ### What it does
 When a progressive source is converted to an interlaced standard, MacHuna uses the ffmpeg `tinterlace` filter to weave pairs of progressive frames into genuine interlaced frames rather than storing progressive data in an interlaced wrapper (which played at double speed on the Kahuna).
@@ -461,9 +461,14 @@ When a progressive source is converted to an interlaced standard, MacHuna uses t
 - File loaded in normal time (~30 seconds, vs 8+ minutes with the mismatched key bug)
 - Playback showed tell-tale interlacing on a 1080P output — expected, not an error
 - Pausing mid-clip showed dithering between fields — confirms the two fields are genuinely temporally distinct (correct tinterlace behaviour, not a progressive wrapper)
-- **Field order TFF unconfirmed** — cannot assess TFF vs BFF on a 1080P Kahuna. Needs test on a 1080i setup: wrong field order shows as motion going the wrong direction on moving content.
+- **Field order TFF unconfirmed on 1080i** — cannot assess TFF vs BFF on a 1080P Kahuna.
 
-### To confirm field order
+### Hardware test (2026-05-15, Kahuna — all three paths confirmed)
+- **1080i/50 MOV → 1080p/50 SWS** — loaded and played at correct speed. Format reported correctly on desk. CONFIRMED.
+- **1080p/50 → 1080i/50 SWS** — regression check passed. Loaded and played correctly. CONFIRMED.
+- **TGA i→i with "TGA source interlaced" checkbox** — correct speed on hardware. CONFIRMED.
+
+### To confirm field order (still outstanding)
 Load the MacHuna P→I output on a Kahuna running in 1080i/50. Play content with clear horizontal motion. Clean motion = TFF correct. Motion artefacts/reversed = switch to `interleave_bottom` (one-character change in `convert_clip`).
 
 ### Key implementation bug fixed in v1.5.18
