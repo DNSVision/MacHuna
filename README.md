@@ -101,7 +101,7 @@ A conversion log is written to the destination folder on completion.
 #### Kayenne EIF output options *(UNCONFIRMED on hardware)*
 
 - **Slot number** — starting slot number for output files (0001, 0002… — 4-digit zero-padded). Increments per batch item. Kayenne requires this naming convention.
-- **TGA source interlaced** — shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source; MacHuna duplicates each frame to produce 50fps progressive EIF.
+- **TGA source interlaced** — shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source; MacHuna deinterlaces each frame using yadif (field separation, TFF) to produce 50fps progressive EIF.
 
 EIF output is always 1920×1080 progressive. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps). An UNCONFIRMED notice appears on the output; awaiting live Kayenne hardware test.
 
