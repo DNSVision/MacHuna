@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.4 — 2026-06-04
+
+### Fixed
+- **TGA→EIF interlaced path now uses yadif deinterlacing instead of frame duplication.** When "Source is interlaced" is ticked, each interlaced TGA frame is now properly separated into two progressive fields using `yadif=mode=send_field:parity=tff`, rather than the previous approach of writing each frame twice in the ffmpeg concat list. The EIF output is the same 50fps format and frame count, but motion is correctly rendered (smooth, no comb artefacts from duplicated fields). TFF parity is explicit per SMPTE 274M.
+
+---
+
 ## v1.6.3 — 2026-05-15
 
 ### Changed

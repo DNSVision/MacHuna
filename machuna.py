@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1180,37 +1180,34 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     dest_path = os.path.join(dest_dir, (out_name or clip_name) + '.eif')
 
     if source_interlaced:
-        # Interlaced source → duplicate each frame for 25fps→50fps progressive output
+        # Interlaced source → deinterlace with yadif (send_field) to 50fps progressive output.
+        # Each interlaced frame yields 2 progressive frames (one per field), TFF per SMPTE 274M.
         fps_out = 50.0
         info = get_video_info(tga_files[0])
         has_alpha = info['has_alpha']
-        log(f"Converting TGA sequence to EIF (interlaced→progressive): "
-            f"{len(tga_files)} frame(s) @ {fps_out:.0f}fps → {os.path.basename(dest_path)}")
+        log(f"Converting TGA sequence to EIF (interlaced→progressive via yadif): "
+            f"{len(tga_files)} frame(s) → {os.path.basename(dest_path)}")
 
         with tempfile.TemporaryDirectory() as tmp:
             concat_file = os.path.join(tmp, 'concat.txt')
             with open(concat_file, 'w') as cf:
                 for tga in tga_files:
                     cf.write(f"file '{tga}'\n")
-                    cf.write(f"file '{tga}'\n")  # duplicate for i→p
 
             fill_v210 = os.path.join(tmp, 'fill.v210')
             ffmpeg = _get_ffmpeg_path('ffmpeg')
-            vf = 'scale=1920:1080' if info['width'] != 1920 or info['height'] != 1080 else None
-            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
-            if vf:
-                cmd += ['-vf', vf]
-            cmd += ['-colorspace', 'bt709', '-color_range', 'tv',
-                    '-f', 'rawvideo', '-vcodec', 'v210', fill_v210]
+            needs_scale = info['width'] != 1920 or info['height'] != 1080
+            vf = 'yadif=mode=send_field:parity=tff,scale=1920:1080' if needs_scale else 'yadif=mode=send_field:parity=tff'
+            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
+                   '-vf', vf, '-colorspace', 'bt709', '-color_range', 'tv',
+                   '-f', 'rawvideo', '-vcodec', 'v210', fill_v210]
             _run_ffmpeg(cmd, check=True)
             _byteswap_v210(fill_v210)
 
             key_v210 = None
             if has_alpha:
                 key_v210 = os.path.join(tmp, 'key.v210')
-                vf_key = 'alphaextract'
-                if vf:
-                    vf_key = f'{vf_key},{vf}'
+                vf_key = 'alphaextract,yadif=mode=send_field:parity=tff,scale=1920:1080' if needs_scale else 'alphaextract,yadif=mode=send_field:parity=tff'
                 cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
                            '-vf', vf_key, '-f', 'rawvideo', '-vcodec', 'v210', key_v210]
                 if _run_ffmpeg(cmd_key).returncode != 0:
