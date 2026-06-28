@@ -16,7 +16,9 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - **Reads and writes Grass Valley Kayenne `.eif` native clips** *(UNCONFIRMED on hardware — awaiting live Kayenne desk test)*
   - Converts MOV, TGA sequences, and SWS files to `.eif` (slot naming 0001.eif, 0002.eif…)
   - Converts `.eif` files back to Kahuna SWS (lossless direct YCbCr repack), Kayenne TGA, or Sony TGA
-- Extracts `.SWS` files to Kayenne MOV, Kayenne TGA, or Sony TGA format
+- Converts `.SWS` files to other standards within the same format — interlaced↔progressive SWS re-encoding using `tinterlace` (P→I) or `yadif` (I→P); source interlace auto-detected from the SWS header
+- Converts TGA sequences and video clips to TGA Sequence output — interlaced↔progressive conversion; frames written to a named subfolder
+- Extracts `.SWS` files to Kayenne TGA or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
 - Audio support -- 16-bit PCM, 16 channels, correct K-Watch channel mapping (L=Ch1, R=Ch3)
@@ -72,9 +74,9 @@ A conversion log is written to the destination folder on completion.
 
 | Files in folder | Detected as | Available outputs |
 |---|---|---|
-| `.SWS` files only | SWS source | Kahuna SWS, Kayenne MOV, Kayenne TGA, Sony TGA |
-| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Sony TGA, Kayenne EIF |
-| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF |
+| `.SWS` files only | SWS source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA |
+| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA, TGA Sequence |
+| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF, TGA Sequence |
 | `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of SWS and other non-EIF files | Error — shown in summary | — |
@@ -105,6 +107,13 @@ A conversion log is written to the destination folder on completion.
 
 EIF output is always 1920×1080 progressive. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps). An UNCONFIRMED notice appears on the output; awaiting live Kayenne hardware test.
 
+#### TGA Sequence output options
+
+- **Standard** — controls the conversion direction. Selecting an interlaced standard (e.g. 1080i/50) with a progressive source applies `tinterlace=mode=interleave_top` to produce genuinely interlaced output (frame count halves). Selecting a progressive standard with an interlaced source applies yadif.
+- **TGA source interlaced** — shown when input is a TGA sequence. Tick when the source frames are from an interlaced source (e.g. extracted from 1080i/50 SWS).
+
+Output frames are written as `0001.tga, 0002.tga…` in a subfolder named after the source sequence or clip, inside the destination folder. One subfolder per input item.
+
 ### Video Player
 
 Click the **Video Player** button to open the built-in preview player. Displays fill, key, composite, and audio meters with full transport controls.
@@ -128,11 +137,13 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 
 ### From SWS
 
-- **Kayenne MOV** *(UNCONFIRMED on hardware — awaiting live Kayenne desk test)* -- ProRes 4444 with embedded alpha, for Grass Valley Kayenne ClipStore / Image Store
+- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses `yadif`.
 - **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 
 For TGA targets, choose the **Standard** from the dropdown. For progressive standards, frames are extracted as-is. For interlaced standards, pairs of progressive source frames are field-woven into interlaced output. If the source SWS is already interlaced, frames are passed through directly with a log note. A **BFF/TFF field order** toggle appears for interlaced selections and always for Sony TGA. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import).
+
+For Kahuna SWS output, the Standard dropdown controls the output standard and conversion direction. The Split >4GB and Ignore alpha options apply.
 
 ### From EIF *(UNCONFIRMED on hardware)*
 
@@ -163,11 +174,9 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 ### Extraction outputs -- pending hardware verification
 All items below are coded and working by analysis; hardware tests on Kayenne and Sony MVS desks are needed to confirm.
-- Kayenne MOV output -- ProRes 4444 with correct fps, BT.709; never loaded on a live Kayenne ClipStore
 - Kayenne TGA output -- frame naming and format assumed correct; unconfirmed
 - Sony MVS clip naming -- 4-char prefix + frame number convention unconfirmed on a live Sony MVS
-- Interlaced SWS → Kayenne MOV -- interlace metadata (field order flags) not written to ProRes container; unknown whether a Kayenne desk requires it
-- Sony MVS 25i field order -- BFF assumed for PAL/50Hz; toggle present if incorrect
+- Sony MVS 25i field order -- TFF default (engineer advice); toggle present if incorrect
 - MOV → TGA -- full path coded, never hardware-tested
 - EIF → Kayenne TGA / EIF → Sony TGA -- coded and working by analysis; never hardware-tested
 

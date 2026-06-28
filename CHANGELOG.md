@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.5 — 2026-06-28
+
+### Added
+- **SWS→SWS standards conversion (interlaced↔progressive).** When the input is SWS files, the Output dropdown now includes "Kahuna SWS". Selecting it converts between standards — e.g. a progressive SWS collection can be re-output as interlaced SWS, or vice versa, with the Standard dropdown controlling the target. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses `yadif=mode=send_field:parity=tff` (doubles frame count for higher target fps) or `yadif=mode=send_frame:parity=tff` (same frame count). Source interlace state is auto-detected from the SWS header — no user checkbox needed. Implemented as a two-step pipeline: frames extracted to a temporary TGA sequence, then re-encoded to SWS via the existing TGA→SWS path.
+- **TGA Sequence output.** A new "TGA Sequence" output option appears when the input is TGA sequences or video clips. Converts between formats — useful for i↔p standards conversion within the TGA format. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses yadif. For TGA input, source interlace state is set by the existing "TGA source interlaced" checkbox. Output frames are named `0001.tga, 0002.tga…` in a subfolder named after the source sequence or clip, inside the destination folder.
+
+### Removed
+- **Kayenne MOV removed from SWS output options.** The "Kayenne MOV" option has been removed from the Output dropdown when the input is SWS files. The format was unconfirmed on hardware and is withdrawn until it can be verified and offered consistently across all input types. Kayenne TGA, Kayenne EIF, and Sony TGA remain as SWS extraction targets.
+
+---
+
 ## v1.6.4 — 2026-06-04
 
 ### Fixed

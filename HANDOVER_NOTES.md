@@ -4,6 +4,34 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (June 2026 — v1.6.5)
+
+### v1.6.5 — SWS→SWS conversion + TGA Sequence output + Kayenne MOV removed
+
+**SWS→SWS standards conversion (i↔p):**
+- "Kahuna SWS" added to the Output dropdown when input type is `from_sws`.
+- Routed through `_run_to_sws()` → new `sws` branch: extracts SWS frames to a temp TGA dir via `_hula_convert_tga`, then calls `convert_tga_sequence` to re-encode.
+- Source interlace auto-detected from SWS header (`'i' in HulaSWSHeader.standard`) — no user checkbox.
+- I→P uses `yadif=mode=send_field:parity=tff` (target fps > source fps) or `yadif=mode=send_frame:parity=tff` (same/lower). P→I uses `tinterlace=mode=interleave_top`. Passed via new `_vf_override` parameter on `convert_tga_sequence` to bypass the existing frame-duplication path for i→p.
+
+**TGA Sequence output:**
+- New constant `OUTPUT_TGA_SEQ = "TGA Sequence"` added to output constants.
+- Appears in `to_sws_only` (TGA/stills input) and `mov_only` (video clip input) dropdown options.
+- New function `_run_to_tga_seq()` handles conversion via ffmpeg concat demuxer (TGA input) or direct `-i` (clip input). P→I: tinterlace. I→P: yadif. Passthrough: no filter.
+- Routed in `worker()` via `elif out == OUTPUT_TGA_SEQ`.
+- "TGA source interlaced" checkbox is shown when input has TGA sequences.
+- Output: `0001.tga, 0002.tga…` in `{dest}/{sequence_base}/` subfolder.
+
+**Kayenne MOV removed from SWS output options:**
+- Removed from `_update_output_options()` `from_sws` branch.
+- Removed from `_run_from_sws()` `target_map`.
+- Withdrawn because it was unconfirmed on hardware and not consistently available across all input types.
+
+**`convert_tga_sequence` change:**
+- Added `_vf_override: str = None` parameter (internal). When set, bypasses automatic filter detection and uses the supplied ffmpeg filter string directly. Also suppresses frame duplication in the concat file (`do_i_to_p = False`). Used by the SWS→SWS i→p path to apply yadif. Default is None — no change to existing callers.
+
+---
+
 ## Recent Session Notes (May 2026 — v1.6.2)
 
 ### v1.6.2 — EIF→EIF routing bug fixed; doc corrections
@@ -284,7 +312,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.6.4
+- **MacHuna:** v1.6.5
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

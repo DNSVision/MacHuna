@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -804,7 +804,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          auto_play: bool = False,
                          loop_play: bool = False,
                          write_log: bool = True,
-                         source_interlaced: bool = False):
+                         source_interlaced: bool = False,
+                         _vf_override: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
@@ -820,7 +821,10 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     #       duplicate each frame to preserve duration
     do_i_to_p = source_interlaced and video_standard not in _interlaced_standards
 
-    if do_p_to_i:
+    if _vf_override is not None:
+        vf_tinterlace = _vf_override
+        do_i_to_p = False   # suppress frame duplication in concat file
+    elif do_p_to_i:
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
     elif do_i_to_p:
@@ -3465,6 +3469,7 @@ def launch_gui():
     OUTPUT_KAYENNE_TGA = "Kayenne TGA"
     OUTPUT_KAYENNE_EIF = "Kayenne EIF"
     OUTPUT_SONY_TGA    = "Sony TGA"
+    OUTPUT_TGA_SEQ     = "TGA Sequence"
 
     # ── State ──
     _selected_items  = []
@@ -3629,17 +3634,22 @@ def launch_gui():
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
             frm_row_eif.pack(**bf)
+        elif out == OUTPUT_TGA_SEQ:
+            chk_tga_int.pack_forget()
+            if _has_tga_seq[0]:
+                chk_tga_int.pack(side='left', **pad)
+                frm_row_tga_opts.pack(**bf)
 
     def _update_output_options():
         itype = _input_type[0]
         if itype == 'from_sws':
-            opts = [OUTPUT_KAYENNE_MOV, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
         elif itype in ('from_eif', 'mixed_eif_sws'):
             opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
         elif itype == 'mov_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         elif itype == 'to_sws_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF, OUTPUT_TGA_SEQ]
         else:
             opts = []
         output_cb['values'] = opts
@@ -3841,6 +3851,46 @@ def launch_gui():
                             write_log=False,
                             source_interlaced=source_interlaced_var.get())
                         results.append((fnum, item['base'].rstrip('._- '), 'OK'))
+                    elif item['type'] == 'sws':
+                        src_hdr = HulaSWSHeader(item['path'])
+                        src_interlaced = 'i' in src_hdr.standard
+                        out_std = std_var.get()
+                        out_interlaced = 'i' in out_std
+                        stem = Path(item['path']).stem
+                        tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
+                        with tempfile.TemporaryDirectory() as _tmp_sws:
+                            tga_dir = _hula_convert_tga(
+                                item['path'], _tmp_sws,
+                                target=HULA_TARGET_KAYENNE_TGA, log=log)
+                            tga_files_sws = sorted(
+                                str(p) for p in Path(tga_dir).glob('*.tga'))
+                            if not tga_files_sws:
+                                raise ValueError(
+                                    f"No frames extracted from {Path(item['path']).name}")
+                            if src_interlaced and not out_interlaced:
+                                vf_sws = ('yadif=mode=send_field:parity=tff'
+                                          if tgt_fps > src_hdr.fps
+                                          else 'yadif=mode=send_frame:parity=tff')
+                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
+                                    f" (interlaced→progressive via yadif)")
+                            else:
+                                vf_sws = None
+                                if not src_interlaced and out_interlaced:
+                                    log(f"  {stem}: {src_hdr.standard} → {out_std}"
+                                        f" (progressive→interlaced TFF)")
+                                else:
+                                    log(f"  {stem}: {src_hdr.standard} → {out_std}"
+                                        f" (passthrough)")
+                            convert_tga_sequence(
+                                tga_files_sws, fnum, d, out_std,
+                                split_var.get(), False, log,
+                                ignore_alpha=ignore_alpha_var.get(),
+                                auto_play=auto_play_var.get(),
+                                loop_play=loop_play_var.get(),
+                                write_log=False,
+                                source_interlaced=False,
+                                _vf_override=vf_sws)
+                        results.append((fnum, stem, 'OK'))
                     elif item['type'] == 'clip':
                         convert_clip(
                             item['path'], fnum, d,
@@ -3870,7 +3920,6 @@ def launch_gui():
 
         def _run_from_sws():
             target_map = {
-                OUTPUT_KAYENNE_MOV: HULA_TARGET_KAYENNE_MOV,
                 OUTPUT_KAYENNE_TGA: HULA_TARGET_KAYENNE_TGA,
                 OUTPUT_SONY_TGA:    HULA_TARGET_SONY_TGA,
             }
@@ -3922,6 +3971,84 @@ def launch_gui():
                 _write_batch_log(results, d, std_var.get(), log)
             root.after(0, lambda v=next_slot: eif_slot_var.set(f"{v:04d}"))
 
+        def _run_to_tga_seq():
+            ffmpeg = _get_ffmpeg_path('ffmpeg')
+            out_std = std_var.get()
+            out_interlaced = 'i' in out_std
+            tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
+            results = []
+            cancelled = False
+            for item in _selected_items:
+                if batch_cancel_event.is_set():
+                    log("Batch cancelled.")
+                    cancelled = True
+                    break
+                try:
+                    if item['type'] == 'tga_seq':
+                        base = item['base'].rstrip('._- ') or 'CLIP'
+                        tga_files = sorted(item['files'])
+                        src_interlaced = source_interlaced_var.get()
+                        if src_interlaced and not out_interlaced:
+                            vf = ('yadif=mode=send_field:parity=tff' if tgt_fps > 30
+                                  else 'yadif=mode=send_frame:parity=tff')
+                            log(f"  TGA→TGA: {base} — interlaced→progressive via yadif ({out_std})")
+                        elif not src_interlaced and out_interlaced:
+                            vf = 'tinterlace=mode=interleave_top'
+                            log(f"  TGA→TGA: {base} — progressive→interlaced TFF ({out_std})")
+                        else:
+                            vf = None
+                            log(f"  TGA→TGA: {base} — passthrough ({out_std})")
+                        out_dir = os.path.join(d, base)
+                        os.makedirs(out_dir, exist_ok=True)
+                        with tempfile.TemporaryDirectory() as tmp:
+                            concat_file = os.path.join(tmp, 'concat.txt')
+                            with open(concat_file, 'w') as cf:
+                                for f in tga_files:
+                                    cf.write(f"file '{f}'\n")
+                            out_pattern = os.path.join(out_dir, '%04d.tga')
+                            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
+                                   '-i', concat_file]
+                            if vf:
+                                cmd += ['-vf', vf]
+                            cmd += ['-start_number', '1', out_pattern]
+                            _run_ffmpeg(cmd, check=True)
+                        count = len(list(Path(out_dir).glob('*.tga')))
+                        log(f"  Done → {out_dir}  ({count} frames)")
+                        results.append((base, base, 'OK'))
+                    elif item['type'] == 'clip':
+                        name = Path(item['path']).stem
+                        info = get_video_info(item['path'])
+                        src_interlaced = info.get('is_interlaced', False)
+                        src_fps = info.get('fps', 25.0)
+                        if src_interlaced and not out_interlaced:
+                            vf = ('yadif=mode=send_field:parity=tff' if tgt_fps > src_fps
+                                  else 'yadif=mode=send_frame:parity=tff')
+                            log(f"  Clip→TGA: {name} — interlaced→progressive via yadif ({out_std})")
+                        elif not src_interlaced and out_interlaced:
+                            vf = 'tinterlace=mode=interleave_top'
+                            log(f"  Clip→TGA: {name} — progressive→interlaced TFF ({out_std})")
+                        else:
+                            vf = None
+                            log(f"  Clip→TGA: {name} — passthrough ({out_std})")
+                        out_dir = os.path.join(d, name)
+                        os.makedirs(out_dir, exist_ok=True)
+                        out_pattern = os.path.join(out_dir, '%04d.tga')
+                        cmd = [ffmpeg, '-y', '-i', item['path']]
+                        if vf:
+                            cmd += ['-vf', vf]
+                        cmd += ['-start_number', '1', out_pattern]
+                        _run_ffmpeg(cmd, check=True)
+                        count = len(list(Path(out_dir).glob('*.tga')))
+                        log(f"  Done → {out_dir}  ({count} frames)")
+                        results.append((name, name, 'OK'))
+                except Exception as e:
+                    import traceback
+                    name = item.get('base') or Path(item.get('path', '')).name
+                    log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
+                    results.append((name, name, f'ERROR: {e}'))
+            if results and not cancelled:
+                _write_batch_log(results, d, std_var.get(), log)
+
         def worker():
             batch_cancel_event.clear()
             root.after(0, lambda: cancel_btn.config(state='normal'))
@@ -3931,6 +4058,8 @@ def launch_gui():
                     _run_to_sws()
                 elif out == OUTPUT_KAYENNE_EIF:
                     _run_to_eif()
+                elif out == OUTPUT_TGA_SEQ:
+                    _run_to_tga_seq()
                 else:
                     _run_from_sws()
             finally:
