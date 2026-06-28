@@ -4,6 +4,18 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Recent Session Notes (June 2026 — v1.6.6)
+
+### v1.6.6 — Sony TGA output for TGA sequence input
+
+- `OUTPUT_SONY_TGA` added to `to_sws_only` output options in `_update_output_options()`.
+- `_update_adaptive_controls()` Sony TGA branch now also shows `chk_tga_int` ("TGA source interlaced") when `_has_tga_seq[0]` is set.
+- `worker()` routing: `elif out == OUTPUT_TGA_SEQ or (out == OUTPUT_SONY_TGA and itype == 'to_sws_only')` routes to `_run_to_tga_seq()` instead of falling through to `_run_from_sws()`.
+- `_run_to_tga_seq()` extended: detects `is_sony = (out == OUTPUT_SONY_TGA)` at the top. When Sony: output folder is the 4-char clip name (`cn`), output pattern is `CN%04d.tga`, start number is `0` (Sony 0-based). Otherwise unchanged.
+- Existing guards (4-char clip name validation, single-clip guard) already applied to all `OUTPUT_SONY_TGA` cases — no changes needed there.
+
+---
+
 ## Recent Session Notes (June 2026 — v1.6.5)
 
 ### v1.6.5 — SWS→SWS conversion + TGA Sequence output + Kayenne MOV removed
@@ -312,7 +324,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.6.5
+- **MacHuna:** v1.6.6
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

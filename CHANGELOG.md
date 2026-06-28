@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.6 — 2026-06-28
+
+### Added
+- **Sony TGA output for TGA sequence input.** Sony TGA now appears in the Output dropdown when the input is TGA sequences or stills. Enables direct TGA→Sony TGA conversion with full interlaced↔progressive handling — tick "TGA source interlaced" to indicate the source field state, select the target standard, and enter the 4-character clip name. Output frames are named `CN0000.tga, CN0001.tga…` in a `CN/` subfolder, matching the Sony MVS naming convention. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses yadif.
+
+---
+
 ## v1.6.5 — 2026-06-28
 
 ### Added

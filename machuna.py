@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3623,11 +3623,15 @@ def launch_gui():
             is_sony = (out == OUTPUT_SONY_TGA)
             frm_clip_inner.pack_forget()
             frm_field_inner.pack_forget()
+            chk_tga_int.pack_forget()
             if is_sony:
                 frm_clip_inner.pack(side='left', padx=(8, 0), pady=4)
             if is_sony or is_interlaced_std:
                 frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
                 frm_row_hula_tga.pack(**bf)
+            if is_sony and _has_tga_seq[0]:
+                chk_tga_int.pack(side='left', **pad)
+                frm_row_tga_opts.pack(**bf)
         elif out == OUTPUT_KAYENNE_EIF:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
@@ -3649,7 +3653,7 @@ def launch_gui():
         elif itype == 'mov_only':
             opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         elif itype == 'to_sws_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF, OUTPUT_TGA_SEQ]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         else:
             opts = []
         output_cb['values'] = opts
@@ -3976,6 +3980,8 @@ def launch_gui():
             out_std = std_var.get()
             out_interlaced = 'i' in out_std
             tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
+            is_sony = (out == OUTPUT_SONY_TGA)
+            cn = clip_name_var.get().strip().upper() if is_sony else None
             results = []
             cancelled = False
             for item in _selected_items:
@@ -3998,19 +4004,19 @@ def launch_gui():
                         else:
                             vf = None
                             log(f"  TGA→TGA: {base} — passthrough ({out_std})")
-                        out_dir = os.path.join(d, base)
+                        out_dir = os.path.join(d, cn if is_sony else base)
                         os.makedirs(out_dir, exist_ok=True)
                         with tempfile.TemporaryDirectory() as tmp:
                             concat_file = os.path.join(tmp, 'concat.txt')
                             with open(concat_file, 'w') as cf:
                                 for f in tga_files:
                                     cf.write(f"file '{f}'\n")
-                            out_pattern = os.path.join(out_dir, '%04d.tga')
+                            out_pattern = os.path.join(out_dir, f'{cn}%04d.tga' if is_sony else '%04d.tga')
                             cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                                    '-i', concat_file]
                             if vf:
                                 cmd += ['-vf', vf]
-                            cmd += ['-start_number', '1', out_pattern]
+                            cmd += ['-start_number', '0' if is_sony else '1', out_pattern]
                             _run_ffmpeg(cmd, check=True)
                         count = len(list(Path(out_dir).glob('*.tga')))
                         log(f"  Done → {out_dir}  ({count} frames)")
@@ -4030,13 +4036,13 @@ def launch_gui():
                         else:
                             vf = None
                             log(f"  Clip→TGA: {name} — passthrough ({out_std})")
-                        out_dir = os.path.join(d, name)
+                        out_dir = os.path.join(d, cn if is_sony else name)
                         os.makedirs(out_dir, exist_ok=True)
-                        out_pattern = os.path.join(out_dir, '%04d.tga')
+                        out_pattern = os.path.join(out_dir, f'{cn}%04d.tga' if is_sony else '%04d.tga')
                         cmd = [ffmpeg, '-y', '-i', item['path']]
                         if vf:
                             cmd += ['-vf', vf]
-                        cmd += ['-start_number', '1', out_pattern]
+                        cmd += ['-start_number', '0' if is_sony else '1', out_pattern]
                         _run_ffmpeg(cmd, check=True)
                         count = len(list(Path(out_dir).glob('*.tga')))
                         log(f"  Done → {out_dir}  ({count} frames)")
@@ -4058,7 +4064,7 @@ def launch_gui():
                     _run_to_sws()
                 elif out == OUTPUT_KAYENNE_EIF:
                     _run_to_eif()
-                elif out == OUTPUT_TGA_SEQ:
+                elif out == OUTPUT_TGA_SEQ or (out == OUTPUT_SONY_TGA and itype == 'to_sws_only'):
                     _run_to_tga_seq()
                 else:
                     _run_from_sws()
