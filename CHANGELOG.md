@@ -16,6 +16,9 @@ All notable changes to MacHuna are documented here.
 ### Investigated — no change
 - **TGA-Sequence / Sony-TGA output alpha.** A review flagged that `yadif`/`tinterlace` might drop the key/alpha on these outputs. Verified empirically (RGBA test frames pushed through both filters, alpha channel measured before/after) that **alpha is preserved correctly** and the output TGAs retain their alpha — no code change required. Recorded here and in DEVELOPMENT_NOTES to prevent re-investigation.
 
+### Documentation
+- **USER_MANUAL brought fully current and a formatted PDF added.** Removed all Kayenne MOV output references (withdrawn v1.6.5), corrected the field-order default to TFF (BFF is the fallback, per v1.6.3), rebuilt the input→output tables to match `_update_output_options()` exactly, and documented the newer SWS→SWS, TGA-Sequence and Sony-TGA-from-TGA outputs. A styled PDF (`MacHuna_User_Manual.pdf`) is generated from the Markdown via `pandoc … --pdf-engine=weasyprint -c manual_style.css`.
+
 ---
 
 ## v1.6.8 — 2026-07-08

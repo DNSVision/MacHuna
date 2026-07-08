@@ -1,4 +1,4 @@
-# MacHuna v1.6.2 — User Manual
+# MacHuna v1.6.9 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -40,9 +40,9 @@ It is a Mac-native alternative to the Windows-only K-Watch application included 
 | Kayenne EIF | MOV, MP4, MXF, TGA sequences, `.SWS` | `.EIF` (Grass Valley Kayenne) *(UNCONFIRMED on hardware)* |
 | Kayenne EIF → SWS | `.EIF` | `.SWS` (Grass Valley Kahuna) *(UNCONFIRMED on hardware)* |
 | Kayenne EIF → TGA | `.EIF` | 32-bit RGBA TGA sequence *(UNCONFIRMED on hardware)* |
-| Kayenne MOV | `.SWS` | ProRes 4444 MOV with embedded alpha *(UNCONFIRMED on hardware)* |
-| Kayenne TGA | `.SWS` | 32-bit RGBA TGA sequence *(UNCONFIRMED on hardware)* |
-| Sony TGA | `.SWS` | 32-bit RGBA TGA sequence (Sony MVS naming) |
+| Kayenne TGA | `.SWS`, `.EIF` | 32-bit RGBA TGA sequence *(UNCONFIRMED on hardware)* |
+| Sony TGA | `.SWS`, `.EIF`, TGA sequences | 32-bit RGBA TGA sequence (Sony MVS naming) |
+| TGA Sequence | TGA sequences, video clips | 32-bit RGBA TGA sequence (i↔p standards conversion) |
 
 ### 1.2 Supported Standards
 
@@ -127,11 +127,11 @@ MacHuna reads the contents of the folder you open and determines the input type 
 
 | Files found in folder | Detected as | Available outputs |
 |---|---|---|
-| `.SWS` files only | SWS source | Kahuna SWS, Kayenne MOV, Kayenne TGA, Sony TGA |
+| `.SWS` files only | SWS source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA |
 | `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of `.EIF` and `.SWS` files | EIF + SWS source | Kahuna SWS, Kayenne TGA, Sony TGA |
-| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Sony TGA, Kayenne EIF |
-| TGA sequences and/or stills | TGA / stills source | Kahuna SWS, Kayenne EIF |
+| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA, TGA Sequence |
+| TGA sequences and/or stills | TGA / stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence |
 | Mix of SWS and other files | Error — shown in summary | — |
 
 > **NOTE** If you see a "mixed input" error, the folder contains both `.SWS` files and other file types. Move them into separate folders and convert each folder independently.
@@ -242,13 +242,14 @@ The built-in Video Player opens `.EIF` files directly. Frame rate is detected au
 ## 7. Extraction Outputs — Kayenne and Sony MVS
 
 > **IMPORTANT — Hardware Status**
-> The extraction output paths have been confirmed correct by code analysis. However, Kayenne MOV and Kayenne TGA outputs have **never been loaded on a live Kayenne desk**, and Sony TGA clip naming has **never been verified on a live Sony MVS**. MacHuna will warn you before converting to these targets. Use with that caveat in mind and verify the first import on your desk carefully.
+> The extraction output paths have been confirmed correct by code analysis. However, Kayenne TGA output has **never been loaded on a live Kayenne desk**, and Sony TGA clip naming has **never been verified on a live Sony MVS**. MacHuna will warn you before converting to these targets. Use with that caveat in mind and verify the first import on your desk carefully.
+>
+> *(The former Kayenne MOV output was withdrawn in v1.6.5 — it was never confirmed on hardware and could not be offered consistently across input types.)*
 
 ### 7.1 Output Targets
 
 | Output | Format | Destination desk |
 |---|---|---|
-| **Kayenne MOV** | ProRes 4444 with embedded alpha. BT.709. Audio muxed if present. | Grass Valley Kayenne ClipStore / Image Store |
 | **Kayenne TGA** | 32-bit RGBA TGA sequence. Frames numbered `0001.tga` onwards. One subfolder per SWS. | Grass Valley Kayenne Image Store |
 | **Sony TGA** | 32-bit RGBA TGA sequence. Frames numbered `XXXX0000.tga` (4-character clip name + frame number). One subfolder per SWS. | Sony MVS Image Store |
 
@@ -270,7 +271,7 @@ MacHuna logs a note describing what it did for each file.
 
 ### 7.4 Field Order (TGA outputs)
 
-A **BFF / TFF** toggle appears for interlaced standards, and always for Sony TGA. BFF (Bottom Field First) is assumed for PAL/50Hz. If you see motion artefacts or comb effects on the desk after import, switch to TFF and reconvert.
+A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA. **TFF (Top Field First) is the default** — it is the SMPTE standard for HD (including 1080i) and is correct for all known 1080i HD workflows (default since v1.6.3). If you see motion artefacts or comb effects on the desk after import, switch to BFF and reconvert.
 
 ### 7.5 Sony TGA — Clip Name
 
@@ -278,21 +279,12 @@ Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in 
 
 If you are converting multiple distinct clips in one batch, be aware they will all share the same clip name. Convert each clip separately if they need to appear as separate clips on the desk.
 
-### 7.6 Kayenne MOV — Include Audio
-
-If the source `.SWS` files contain audio, an **Include audio** option appears. Tick this to mux the audio into the ProRes MOV output.
-
-### 7.7 Output Structure
+### 7.6 Output Structure
 
 | Output | File naming |
 |---|---|
-| Kayenne MOV | `0001.mov`, `0002.mov` … written flat into the Destination Folder |
 | Kayenne TGA | Subfolder per SWS, named after the SWS stem. Frames `0001.tga` … inside. |
 | Sony TGA | Subfolder per SWS, named after the 4-character clip name. Frames `XXXX0000.tga` … inside. |
-
-### 7.8 ProRes 4444 Round-Trip Quality
-
-Converting SWS → Kayenne MOV → SWS involves a YCbCr/RGB/YCbCr colour space round-trip and ProRes encoding. ProRes 4444 is a high-quality intermediate and the generational loss per pass is very small, but it is not lossless. For production use, a single conversion pass is the intended workflow.
 
 ---
 
@@ -326,6 +318,10 @@ Select this entry and convert as normal. MacHuna handles the frame ordering auto
 If you are re-wrapping TGA frames that were previously extracted from an interlaced SWS (e.g. via MacHuna's extraction outputs), tick **TGA source interlaced**. This tells MacHuna to pass frames through directly without applying field-weaving. Without this, MacHuna would incorrectly treat the already-interlaced frames as progressive and weave them again.
 
 When **TGA source interlaced** is ticked and you select a **progressive** target standard (e.g. 1080p/50), MacHuna deinterlaces the frames using yadif (`send_field`, TFF per SMPTE 274M) rather than duplicating them — each interlaced frame is separated into two progressive fields, doubling the frame count with correct, smooth motion. Any alpha/key channel is deinterlaced with the identical filter so fill and key stay aligned.
+
+### 8.3 TGA Sequence Output
+
+When the input is a TGA sequence or a video clip, **TGA Sequence** appears as an output option. This re-writes the frames as a new numbered TGA sequence in a subfolder, applying an interlaced↔progressive conversion according to the selected **Standard** — useful for converting a sequence between field standards without going through SWS. Progressive→interlaced uses field-weaving (`tinterlace`, TFF); interlaced→progressive uses yadif deinterlacing. The alpha/key channel is preserved throughout.
 
 ### 8.3 Alpha Channel
 
@@ -505,11 +501,11 @@ Bit 15 (`0x8000`) of `0x188` is set for all interlaced standards. The standard c
 
 ### Extraction output not loading on Kayenne or Sony MVS
 
-- Note that Kayenne MOV and Kayenne TGA outputs have not been confirmed on a live Kayenne desk
+- Note that Kayenne TGA output has not been confirmed on a live Kayenne desk
 - Sony TGA clip naming has not been confirmed on a live Sony MVS
 - Check that the correct Standard is selected for the target desk's video format
 - For Sony TGA: confirm the 4-character clip name matches your expected import workflow
-- For interlaced output: if motion artefacts appear, try switching the Field Order toggle (BFF ↔ TFF)
+- For interlaced output: if motion artefacts appear, try switching the Field Order toggle (TFF ↔ BFF; TFF is the default)
 
 ### EIF file not loading on Kayenne desk
 
@@ -541,7 +537,8 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 - **HLG Rec.2020** colour space is not implemented (requires a reference HLG .SWS file to reverse-engineer the header values)
 - **EIF write and conversion** — coded and working by analysis, but not yet confirmed on a live Kayenne desk. MacHuna warns before converting to or from EIF. Verify your first import carefully.
 - **EIF audio** — companion `.eaf` audio files used by some Kayenne clips are not currently supported. EIF files are always loaded without audio in the Video Player.
-- **Extraction outputs unconfirmed on hardware** — Kayenne MOV, Kayenne TGA, and Sony MVS TGA naming have not been verified on live desks. MacHuna will warn you before converting to these targets.
+- **Extraction outputs unconfirmed on hardware** — Kayenne TGA and Sony MVS TGA naming have not been verified on live desks. MacHuna will warn you before converting to these targets.
+- **Kayenne MOV output withdrawn** (v1.6.5) — it was never confirmed on hardware; use Kayenne TGA or Kayenne EIF instead.
 
 ---
 
