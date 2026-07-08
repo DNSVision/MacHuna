@@ -19,6 +19,13 @@ When the version number in `machuna.py` changes, update ALL of the following —
 4. **`HANDOVER_NOTES.md`** — update the `**MacHuna:**` line under `## Current Versions`
 5. **`README.md`** — update if any user-facing features, supported formats, or workflow steps changed
 6. **`USER_MANUAL.md`** — update if any user-facing feature, behaviour, format, workflow step, or field-order/interlace handling changed. This is a user-facing document — do not let it drift out of date behind the code.
+7. **`MacHuna_User_Manual.pdf`** — if `USER_MANUAL.md` changed (including the version stamp on its title line), regenerate the PDF so it matches. Requires `pandoc` + `weasyprint` (both installed on the M1). Command:
+
+   ```
+   pandoc USER_MANUAL.md -f gfm -t html5 -s -c manual_style.css --pdf-engine=weasyprint -o MacHuna_User_Manual.pdf
+   ```
+
+   Styling lives in `manual_style.css`. Use `-f gfm` so the Contents links resolve (GitHub-style anchors).
 
 Before building, run the test suite and confirm it passes:
 
