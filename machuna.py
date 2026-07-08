@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -818,7 +818,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     # p→i: field-weave progressive frames into interlaced output
     do_p_to_i = video_standard in _interlaced_standards and not source_interlaced
     # i→p: source is interlaced (25/29.97/30fps) but target is progressive (50/59.94/60fps)
-    #       duplicate each frame to preserve duration
+    #       deinterlace with yadif (send_field) — one interlaced frame yields two progressive fields
     do_i_to_p = source_interlaced and video_standard not in _interlaced_standards
 
     if _vf_override is not None:
@@ -828,8 +828,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
     elif do_i_to_p:
-        vf_tinterlace = None
-        log(f"  Interlaced→progressive: duplicating {frame_count} frames → {frame_count * 2} frames")
+        # Deinterlace with yadif (send_field, TFF per SMPTE 274M). Concat frames carry no
+        # field metadata, so parity is set explicitly. yadif doubles the frame count the
+        # correct way — no frame duplication (matches the EIF and SWS→SWS i→p paths).
+        vf_tinterlace = 'yadif=mode=send_field:parity=tff'
+        do_i_to_p = False   # yadif handles the doubling; do not duplicate frames in concat
+        log(f"  Interlaced→progressive (yadif, TFF): {frame_count} frames → {frame_count * 2} frames")
     elif source_interlaced and video_standard in _interlaced_standards:
         vf_tinterlace = None
         log(f"  Source frames already interlaced — passing through as {video_standard}")
@@ -837,13 +841,11 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         vf_tinterlace = None
 
     with tempfile.TemporaryDirectory() as tmp:
-        # Build a concat demuxer file — list each frame twice for i→p to preserve duration
+        # Build a concat demuxer file — one entry per frame (yadif handles i→p doubling)
         concat_file = os.path.join(tmp, 'concat.txt')
         with open(concat_file, 'w') as f:
             for tga in sorted(tga_files):
                 f.write(f"file '{tga}'\n")
-                if do_i_to_p:
-                    f.write(f"file '{tga}'\n")
 
         fill_raw = os.path.join(tmp, 'fill.v210')
         ffmpeg = _get_ffmpeg_path('ffmpeg')

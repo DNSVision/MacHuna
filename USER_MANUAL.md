@@ -217,7 +217,7 @@ Any of the following inputs can be converted to Kayenne EIF:
 | Option | Description |
 |---|---|
 | **Start slot** | First slot number for output files. Files are named `0001.eif`, `0002.eif` etc. and increment per item in the batch. |
-| **TGA source interlaced** | Shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source. MacHuna duplicates each frame to produce 50fps progressive EIF output. |
+| **TGA source interlaced** | Shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source. MacHuna deinterlaces each frame using yadif (field separation, TFF) to produce 50fps progressive EIF output. |
 
 EIF output is always 1920×1080. Sources of other sizes are scaled. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps).
 
@@ -324,6 +324,8 @@ Select this entry and convert as normal. MacHuna handles the frame ordering auto
 ### 8.2 TGA Source Already Interlaced
 
 If you are re-wrapping TGA frames that were previously extracted from an interlaced SWS (e.g. via MacHuna's extraction outputs), tick **TGA source interlaced**. This tells MacHuna to pass frames through directly without applying field-weaving. Without this, MacHuna would incorrectly treat the already-interlaced frames as progressive and weave them again.
+
+When **TGA source interlaced** is ticked and you select a **progressive** target standard (e.g. 1080p/50), MacHuna deinterlaces the frames using yadif (`send_field`, TFF per SMPTE 274M) rather than duplicating them — each interlaced frame is separated into two progressive fields, doubling the frame count with correct, smooth motion. Any alpha/key channel is deinterlaced with the identical filter so fill and key stay aligned.
 
 ### 8.3 Alpha Channel
 

@@ -18,6 +18,7 @@ When the version number in `machuna.py` changes, update ALL of the following —
 3. **`DEVELOPMENT_NOTES.md`** — update `**Current version:**` line and prepend a one-line summary to the version history in that line
 4. **`HANDOVER_NOTES.md`** — update the `**MacHuna:**` line under `## Current Versions`
 5. **`README.md`** — update if any user-facing features, supported formats, or workflow steps changed
+6. **`USER_MANUAL.md`** — update if any user-facing feature, behaviour, format, workflow step, or field-order/interlace handling changed. This is a user-facing document — do not let it drift out of date behind the code.
 
 Before building, run the test suite and confirm it passes:
 

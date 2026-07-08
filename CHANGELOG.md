@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.7 — 2026-07-08
+
+### Fixed
+- **TGA sequence → Kahuna SWS, interlaced source → progressive target now uses yadif deinterlacing instead of frame duplication.** When "TGA source interlaced" is ticked and a progressive target standard is selected, MacHuna previously wrote each interlaced frame twice into the ffmpeg concat list — doubling the frame count but leaving combed, juddery motion. It now applies `yadif=mode=send_field:parity=tff`, separating each interlaced frame into two progressive fields (TFF per SMPTE 274M) for correct, smooth motion. This matches the yadif approach already used by the TGA→EIF path (v1.6.4) and the SWS→SWS i↔p path (v1.6.5), honouring the "no frame duplication anywhere" requirement. The alpha/key chain automatically inherits the same filter, so fill and key stay frame-for-frame aligned. Validated in-app: a 30-frame interlaced source produced 60 progressive frames with a structurally sound SWS and smooth playback.
+
+### Changed
+- **`USER_MANUAL.md` added to the release checklist in `CLAUDE.md`.** The manual was previously omitted from the per-release update list, which allowed it to drift out of date behind the code. It is now an explicit checklist item.
+
+---
+
 ## v1.6.6 — 2026-06-28
 
 ### Added
