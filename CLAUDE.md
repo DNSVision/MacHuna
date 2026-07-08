@@ -35,6 +35,13 @@ Before building, run the test suite and confirm it passes:
 
 Then build with PyInstaller and push to GitHub unless David says otherwise.
 
+8. **Sync the public share folder** (`~/Desktop/Machuna Share`) — after the build and push, refresh the three published artefacts so people with the link get the latest release. Only these three, nothing else:
+   - `dist/MacHuna.app` → `MACHUNA APP/MacHuna.app` — remove the old bundle first (`rm -rf`), then `cp -R` the fresh build.
+   - `MacHuna_User_Manual.pdf` → `USER MANUAL/MacHuna_User_Manual_vX.X.X.pdf` (versioned filename matching the release). **Delete the previous `MacHuna_User_Manual_v*.pdf`** first so only the current version remains.
+   - `DEVELOPMENT_NOTES.md` → `DEV NOTES/DEVELOPMENT_NOTES.md` (replace).
+
+   The share is an iCloud-shared Desktop folder; verify the exact subfolder names before copying (`ls "$HOME/Desktop/Machuna Share"`) in case they change. This publishes to a public download link, so only run it for a finished, pushed release.
+
 ## Architecture notes
 
 - Single file: `machuna.py` (~2,600+ lines). Contains conversion engine, SWS header builder, extraction engine, Video Player, audio handling, GUI, settings, and CLI.
