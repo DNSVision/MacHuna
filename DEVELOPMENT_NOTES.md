@@ -19,29 +19,20 @@ MacHuna is a macOS application that converts video and still image files to the 
 
 - **Python:** 3.12
 - **Key libraries:** Pillow, numpy, sounddevice, tkinter (built-in), subprocess, struct, tkinterdnd2-universal (installed but currently disabled)
-- **ffmpeg:** Installed via Homebrew at `/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/`
+- **ffmpeg:** Installed via Homebrew (`brew install ffmpeg`). The build resolves it from PATH via `shutil.which`, so the version is not pinned.
 - **PyInstaller:** Installed via pip3.12
 - **Working directory:** `~/Developer/MacHuna/`
 - **Main script:** `machuna.py`
 
 ### Build Command
 
-Always run from the project directory so build artefacts land in `~/Developer/MacHuna/` rather than the home folder.
+Build from the project directory using the tracked spec (`MacHuna.spec`):
 
 ```bash
-cd ~/Developer/MacHuna && python3.12 -m PyInstaller \
-  --onedir \
-  --windowed \
-  --name "MacHuna" \
-  --icon ~/Developer/MacHuna/machuna.icns \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffmpeg:." \
-  --add-binary "/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/ffprobe:." \
-  --add-data "/Users/davidsteer/Developer/MacHuna/machuna_final_1024.png:." \
-  --noconfirm \
-  ~/Developer/MacHuna/machuna.py
+cd ~/Developer/MacHuna && python3.12 -m PyInstaller MacHuna.spec -y
 ```
 
-Note: `--add-data` bundles the app icon PNG for the About box. The `~` shorthand does not expand inside `--add-data` so the full path is required. Built .app appears in `~/Developer/MacHuna/dist/MacHuna.app`. Right-click > Open first time to bypass Gatekeeper.
+The spec is portable: it finds ffmpeg/ffprobe on PATH via `shutil.which` (not a pinned Homebrew Cellar version) and locates `machuna.py`, `machuna.icns` and `machuna_final_1024.png` relative to itself (`SPECPATH`), so it builds on any Apple Silicon Mac regardless of ffmpeg version or username. It fails with a clear "brew install ffmpeg" message if ffmpeg is missing. Built .app appears in `~/Developer/MacHuna/dist/MacHuna.app`. Right-click > Open first time to bypass Gatekeeper.
 
 ### GitHub Push Workflow
 
