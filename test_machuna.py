@@ -274,5 +274,51 @@ class TestAudioFields(unittest.TestCase):
         self.assertEqual(stored, min(expected_total, 0xFFFFFFFF))
 
 
+# ── Progressive→interlaced rate decision (Fix 9(a)) ────────────────────────────
+
+class TestPToIFieldMap(unittest.TestCase):
+    """_p_to_i_field_map decides how a progressive source maps onto an interlaced
+    standard: weave only at the field (double) rate; block same-rate and cross-rate
+    so a p→i conversion never silently doubles the playback speed."""
+
+    WEAVE = 'tinterlace=mode=interleave_top'
+
+    def test_double_rate_weaves(self):
+        # Source at the field rate (2× the interlaced frame rate) — genuine 50Hz
+        # interlaced motion. This is the confirmed, unchanged behaviour.
+        for fps, std in [(50.0, '1080i50'), (59.94, '1080i5994'), (60.0, '1080i60')]:
+            self.assertEqual(m._p_to_i_field_map(fps, std), self.WEAVE,
+                             f'{fps} → {std} should weave')
+
+    def test_same_rate_blocks(self):
+        # Source at the interlaced FRAME rate — weaving would halve it / double speed.
+        for fps, std in [(25.0, '1080i50'), (29.97, '1080i5994'), (30.0, '1080i60')]:
+            with self.assertRaises(ValueError, msg=f'{fps} → {std} must block'):
+                m._p_to_i_field_map(fps, std)
+
+    def test_cross_rate_blocks(self):
+        # Rates that are neither the frame nor the field rate need standards
+        # conversion MacHuna does not do.
+        for fps, std in [(24.0, '1080i50'), (23.976, '1080i5994'),
+                         (50.0, '1080i60'), (30.0, '1080i50')]:
+            with self.assertRaises(ValueError, msg=f'{fps} → {std} must block'):
+                m._p_to_i_field_map(fps, std)
+
+    def test_near_rate_within_tolerance_weaves(self):
+        # 59.94 and 60 are broadcast-equivalent field rates — the 0.5fps tolerance
+        # treats them as a match either way.
+        self.assertEqual(m._p_to_i_field_map(59.94, '1080i60'), self.WEAVE)
+        self.assertEqual(m._p_to_i_field_map(60.0, '1080i5994'), self.WEAVE)
+
+    def test_same_rate_message_names_the_speed_problem(self):
+        # The blocking error must be actionable, not a bare exception.
+        try:
+            m._p_to_i_field_map(25.0, '1080i50')
+            self.fail('expected ValueError')
+        except ValueError as e:
+            self.assertIn('1080i50', str(e))
+            self.assertIn('speed', str(e).lower())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

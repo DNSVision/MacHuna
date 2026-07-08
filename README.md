@@ -29,7 +29,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Built-in Video Player -- opens .SWS, .TGA sequences, and video files (MOV, MP4, MXF, MKV, AVI) in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel button for stopping mid-batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60 -- all verified against K-Watch reference files. (720p output was withdrawn in v1.6.8 pending hardware verification.)
-- Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
+- Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically. This is only valid when the source runs at the interlaced **field** rate (double the frame rate: 50p→1080i50, 59.94p→1080i5994, 60p→1080i60); a **same-rate** source (e.g. 25p→1080i50) would play at 2× speed if weaved, so MacHuna blocks it with a clear error rather than produce a wrong-speed clip.
 - Interlaced-to-progressive transcoding -- MacHuna bob-deinterlaces interlaced sources to produce the correct number of progressive frames for the target standard (e.g. 1080i/50 → 1080p/50 produces 50fps output at the correct playback speed).
 - "TGA source already interlaced" option -- when re-wrapping TGA frames extracted from an existing interlaced SWS, tick this to pass frames through directly rather than applying field-weaving.
 - Conversion log written to the destination folder after each batch
@@ -109,7 +109,7 @@ EIF output is always 1920×1080 progressive. Frame rate is rounded to the neares
 
 #### TGA Sequence output options
 
-- **Standard** — controls the conversion direction. Selecting an interlaced standard (e.g. 1080i/50) with a progressive source applies `tinterlace=mode=interleave_top` to produce genuinely interlaced output (frame count halves). Selecting a progressive standard with an interlaced source applies yadif.
+- **Standard** — controls the conversion direction. Selecting an interlaced standard (e.g. 1080i/50) with a progressive source applies `tinterlace=mode=interleave_top` to produce genuinely interlaced output (frame count halves). This requires a double-rate (field-rate) source; a same-rate source (e.g. 25p → 1080i/50) is blocked with an error to avoid a 2×-speed clip. Selecting a progressive standard with an interlaced source applies yadif.
 - **TGA source interlaced** — shown when input is a TGA sequence. Tick when the source frames are from an interlaced source (e.g. extracted from 1080i/50 SWS).
 
 Output frames are written as `0001.tga, 0002.tga…` in a subfolder named after the source sequence or clip, inside the destination folder. One subfolder per input item.
@@ -137,7 +137,7 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 
 ### From SWS
 
-- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses `yadif`. The output clip name and key state follow the source SWS; embedded audio is not carried through (a warning is logged if the source has audio).
+- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF) and requires a double-rate source — a same-rate source SWS (e.g. 1080p/25 → 1080i/50) is blocked with an error rather than doubled in speed; I→P uses `yadif`. The output clip name and key state follow the source SWS; embedded audio is not carried through (a warning is logged if the source has audio).
 - **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 

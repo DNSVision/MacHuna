@@ -4,6 +4,21 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.10 — 2026-07-08
+
+### Fixed
+- **Progressive→interlaced no longer produces a 2×-speed clip from a same-rate source (Fix 9(a)).** The p→i path field-weaves *pairs* of progressive frames into one interlaced frame, which halves the frame count. That is only correct when the source runs at the interlaced **field** rate (double the frame rate) — 50p→1080i50, 59.94p→1080i5994, 60p→1080i60. A **same-rate** source (25p→1080i50, 29.97p→1080i5994, 30p→1080i60) was being weaved too, silently halving the duration and playing at double speed. MacHuna now checks the source frame rate before weaving:
+  - **Field rate (double):** weaves as before — unchanged, hardware-confirmed.
+  - **Same frame rate:** blocked with a clear error (weaving would double the speed); no file is written. Carrying same-rate progressive as PsF is deliberately deferred pending a live-Kahuna test.
+  - **Any other rate** (needs standards conversion, which MacHuna does not do): blocked with a clear error.
+  - The rate decision lives in one shared helper, `_p_to_i_field_map()`, applied to every p→i path that knows its source frame rate: **video clip → SWS**, **SWS → SWS** (using the source SWS header's fps), and **clip → TGA** extraction.
+- Raw **TGA-sequence** p→i paths are unchanged: a bare pile of TGA files carries no frame rate, so it is still assumed to be a double-rate field stream and weaved. This assumption is now documented in the code. (A same-rate 25p TGA render remains a parked case — no UI to declare a sequence's rate yet.)
+
+### Tests
+- Added `TestPToIFieldMap` covering the weave / same-rate-block / cross-rate-block decision and the tolerance handling (37 → 42 tests).
+
+---
+
 ## v1.6.9 — 2026-07-08
 
 ### Fixed

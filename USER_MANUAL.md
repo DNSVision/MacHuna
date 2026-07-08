@@ -1,4 +1,4 @@
-# MacHuna v1.6.9 — User Manual
+# MacHuna v1.6.10 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -182,6 +182,19 @@ When outputting to Kahuna SWS, the following options are available:
 When converting a progressive source to an interlaced standard, MacHuna field-weaves pairs of progressive frames into genuine interlaced frames. The frame count halves — a 50fps progressive source becomes 25fps interlaced output. This is the correct behaviour for the Kahuna.
 
 Example: 100 frames of 1080p/50 source → 50 frames of 1080i/50 output.
+
+**The source must run at the interlaced field rate (double the frame rate).** Weaving pairs of frames only keeps the right duration when the source is a genuine field-rate stream:
+
+| Progressive source | Interlaced target | Result |
+|--------------------|-------------------|--------|
+| 50p | 1080i/50 | ✅ correct — weaves to 25 interlaced frames |
+| 59.94p | 1080i/59.94 | ✅ correct |
+| 60p | 1080i/60 | ✅ correct |
+| 25p | 1080i/50 | ⛔ blocked — would play at 2× speed |
+| 29.97p | 1080i/59.94 | ⛔ blocked |
+| 30p | 1080i/60 | ⛔ blocked |
+
+If you give MacHuna a **same-rate** progressive source (e.g. a 25p file destined for 1080i/50) or any other incompatible rate, it will **stop with a clear error and write no file**, rather than silently produce a clip that plays at the wrong speed. Convert the source to the correct field rate first (e.g. 25p → 50p), or choose a progressive output standard. *(This rate check applies to video-clip, SWS→SWS and clip→TGA conversions, which carry a known frame rate. A loose TGA image sequence has no frame rate to check and is still assumed to be a double-rate field stream.)*
 
 ### 5.2 Interlaced to Progressive (I→P)
 

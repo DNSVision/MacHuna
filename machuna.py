@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.9"
+VERSION = "1.6.10"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -102,6 +102,46 @@ FORMAT_VARIANT_DISPLAY = {
     0x13: '1080p/25',   0x18: '1080p/50',    0x17: '1080p/59.94',
     0x16: '1080p/60',
 }
+
+
+def _p_to_i_field_map(source_fps: float, video_standard: str) -> str:
+    """Decide how a *progressive* source maps onto an *interlaced* standard.
+
+    Returns the ffmpeg filter to weave the source into interlaced frames, or raises
+    ValueError with a user-facing message when the mapping is not valid. Shared by
+    every progressive→interlaced path that knows its source frame rate (video clips,
+    SWS→SWS, and clip→TGA) so the rate decision lives in one place.
+
+    An interlaced standard has a *frame* rate (25 / 29.97 / 30) and a *field* rate of
+    double that (50 / 59.94 / 60). Field-weaving pairs of progressive frames is
+    correct ONLY when the source runs at the field rate — genuine 50Hz interlaced
+    motion (50p→1080i50, 59.94p→1080i5994, 60p→1080i60). That weave is
+    hardware-confirmed and unchanged.
+
+    A same-rate progressive source (25p→1080i50, 30p→1080i60) would be halved by the
+    weave and play at 2× speed, so it is blocked rather than silently mangled.
+    (Carrying same-rate progressive as PsF is deliberately not implemented yet —
+    parked pending a live-Kahuna test.) Any other rate needs frame-rate standards
+    conversion, which MacHuna does not do, so it is blocked too. This guarantees the
+    p→i path never silently produces a wrong-speed clip.
+    """
+    frame_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]  # 25 / 29.97 / 30
+    field_fps = frame_fps * 2                                        # 50 / 59.94 / 60
+    TOL = 0.5
+    if abs(source_fps - field_fps) <= TOL:
+        # Double-rate source → genuine interlaced motion. Weave pairs (count halves).
+        return 'tinterlace=mode=interleave_top'
+    if abs(source_fps - frame_fps) <= TOL:
+        raise ValueError(
+            f"source is {source_fps:.2f}fps, the same frame rate as {video_standard} "
+            f"({frame_fps:.2f}fps). Field-weaving would double the playback speed. "
+            f"Same-rate progressive→interlaced (PsF) is not supported yet — convert the "
+            f"source to {field_fps:.0f}p first, or choose a progressive standard.")
+    raise ValueError(
+        f"source is {source_fps:.2f}fps, which is incompatible with {video_standard} "
+        f"({field_fps:.0f} fields/sec). MacHuna does not do frame-rate standards "
+        f"conversion — convert the source to {field_fps:.0f}p (or {frame_fps:.0f}p) first.")
+
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
 
@@ -702,12 +742,15 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     do_i_to_p = info['is_interlaced'] and video_standard not in _interlaced_standards
 
     if do_p_to_i:
-        # Weave pairs of progressive frames into interlaced frames (TFF best-guess).
-        # Frame count halves; fps halves (e.g. 50p -> 25fps for 1080i/50).
+        # Weave pairs of progressive frames into interlaced frames (TFF).
+        # _p_to_i_field_map only permits this when the source runs at the interlaced
+        # field rate (double the frame rate); a same-rate or cross-rate source raises
+        # so we never silently halve the duration / double the speed.
+        # Frame count halves; fps becomes the interlaced frame rate (50p→25fps@1080i50).
         # Field order TFF is SMPTE standard for 1080i HD -- confirm on Kahuna hardware.
-        vf_tinterlace  = 'tinterlace=mode=interleave_top'
-        output_frame_count = frame_count // 2
+        vf_tinterlace      = _p_to_i_field_map(fps, video_standard)
         output_fps         = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        output_frame_count = frame_count // 2
         log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
     elif do_i_to_p:
         # Deinterlace interlaced source to progressive output.
@@ -831,6 +874,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         vf_tinterlace = _vf_override
         do_i_to_p = False   # suppress frame duplication in concat file
     elif do_p_to_i:
+        # Raw TGA piles carry no frame rate, so we cannot rate-check them the way the
+        # clip/SWS paths do (via _p_to_i_field_map). A progressive TGA sequence bound
+        # for an interlaced standard is deliberately assumed to be a double-rate field
+        # stream (e.g. 50 frames → 25 interlaced) and weaved. Same-rate 25p TGA renders
+        # are a parked case (no UI to declare their rate yet). Note: the SWS→SWS path
+        # does NOT reach here for its weave — it passes an explicit _vf_override above,
+        # already rate-checked against the source SWS header's fps.
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
     elif do_i_to_p:
@@ -3886,14 +3936,18 @@ def launch_gui():
                                           else 'yadif=mode=send_frame:parity=tff')
                                 log(f"  {stem}: {src_hdr.standard} → {out_std}"
                                     f" (interlaced→progressive via yadif)")
+                            elif not src_interlaced and out_interlaced:
+                                # Progressive source SWS → interlaced output. Weave only
+                                # if the source runs at the field rate; the source SWS's
+                                # own frame rate (from its header) drives the decision, so
+                                # a same-rate/cross-rate source is blocked, not doubled.
+                                vf_sws = _p_to_i_field_map(src_hdr.fps, out_std)
+                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
+                                    f" (progressive→interlaced TFF)")
                             else:
                                 vf_sws = None
-                                if not src_interlaced and out_interlaced:
-                                    log(f"  {stem}: {src_hdr.standard} → {out_std}"
-                                        f" (progressive→interlaced TFF)")
-                                else:
-                                    log(f"  {stem}: {src_hdr.standard} → {out_std}"
-                                        f" (passthrough)")
+                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
+                                    f" (passthrough)")
                             if src_hdr.has_audio:
                                 log(f"  ⚠ {stem}: source SWS has embedded audio — "
                                     f"SWS→SWS conversion does not carry audio through; "
@@ -4016,6 +4070,11 @@ def launch_gui():
                                   else 'yadif=mode=send_frame:parity=tff')
                             log(f"  TGA→TGA: {base} — interlaced→progressive via yadif ({out_std})")
                         elif not src_interlaced and out_interlaced:
+                            # Raw TGA pile: no source fps to rate-check (see
+                            # _p_to_i_field_map / convert_tga_sequence). Assumed to be a
+                            # double-rate field stream and weaved. Parked: same-rate 25p
+                            # TGA renders would double-speed here, but there is no UI to
+                            # declare a TGA sequence's rate yet.
                             vf = 'tinterlace=mode=interleave_top'
                             log(f"  TGA→TGA: {base} — progressive→interlaced TFF ({out_std})")
                         else:
@@ -4048,7 +4107,9 @@ def launch_gui():
                                   else 'yadif=mode=send_frame:parity=tff')
                             log(f"  Clip→TGA: {name} — interlaced→progressive via yadif ({out_std})")
                         elif not src_interlaced and out_interlaced:
-                            vf = 'tinterlace=mode=interleave_top'
+                            # Weave only if the clip runs at the interlaced field rate;
+                            # a same-rate/cross-rate clip is blocked (would double speed).
+                            vf = _p_to_i_field_map(src_fps, out_std)
                             log(f"  Clip→TGA: {name} — progressive→interlaced TFF ({out_std})")
                         else:
                             vf = None
