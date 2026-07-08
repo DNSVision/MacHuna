@@ -36,7 +36,14 @@ The M5 (and any future Apple Silicon Mac) needs the toolchain installed once, th
 brew install python@3.12 python-tk@3.12 ffmpeg pandoc weasyprint git gh
 
 # 3. Python packages
-/opt/homebrew/bin/python3.12 -m pip install pillow numpy sounddevice tkinterdnd2 pyinstaller
+#    Homebrew's python@3.12 is an "externally-managed" environment (PEP 668), so a
+#    bare `pip install` is blocked. Use --user --break-system-packages: it installs
+#    into ~/Library/Python/3.12 for this interpreter (leaving Homebrew's own
+#    site-packages untouched) so the bare `/opt/homebrew/bin/python3.12` commands
+#    below (run, test, build) all find the packages without a venv.
+#    pytest is needed for the test suite in step 5.
+/opt/homebrew/bin/python3.12 -m pip install --user --break-system-packages \
+    pillow numpy sounddevice tkinterdnd2 pyinstaller pytest
 
 # 4. GitHub auth, then clone (use the same path so any per-project tooling matches)
 gh auth login
