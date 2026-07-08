@@ -24,6 +24,36 @@ MacHuna is a macOS application that converts video and still image files to the 
 - **Working directory:** `~/Developer/MacHuna/`
 - **Main script:** `machuna.py`
 
+### Setting up on a new Mac (Apple Silicon)
+
+The M5 (and any future Apple Silicon Mac) needs the toolchain installed once, then a clone. `MacHuna.spec` is portable and tracked in the repo, so no files need copying by hand.
+
+```bash
+# 1. Homebrew first if not present:
+#    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 2. System tools + libraries (python-tk is what gives Python its GUI/tkinter)
+brew install python@3.12 python-tk@3.12 ffmpeg pandoc weasyprint git gh
+
+# 3. Python packages
+/opt/homebrew/bin/python3.12 -m pip install pillow numpy sounddevice tkinterdnd2 pyinstaller
+
+# 4. GitHub auth, then clone (use the same path so any per-project tooling matches)
+gh auth login
+mkdir -p ~/Developer && cd ~/Developer
+git clone https://github.com/DNSVision/MacHuna.git
+
+# 5. Verify
+cd ~/Developer/MacHuna
+/opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v      # expect 37 passed
+/opt/homebrew/bin/python3.12 machuna.py --gui                  # app launches
+python3.12 -m PyInstaller MacHuna.spec -y                      # build works
+```
+
+Also install Claude Code itself. `pandoc` + `weasyprint` are only needed for regenerating the user-manual PDF (release step 7).
+
+**Claude Code memory (optional, private — not in this repo):** the project's saved memory lives at `~/.claude/projects/-Users-davidsteer-Developer-MacHuna/memory/`. It does not travel with the repo (it contains personal working notes). To carry it over, either use Apple Migration Assistant (brings all of `~/.claude/`), or restore it from a personal backup zip into that same path. The folder name is derived from the clone path, so keeping the repo at `~/Developer/MacHuna` under the same username makes it a drop-in restore.
+
 ### Build Command
 
 Build from the project directory using the tracked spec (`MacHuna.spec`):
