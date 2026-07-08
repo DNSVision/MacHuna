@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.9 — 2026-07-08
+
+### Fixed
+- **SWS→SWS conversion metadata — clip name, key plane, and audio.** When converting an SWS between standards (e.g. 1080i/50 → 1080p/50), three problems are corrected:
+  - The output header's **clip name** now follows the **source SWS's name** instead of the placeholder `0001` that came from the temporary intermediate frames. (New `clip_name_override` argument on `convert_tga_sequence`, passed by the SWS→SWS path.)
+  - A **keyless source SWS no longer gains a phantom key plane.** The frame extractor always writes RGBA, so a source with no key was being silently re-encoded with an opaque key; the output key state now follows the source (`has_key`).
+  - **Embedded audio** in a source SWS is not carried through the TGA-intermediate SWS→SWS pipeline. This was previously silent — the log now prints a clear warning that the audio was dropped.
+- Added a `clip name: … key: …` line to the SWS write log so the above is visible during conversion. Validated in-app: 1080i/50 → 1080p/50 logged `clip name: 51  key: yes`.
+
+### Investigated — no change
+- **TGA-Sequence / Sony-TGA output alpha.** A review flagged that `yadif`/`tinterlace` might drop the key/alpha on these outputs. Verified empirically (RGBA test frames pushed through both filters, alpha channel measured before/after) that **alpha is preserved correctly** and the output TGAs retain their alpha — no code change required. Recorded here and in DEVELOPMENT_NOTES to prevent re-investigation.
+
+---
+
 ## v1.6.8 — 2026-07-08
 
 ### Removed

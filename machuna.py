@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.8"
+VERSION = "1.6.9"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -805,8 +805,14 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          loop_play: bool = False,
                          write_log: bool = True,
                          source_interlaced: bool = False,
-                         _vf_override: str = None):
-    """Convert a numbered TGA sequence into a single multi-frame .SWS clip."""
+                         _vf_override: str = None,
+                         clip_name_override: str = None):
+    """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
+
+    clip_name_override: use this as the output header's clip name instead of the
+    first frame's stem. Needed for SWS→SWS, where the intermediate frames are named
+    0001.tga etc. and would otherwise overwrite the source's real clip name.
+    """
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
     info = get_video_info(tga_files[0])
@@ -893,7 +899,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         output_frame_count = os.path.getsize(fill_raw) // plane_size
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
         src_name  = os.path.basename(tga_files[0])
-        clip_name = Path(tga_files[0]).stem
+        clip_name = clip_name_override or Path(tga_files[0]).stem
+        log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
         hdr = build_sws_header(
             source_filename=src_name,
@@ -3887,15 +3894,23 @@ def launch_gui():
                                 else:
                                     log(f"  {stem}: {src_hdr.standard} → {out_std}"
                                         f" (passthrough)")
+                            if src_hdr.has_audio:
+                                log(f"  ⚠ {stem}: source SWS has embedded audio — "
+                                    f"SWS→SWS conversion does not carry audio through; "
+                                    f"audio dropped.")
                             convert_tga_sequence(
                                 tga_files_sws, fnum, d, out_std,
                                 split_var.get(), False, log,
-                                ignore_alpha=ignore_alpha_var.get(),
+                                # Follow the source's key state: if the source SWS had
+                                # no key plane, don't let a key be generated from the
+                                # opaque alpha the extractor always writes.
+                                ignore_alpha=ignore_alpha_var.get() or not src_hdr.has_key,
                                 auto_play=auto_play_var.get(),
                                 loop_play=loop_play_var.get(),
                                 write_log=False,
                                 source_interlaced=False,
-                                _vf_override=vf_sws)
+                                _vf_override=vf_sws,
+                                clip_name_override=stem)
                         results.append((fnum, stem, 'OK'))
                     elif item['type'] == 'clip':
                         convert_clip(

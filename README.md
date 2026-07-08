@@ -137,7 +137,7 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 
 ### From SWS
 
-- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses `yadif`.
+- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF); I→P uses `yadif`. The output clip name and key state follow the source SWS; embedded audio is not carried through (a warning is logged if the source has audio).
 - **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 

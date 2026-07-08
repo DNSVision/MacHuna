@@ -175,6 +175,8 @@ When outputting to Kahuna SWS, the following options are available:
 | **TGA source interlaced** | See Section 8.2. |
 | **Include audio** | Embeds audio from the source into the .SWS file. Shown only when audio is detected in the source. See Section 9. |
 
+> **SWS → SWS standards conversion:** when the source is itself an SWS file, the output header's clip name follows the source SWS's name, and the output key state follows the source (a keyless source produces keyless output). **Audio is not carried through an SWS → SWS conversion** — if the source SWS contains embedded audio, it is dropped and a warning is written to the log.
+
 ### 5.1 Progressive to Interlaced (P→I)
 
 When converting a progressive source to an interlaced standard, MacHuna field-weaves pairs of progressive frames into genuine interlaced frames. The frame count halves — a 50fps progressive source becomes 25fps interlaced output. This is the correct behaviour for the Kahuna.
