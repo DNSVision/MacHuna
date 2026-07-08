@@ -57,8 +57,6 @@ All nine standards below have been confirmed against K-Watch reference files and
 | 1080p/50 | 50 | UK / Europe |
 | 1080p/59.94 | 59.94 | USA / Japan |
 | 1080p/60 | 60 | — |
-| 720p/50 | 50 | — |
-| 720p/59.94 | 59.94 | USA / Japan |
 
 ### 1.3 Key Differences from K-Watch
 

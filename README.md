@@ -28,7 +28,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Unified format-in / format-out interface -- open a folder and MacHuna detects the input type (SWS, video, TGA/stills) and adapts the Output dropdown and controls accordingly
 - Built-in Video Player -- opens .SWS, .TGA sequences, and video files (MOV, MP4, MXF, MKV, AVI) in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel button for stopping mid-batch
-- Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94 -- all verified against K-Watch reference files
+- Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60 -- all verified against K-Watch reference files. (720p output was withdrawn in v1.6.8 pending hardware verification.)
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically.
 - Interlaced-to-progressive transcoding -- MacHuna bob-deinterlaces interlaced sources to produce the correct number of progressive frames for the target standard (e.g. 1080i/50 → 1080p/50 produces 50fps output at the correct playback speed).
 - "TGA source already interlaced" option -- when re-wrapping TGA frames extracted from an existing interlaced SWS, tick this to pass frames through directly rather than applying field-weaving.
@@ -83,7 +83,7 @@ A conversion log is written to the destination folder on completion.
 
 #### Kahuna SWS output options
 
-- **Standard** — video standard for the output file (1080i50, 1080p50, 720p50, etc.)
+- **Standard** — video standard for the output file (1080i50, 1080p50, 1080p25, etc.)
 - **Split >4GB** — split large files into 2GB FAT32-safe chunks (on by default)
 - **Ignore alpha** — write fill-only SWS with no key plane, matching K-Watch behaviour
 - **Auto play / Loop play** — baked into the SWS header

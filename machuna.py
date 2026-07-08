@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.7"
+VERSION = "1.6.8"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -56,6 +56,12 @@ SWS_HEADER_SIZE = 512
 # all progressive standards use 0x4923. Confirmed by P->I transcode analysis (2026-05-09).
 # Unverified standards (1080p29.97, 1080p30, 2160p variants) removed from dropdown pending
 # confirmation against K-Watch reference files. See DEVELOPMENT_NOTES.md roadmap.
+# 720p (1280-wide) withdrawn in v1.6.8: the SWS *output* was never verified on hardware
+# and the v210 plane_size maths is wrong for non-48-multiple widths, so it produced
+# corrupt files. This is a "broken + unverifiable export" withdrawal, NOT an "obsolete
+# format" one: 720p/59.94 is still actively broadcast (ABC/Fox and affiliates, 2026), so
+# it is a genuine candidate for proper reinstatement once a K-Watch 720p reference file
+# and hardware to verify against are available. 720p/50 has little real-world demand.
 VIDEO_STANDARDS = {
     '1080i50':   0xc923,   # confirmed -- 0x8000 = interlaced flag
     '1080i5994': 0xc923,   # confirmed -- 0x8000 = interlaced flag
@@ -64,8 +70,6 @@ VIDEO_STANDARDS = {
     '1080p50':   0x4923,   # confirmed
     '1080p5994': 0x4923,   # confirmed
     '1080p60':   0x4923,   # confirmed
-    '720p50':    0x4923,   # confirmed
-    '720p5994':  0x4923,   # confirmed
 }
 
 # Format variant field (0x18C) -- Kahuna internal standard index, confirmed by
@@ -78,8 +82,6 @@ FORMAT_VARIANTS = {
     '1080p50':   0x18,   # confirmed
     '1080p5994': 0x17,   # confirmed
     '1080p60':   0x16,   # confirmed
-    '720p50':    0x10,   # confirmed
-    '720p5994':  0x0f,   # confirmed
 }
 
 # Reverse lookup: format variant value -> fps. All variant values are unique so
@@ -92,15 +94,13 @@ FORMAT_VARIANT_FPS = {
     0x18: 50.0,    # 1080p50
     0x17: 59.94,   # 1080p5994
     0x16: 60.0,    # 1080p60
-    0x10: 50.0,    # 720p50
-    0x0f: 59.94,   # 720p5994
 }
 
 # Human-readable standard names for display, keyed by format variant (0x18C).
 FORMAT_VARIANT_DISPLAY = {
     0x08: '1080i/50',   0x05: '1080i/59.94', 0x04: '1080i/60',
     0x13: '1080p/25',   0x18: '1080p/50',    0x17: '1080p/59.94',
-    0x16: '1080p/60',   0x10: '720p/50',     0x0f: '720p/59.94',
+    0x16: '1080p/60',
 }
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB

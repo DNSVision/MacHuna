@@ -294,7 +294,8 @@ This was a major reverse engineering session. All nine supported video standards
 
 ### Format Standards - General
 - Only 1080p50 has been properly tested in production
-- Other standards (1080i50, 1080p25, 720p50, 720p59.94) are untested on hardware
+- Other standards (1080i50, 1080p25) are untested on hardware
+- 720p/50 and 720p/59.94 were withdrawn in v1.6.8 (export never hardware-verified + plane_size wrong for 1280-wide). 720p/59.94 has genuine broadcast demand (ABC/Fox) and is a reinstatement candidate — see DEVELOPMENT_NOTES Format Support Rationale
 - Format fusion on the Kahuna means a mismatched file will often still work
 - Full hardware test of all standards would require cooperation from truck owners - significant effort for little operational benefit given David's workflow is almost entirely 1080p50
 - Recommendation: mark untested standards clearly in DEVELOPMENT_NOTES (done) rather than removing them
@@ -324,7 +325,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.6.7
+- **MacHuna:** v1.6.8
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -405,7 +406,7 @@ git push
 - Batch Convert - smart folder browser for MOVs, TGA sequences, and stills
 - Cancel Batch button - kills current ffmpeg and stops batch after current file
 - Stop button - kills current ffmpeg immediately
-- Video standards: all nine confirmed by K-Watch hex analysis -- 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60, 720p/50, 720p/59.94
+- Video standards: seven offered (all confirmed by K-Watch hex analysis) -- 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60. (720p/50 and 720p/59.94 header bytes were also confirmed but their SWS output was withdrawn in v1.6.8 — never hardware-verified, plane_size wrong for 1280-wide.)
 - Progressive-to-interlaced mismatch warning logged automatically
 - Input formats: MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG
 - Fill and key planes encoded as v210 big-endian
@@ -520,8 +521,8 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 | 1080p/50 | `0x4923` | `0x18` |
 | 1080p/59.94 | `0x4923` | `0x17` |
 | 1080p/60 | `0x4923` | `0x16` |
-| 720p/50 | `0x4923` | `0x10` |
-| 720p/59.94 | `0x4923` | `0x0f` |
+| 720p/50 *(output withdrawn v1.6.8)* | `0x4923` | `0x10` |
+| 720p/59.94 *(output withdrawn v1.6.8)* | `0x4923` | `0x0f` |
 
 0x18C is a Kahuna internal standard index, not a flags field. Do not assume values for unverified standards.
 

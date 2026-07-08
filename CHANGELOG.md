@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.8 — 2026-07-08
+
+### Removed
+- **720p/50 and 720p/59.94 withdrawn from the output standards.** Both are removed from the Standard dropdown (GUI and CLI) and from all four SWS format-constant tables. The *header bytes* for these standards were confirmed against K-Watch reference files, but the actual SWS **output was never verified on hardware**, and the v210 `plane_size` calculation is wrong for 1280-wide (non-48-multiple) output — so selecting 720p produced a corrupt file. This is a "broken and unverifiable export" withdrawal, **not** an "obsolete format" one: 720p/59.94 is still actively broadcast by ABC, Fox and their affiliates in 2026. It remains a genuine candidate for reinstatement once a K-Watch 720p reference file is available (to confirm the fill-plane layout) and hardware is on hand to verify — at which point the `plane_size` formula must also be corrected to the 128-byte line-alignment rule the decoder already uses. The confirmed 720p header bytes are retained in DEVELOPMENT_NOTES and HANDOVER_NOTES for that future work.
+
+---
+
 ## v1.6.7 — 2026-07-08
 
 ### Fixed
