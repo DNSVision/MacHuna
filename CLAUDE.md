@@ -4,7 +4,7 @@ MacHuna is a single-file Python app (`machuna.py`) that translates broadcast med
 
 ## Dev environment
 
-- Machine: MacBook Air M1
+- Machine: MacBook (Apple Silicon M5)
 - Python: `/opt/homebrew/bin/python3.12`
 - Build: `python3.12 -m PyInstaller MacHuna.spec -y`
 - Run for testing: `/opt/homebrew/bin/python3.12 machuna.py --gui`
@@ -19,7 +19,7 @@ When the version number in `machuna.py` changes, update ALL of the following —
 4. **`HANDOVER_NOTES.md`** — update the `**MacHuna:**` line under `## Current Versions`
 5. **`README.md`** — update if any user-facing features, supported formats, or workflow steps changed
 6. **`USER_MANUAL.md`** — update if any user-facing feature, behaviour, format, workflow step, or field-order/interlace handling changed. This is a user-facing document — do not let it drift out of date behind the code.
-7. **`MacHuna_User_Manual.pdf`** — if `USER_MANUAL.md` changed (including the version stamp on its title line), regenerate the PDF so it matches. Requires `pandoc` + `weasyprint` (both installed on the M1). Command:
+7. **`MacHuna_User_Manual.pdf`** — if `USER_MANUAL.md` changed (including the version stamp on its title line), regenerate the PDF so it matches. Requires `pandoc` + `weasyprint` (both installed on the M5). Command:
 
    ```
    pandoc USER_MANUAL.md -f gfm -t html5 -s -c manual_style.css --pdf-engine=weasyprint -o MacHuna_User_Manual.pdf
@@ -55,7 +55,7 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 - Do not add unverified video standards to the dropdown — they must be confirmed against real K-Watch reference files first.
 - Field order for P→I transcoding is TFF (SMPTE standard for 1080i HD) — unconfirmed on 1080i hardware as of v1.5.19.
-- PyInstaller builds must happen on the M1 MacBook Air.
+- PyInstaller builds must happen on the M5 MacBook (Apple Silicon).
 
 ## Extraction output hardware unknowns
 
