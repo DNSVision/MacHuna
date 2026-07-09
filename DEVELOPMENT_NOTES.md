@@ -115,7 +115,7 @@ A full adversarial code review (Fable 5) produced a working file `REVIEW_FIXES_v
 3. **EIF audio (.eaf files)** — Source a real `.eaf` companion file from a Kayenne operator. Hex-analyse to understand the audio format. Implement read and write once the format is known.
 4. **EIF tail length (128 vs 140 bytes)** — Determine whether Kayenne validates the tail length difference. Obtain a reference file with fc < 36 and fc ≥ 36 to compare. If Kayenne is strict, extend MacHuna's tail to 140 bytes for all files.
 5. **EIF→Kayenne MOV** — Implement EIF to ProRes 4444 MOV conversion (decode EIF frames → ffmpeg encode). Not yet coded.
-6. **1080i content in EIF** — Determine how Kayenne stores originally-interlaced content. This will inform whether the interlaced TGA→EIF frame-duplication path produces correct output.
+6. **1080i content in EIF** — Determine how Kayenne stores originally-interlaced content. This will inform whether the interlaced TGA→EIF frame-duplication path produces correct output. **Do not assume EIF is progressive-only** — that has never been established; it is extrapolated from a single 50p reference file. A real interlaced `.eif` is needed to settle it. **Open inconsistency to reconcile once known:** the two EIF write paths currently handle an interlaced source *differently* — `convert_clip_to_eif` passes the interlaced frames straight through (no deinterlace), while `convert_tga_seq_to_eif` deinterlaces to 50p via yadif. One is presumably wrong; which one depends on how Kayenne actually stores interlaced content.
 7. **Clip name and slot validation** — Verify whether Kayenne enforces a match between the embedded clip name (0x004) and the filename stem, and whether slot numbers must be contiguous.
 
 ### Future Considerations
