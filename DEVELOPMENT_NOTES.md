@@ -107,15 +107,33 @@ A full adversarial code review (Fable 5) produced a working file `REVIEW_FIXES_v
 3. **Fix 10 (MEDIUM) — Sony TGA field-order toggle ignored.** In `_run_to_tga_seq`, tinterlace mode / yadif parity are hardcoded TFF; the UI's TFF/BFF `field_order_var` is not honoured for Sony TGA output. Wire it through (`interleave_top`/`interleave_bottom`, parity `tff`/`bff`).
 4. **White key — INVESTIGATE ONLY, do not change without evidence.** `_generate_white_key` (~404–418) decodes as Y=64 (black in the 64–940 convention), while the alphaextract and EIF→SWS key paths write 940 as opaque — a contradiction. *But* the white-key behaviour was confirmed on hardware, so the generated key is presumably correct as-is. Before any change: hex-compare `_generate_white_key`'s output against a real K-Watch reference file that has a generated key, and check what value the alphaextract path actually produces for a fully-opaque alpha. Document the finding here; change code only if the comparison proves an inversion. See also "### White Key Plane" below.
 
-### EIF Roadmap (Priority Order)
+### EIF Roadmap — hardware verification first
 
-1. **Hardware test — EIF write** (HIGH PRIORITY) — Load a MacHuna-generated `.eif` file onto a live Kayenne desk. Confirm playback, frame count, speed, colours, and key. See "Priority hardware test steps" in the EIF section above. This is the most important outstanding test.
-2. **25fps EIF movi tag verification** — Obtain a real 25fps Kayenne-produced `.eif` file. Compare hex at offset 0x8DC to verify or correct the movi chunk tag. No code change needed until a reference file is available.
-3. **EIF audio (.eaf files)** — Source a real `.eaf` companion file from a Kayenne operator. Hex-analyse to understand the audio format. Implement read and write once the format is known.
-4. **EIF tail length (128 vs 140 bytes)** — Determine whether Kayenne validates the tail length difference. Obtain a reference file with fc < 36 and fc ≥ 36 to compare. If Kayenne is strict, extend MacHuna's tail to 140 bytes for all files.
-5. **EIF→Kayenne MOV** — Implement EIF to ProRes 4444 MOV conversion (decode EIF frames → ffmpeg encode). Not yet coded.
-6. **1080i content in EIF** — Determine how Kayenne stores originally-interlaced content. This will inform whether the interlaced TGA→EIF frame-duplication path produces correct output. **Do not assume EIF is progressive-only** — that has never been established; it is extrapolated from a single 50p reference file. A real interlaced `.eif` is needed to settle it. **Open inconsistency to reconcile once known:** the two EIF write paths currently handle an interlaced source *differently* — `convert_clip_to_eif` passes the interlaced frames straight through (no deinterlace), while `convert_tga_seq_to_eif` deinterlaces to 50p via yadif. One is presumably wrong; which one depends on how Kayenne actually stores interlaced content.
-7. **Clip name and slot validation** — Verify whether Kayenne enforces a match between the embedded clip name (0x004) and the filename stem, and whether slot numbers must be contiguous.
+Fix 14 (clip→EIF speed, v1.6.11) cleared the last item that could be done without hardware. **Everything remaining is gated on either a live Kayenne desk or reference files from a Kayenne operator.** So the roadmap is no longer a list of things to code speculatively — it is one hardware-test session, plus the code follow-ups that the results unlock. Do not build the follow-ups ahead of the test; the whole point is to stop guessing.
+
+#### Priority 1 — the EIF hardware test session (unblocks almost everything below)
+
+The single most important outstanding work in the project. When a live Kayenne ClipStore / Image Store is available, run the "Priority hardware test steps" above and, in the same visit, capture what's needed to close the other unknowns. Get through as much of this checklist as the desk time allows:
+
+- [ ] **EIF write, 50fps (core go/no-go)** — Convert a known short 50fps TGA sequence to `0001.eif`, import, verify: file appears, frame count correct, plays at correct speed, colours correct, key correct.
+- [ ] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
+- [ ] **Capture a real 25fps `.eif`** produced by the Kayenne itself → hex-compare offset 0x8DC to verify or correct the assumed `b'RIFFRIFF'` movi chunk tag (the 50fps value is already confirmed).
+- [ ] **Capture a real interlaced `.eif`**, or otherwise establish how the desk stores originally-interlaced content (50p progressive, 25p field-pairs, or other). Settles the "1080i in EIF" unknown and tells us which write path's interlaced handling is correct.
+- [ ] **Capture a real `.eaf`** companion file from a clip that has audio → the audio format is entirely unknown; this file is the prerequisite before any EIF-audio code can be written.
+- [ ] **Tail length** — obtain one reference file with frame_count < 36 and one with ≥ 36 → confirm whether the desk cares about the 128 vs 140-byte tail.
+- [ ] **Clip name / slot rules** — try importing with a clip name (0x004) that does not match the filename stem, and with non-contiguous / non-`0001` start slots → learn whether the desk enforces either.
+- [ ] **While a desk is available, verify the other unconfirmed extraction outputs too:** EIF→SWS (lossless), EIF→Kayenne TGA, EIF→Sony TGA, Kayenne MOV/TGA output, interlaced-SWS→MOV field-order metadata, and Sony MVS 25i field order. See the two hardware-unknowns tables above.
+
+#### Priority 2 — code follow-ups, unlocked by the test results (do NOT build speculatively)
+
+- **EIF audio (.eaf)** — once a real `.eaf` is hex-analysed, implement read and write.
+- **Interlaced EIF reconciliation** — once the desk's interlaced storage is known, fix whichever of `convert_clip_to_eif` (currently passes interlaced through untouched) or `convert_tga_seq_to_eif` (deinterlaces to 50p via yadif) is wrong, so the two paths agree.
+- **25fps movi tag** — correct the 8 bytes at 0x8DC if the hex compare shows the `b'RIFFRIFF'` assumption is wrong.
+- **Tail length** — extend the tail to 140 bytes for all files if the desk turns out to be strict about it.
+
+#### Priority 3 — pure code, no hardware needed (lowest priority — no demand yet)
+
+- **EIF→Kayenne MOV** — decode EIF frames → ffmpeg ProRes 4444 encode. Not yet coded. The only remaining item that needs neither hardware nor reference files, but there is no user demand for it, so it sits below the hardware work.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
