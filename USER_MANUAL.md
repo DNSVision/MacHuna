@@ -1,4 +1,4 @@
-# MacHuna v1.6.10 — User Manual
+# MacHuna v1.6.11 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -232,7 +232,7 @@ Any of the following inputs can be converted to Kayenne EIF:
 | **Start slot** | First slot number for output files. Files are named `0001.eif`, `0002.eif` etc. and increment per item in the batch. |
 | **TGA source interlaced** | Shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source. MacHuna deinterlaces each frame using yadif (field separation, TFF) to produce 50fps progressive EIF output. |
 
-EIF output is always 1920×1080. Sources of other sizes are scaled. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps).
+EIF output is always 1920×1080. Sources of other sizes are scaled. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps), and the video is resampled to that rate so the clip keeps its original duration and plays at the correct speed — for example a 60fps source becomes a 50fps EIF clip of the same length.
 
 ### 6.3 Converting FROM EIF
 

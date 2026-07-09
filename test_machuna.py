@@ -320,5 +320,84 @@ class TestPToIFieldMap(unittest.TestCase):
             self.assertIn('speed', str(e).lower())
 
 
+class TestEifFpsResample(unittest.TestCase):
+    """Fix 14: convert_clip_to_eif must resample the source to the EIF header
+    rate (25/50) so the number of frames written matches the fps stamped in the
+    header. Otherwise a non-25/50 source (30/29.97/60/59.94fps) is extracted at
+    its own rate while the header claims 25/50, and the Kayenne plays it at the
+    wrong speed."""
+
+    class _Stop(Exception):
+        """Sentinel raised once we've captured what we need, to avoid running
+        ffmpeg / the frame encoder."""
+
+    def setUp(self):
+        self._orig_info   = m.get_video_info
+        self._orig_v210   = m.convert_to_v210
+        self._orig_header = m._build_eif_header
+        self.captured = {}
+
+        def fake_v210(input_path, output_path, **kwargs):
+            # Record the resample instruction and leave a sparse 1-frame file
+            # so frame_count computes to 1 (no real bytes written to disk).
+            self.captured['vf_extra'] = kwargs.get('vf_extra')
+            with open(output_path, 'wb') as f:
+                f.truncate(m._EIF_PLANE_SIZE)
+            return None  # no key plane
+
+        def fake_header(clip_name, frame_count, fps):
+            self.captured['header_fps'] = fps
+            raise TestEifFpsResample._Stop
+
+        m.convert_to_v210   = fake_v210
+        m._build_eif_header = fake_header
+
+    def tearDown(self):
+        m.get_video_info   = self._orig_info
+        m.convert_to_v210  = self._orig_v210
+        m._build_eif_header = self._orig_header
+
+    def _run_for(self, source_fps):
+        m.get_video_info = lambda p: {
+            'fps': source_fps, 'has_alpha': False, 'has_audio': False,
+            'width': 1920, 'height': 1080,
+        }
+        with self.assertRaises(TestEifFpsResample._Stop):
+            m.convert_clip_to_eif('dummy.mov', '.', log=lambda *a, **k: None)
+        return self.captured['vf_extra'], self.captured['header_fps']
+
+    def test_resample_target_always_matches_header_fps(self):
+        # The invariant that guarantees correct playback speed: whatever rate we
+        # resample to must equal the rate we stamp in the header.
+        for src in (24.0, 23.976, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0):
+            vf_extra, header_fps = self._run_for(src)
+            self.assertEqual(vf_extra, f'fps={header_fps:g}',
+                             msg=f'{src}fps: resample {vf_extra} != header {header_fps}')
+
+    def test_60fps_source_resampled_to_50(self):
+        vf_extra, _ = self._run_for(60.0)
+        self.assertEqual(vf_extra, 'fps=50')
+
+    def test_5994_source_resampled_to_50(self):
+        vf_extra, _ = self._run_for(59.94)
+        self.assertEqual(vf_extra, 'fps=50')
+
+    def test_30fps_source_resampled_to_25(self):
+        vf_extra, _ = self._run_for(30.0)
+        self.assertEqual(vf_extra, 'fps=25')
+
+    def test_2997_source_resampled_to_25(self):
+        vf_extra, _ = self._run_for(29.97)
+        self.assertEqual(vf_extra, 'fps=25')
+
+    def test_already_25_stays_25(self):
+        vf_extra, _ = self._run_for(25.0)
+        self.assertEqual(vf_extra, 'fps=25')
+
+    def test_already_50_stays_50(self):
+        vf_extra, _ = self._run_for(50.0)
+        self.assertEqual(vf_extra, 'fps=50')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.11 — 2026-07-09
+
+### Fixed
+- **Video clip → EIF no longer plays at the wrong speed for non-25/50fps sources (Fix 14).** `convert_clip_to_eif` extracted frames at the *source* rate but stamped the EIF header at the nearest supported rate (25 or 50fps). When those two rates differed — any 29.97, 30, 59.94 or 60fps source — the frame count and the header disagreed, so a Kayenne played the clip at the wrong speed and duration (e.g. a 10s/60fps clip ran for 12s in slow motion). MacHuna now resamples the source to the chosen EIF rate during extraction, so the number of frames written always matches the header fps and the clip keeps its original duration. The resample is applied to both the fill and key planes, so they stay frame-synced. Sources already at 25 or 50fps are unaffected. *(EIF output as a whole remains hardware-unconfirmed — this corrects playback speed, not desk acceptance.)*
+
+---
+
 ## v1.6.10 — 2026-07-08
 
 ### Fixed

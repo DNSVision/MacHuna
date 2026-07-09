@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.10"
+VERSION = "1.6.11"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1196,9 +1196,19 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_v210 = os.path.join(tmp, 'fill.v210')
+        # Resample to the chosen EIF rate (25/50) so the number of frames we
+        # write matches the fps stamped in the header. Without this, a source
+        # that is not already 25/50 (e.g. 30/29.97/60/59.94fps) is extracted at
+        # its own rate while the header says 25/50, so the Kayenne plays it at
+        # the wrong speed. ffmpeg's fps filter drops/duplicates frames to hit
+        # the target rate; vf_extra is applied to both fill and key planes so
+        # their frame counts stay in sync. (Fix 14.)
+        # NOTE: how EIF stores originally-interlaced content is still
+        # unconfirmed (roadmap #6) -- this only corrects playback speed.
         key_path  = convert_to_v210(input_path, fill_v210,
                                     width=1920, height=1080,
-                                    extract_alpha=info['has_alpha'])
+                                    extract_alpha=info['has_alpha'],
+                                    vf_extra=f'fps={fps:g}')
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if frame_count == 0:
             raise ValueError("No complete frames extracted from source.")
