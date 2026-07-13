@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MacHuna — native GUI mockup (reference)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.31.0/tabler-icons.min.css">
+<style>
+  :root{
+    --surface-2:#ffffff; --surface-1:#f4f2ec; --surface-0:#ece9e2;
+    --text-primary:#1d1d1b; --text-secondary:#5f5e5a; --text-muted:#8a8981;
+    --border:rgba(0,0,0,0.10); --border-strong:rgba(0,0,0,0.17);
+    --text-accent:#185FA5; --bg-accent:#E6F1FB;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--surface-0);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;color:var(--text-primary);padding:26px;display:inline-block;}
+  .frame{width:700px;}
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div style="display:flex;gap:18px;padding:0 6px 8px;font-size:13px;color:var(--text-secondary);border-bottom:0.5px solid var(--border);margin-bottom:14px;">
+    <span style="font-weight:600;color:var(--text-primary);"><i class="ti ti-square-rounded" aria-hidden="true"></i> MacHuna</span>
+    <span>File</span><span>Edit</span><span style="color:var(--text-primary);">Convert</span><span>View</span><span>Window</span><span>Help</span>
+  </div>
+
+  <div style="background:var(--surface-2);border:0.5px solid var(--border-strong);border-radius:12px;overflow:hidden;">
+
+    <div style="display:flex;align-items:center;gap:14px;padding:11px 14px;border-bottom:0.5px solid var(--border);">
+      <div style="display:flex;gap:8px;">
+        <span style="width:12px;height:12px;border-radius:50%;background:#FF5F57;display:inline-block;"></span>
+        <span style="width:12px;height:12px;border-radius:50%;background:#FEBC2E;display:inline-block;"></span>
+        <span style="width:12px;height:12px;border-radius:50%;background:#28C840;display:inline-block;"></span>
+      </div>
+      <span style="font-size:13px;font-weight:600;">MacHuna</span>
+      <div style="flex:1;"></div>
+      <div style="display:flex;gap:6px;color:var(--text-secondary);font-size:12px;">
+        <span style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 10px;border-radius:7px;border:0.5px solid var(--border);"><i class="ti ti-folder-plus" style="font-size:18px;" aria-hidden="true"></i>Add</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 10px;border-radius:7px;"><i class="ti ti-eye" style="font-size:18px;" aria-hidden="true"></i>Player</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 10px;border-radius:7px;"><i class="ti ti-folder-open" style="font-size:18px;" aria-hidden="true"></i>Reveal</span>
+      </div>
+    </div>
+
+    <div style="display:flex;min-height:330px;">
+
+      <div style="width:186px;background:var(--surface-1);border-right:0.5px solid var(--border);padding:10px 8px;display:flex;flex-direction:column;gap:2px;">
+        <div style="font-size:11px;color:var(--text-muted);padding:2px 8px 6px;letter-spacing:0.3px;">SOURCE · 3 ITEMS</div>
+
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;background:var(--bg-accent);">
+          <i class="ti ti-movie" style="font-size:17px;color:var(--text-accent);" aria-hidden="true"></i>
+          <div style="min-width:0;flex:1;"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">STING_OPEN.mov</div><div style="font-size:11px;color:var(--text-secondary);">1080p50 · 60f</div></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;">
+          <i class="ti ti-movie" style="font-size:17px;color:var(--text-secondary);" aria-hidden="true"></i>
+          <div style="min-width:0;flex:1;"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LOWER_THIRD.mov</div><div style="font-size:11px;color:var(--text-secondary);">1080p50 · 48f</div></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;">
+          <i class="ti ti-photo" style="font-size:17px;color:var(--text-secondary);" aria-hidden="true"></i>
+          <div style="min-width:0;flex:1;"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">WIPE_A/ (tga)</div><div style="font-size:11px;color:var(--text-secondary);">1080p50 · 30f</div></div>
+        </div>
+
+        <div style="flex:1;"></div>
+        <div style="border:1px dashed var(--border-strong);border-radius:8px;padding:12px 8px;text-align:center;color:var(--text-muted);font-size:11px;display:flex;flex-direction:column;gap:4px;align-items:center;">
+          <i class="ti ti-drag-drop" style="font-size:19px;" aria-hidden="true"></i>Drop clips, folders or SWS
+        </div>
+      </div>
+
+      <div style="flex:1;padding:16px 18px;display:flex;flex-direction:column;gap:13px;">
+
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:13px;color:var(--text-secondary);">Output format</span>
+          <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;border:0.5px solid var(--border-strong);border-radius:7px;padding:6px 11px;min-width:170px;justify-content:space-between;">Kahuna SWS (.sws) <i class="ti ti-chevron-down" style="font-size:15px;color:var(--text-secondary);" aria-hidden="true"></i></span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:13px;color:var(--text-secondary);">Video standard</span>
+          <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;border:0.5px solid var(--border-strong);border-radius:7px;padding:6px 11px;min-width:170px;justify-content:space-between;">1080i/50 <i class="ti ti-chevron-down" style="font-size:15px;color:var(--text-secondary);" aria-hidden="true"></i></span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:13px;color:var(--text-secondary);">Field order</span>
+          <span style="display:inline-flex;border:0.5px solid var(--border-strong);border-radius:7px;overflow:hidden;font-size:12px;font-weight:600;">
+            <span style="padding:6px 16px;background:var(--text-accent);color:#fff;">TFF</span>
+            <span style="padding:6px 16px;color:var(--text-secondary);">BFF</span>
+          </span>
+        </div>
+
+        <div style="border-top:0.5px solid var(--border);padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:9px 16px;">
+          <span style="font-size:13px;display:flex;align-items:center;gap:8px;"><i class="ti ti-square-check" style="font-size:17px;color:var(--text-accent);" aria-hidden="true"></i>Include audio</span>
+          <span style="font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-secondary);"><i class="ti ti-square" style="font-size:17px;" aria-hidden="true"></i>Ignore key</span>
+          <span style="font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-secondary);"><i class="ti ti-square" style="font-size:17px;" aria-hidden="true"></i>Auto play</span>
+          <span style="font-size:13px;display:flex;align-items:center;gap:8px;color:var(--text-secondary);"><i class="ti ti-square" style="font-size:17px;" aria-hidden="true"></i>Loop play</span>
+        </div>
+
+        <div style="flex:1;"></div>
+
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);background:var(--surface-1);border-radius:7px;padding:7px 10px;">
+          <i class="ti ti-folder" style="font-size:16px;" aria-hidden="true"></i><span style="flex:1;">~/Desktop/SWS Out</span><span style="color:var(--text-accent);">Change…</span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="flex:1;height:6px;background:var(--surface-1);border-radius:3px;overflow:hidden;"><div style="width:38%;height:100%;background:var(--text-accent);"></div></div>
+          <span style="font-size:11px;color:var(--text-muted);">1 of 3</span>
+          <span style="display:inline-flex;align-items:center;gap:7px;background:var(--text-accent);color:#fff;font-size:13px;font-weight:600;padding:8px 18px;border-radius:8px;"><i class="ti ti-player-play" style="font-size:16px;" aria-hidden="true"></i>Convert</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
