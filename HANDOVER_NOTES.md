@@ -4,6 +4,16 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ---
 
+## Session Anchor
+
+**Understanding baseline:** commit `15c73f1` — 2026-07-13. Claude read every doc and all of `machuna.py` in full at this commit; understanding is current as of here.
+
+**On resuming:** run `git log --oneline 15c73f1..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
+
+*(Note: the per-session narrative below stops at v1.6.6. v1.6.7–v1.6.11 are recorded in `CHANGELOG.md` and the version-history line in `DEVELOPMENT_NOTES.md`, not here.)*
+
+---
+
 ## Recent Session Notes (June 2026 — v1.6.6)
 
 ### v1.6.6 — Sony TGA output for TGA sequence input

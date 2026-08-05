@@ -9,6 +9,14 @@ MacHuna is a single-file Python app (`machuna.py`) that translates broadcast med
 - Build: `python3.12 -m PyInstaller MacHuna.spec -y`
 - Run for testing: `/opt/homebrew/bin/python3.12 machuna.py --gui`
 
+## Staying current between sessions (git-anchored)
+
+To stop Claude's understanding of the code drifting from what is actually built, the working state is anchored to a git commit rather than to memory or the prose docs.
+
+- **On resuming** a session that will touch this repo: read the "Session Anchor" block at the top of `HANDOVER_NOTES.md`, then run `git log --oneline <anchor>..HEAD` and `git status -s`. Reconcile anything that changed since the anchor before trusting the docs or prior memory — the code is the source of truth. A full re-read of `machuna.py` is only needed when that diff is large, after a long gap, or before a big undertaking (e.g. the Swift port); otherwise just read the changed areas.
+- **On finishing** a session that changed the repo: update the "Session Anchor" block in `HANDOVER_NOTES.md` to the new HEAD (short commit + date) with a one-line note of what moved.
+- Always distinguish "we decided this" from "I verified this in the code" — never assert a file/line fact from memory, check it. Same discipline as the UNCONFIRMED hardware flags.
+
 ## On every release (version bump)
 
 When the version number in `machuna.py` changes, update ALL of the following — no exceptions:
