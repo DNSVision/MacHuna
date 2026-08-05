@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.11"
+VERSION = "1.6.12"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -104,7 +104,8 @@ FORMAT_VARIANT_DISPLAY = {
 }
 
 
-def _p_to_i_field_map(source_fps: float, video_standard: str) -> str:
+def _p_to_i_field_map(source_fps: float, video_standard: str,
+                      field_order: str = 'TFF') -> str:
     """Decide how a *progressive* source maps onto an *interlaced* standard.
 
     Returns the ffmpeg filter to weave the source into interlaced frames, or raises
@@ -118,6 +119,11 @@ def _p_to_i_field_map(source_fps: float, video_standard: str) -> str:
     motion (50p→1080i50, 59.94p→1080i5994, 60p→1080i60). That weave is
     hardware-confirmed and unchanged.
 
+    field_order ('TFF'/'BFF') picks which field leads. It defaults to TFF, the SMPTE
+    standard for 1080i HD, so every caller that does not pass it keeps exactly the
+    hardware-confirmed behaviour. Only the Sony TGA path overrides it, from the UI's
+    field-order toggle.
+
     A same-rate progressive source (25p→1080i50, 30p→1080i60) would be halved by the
     weave and play at 2× speed, so it is blocked rather than silently mangled.
     (Carrying same-rate progressive as PsF is deliberately not implemented yet —
@@ -130,7 +136,8 @@ def _p_to_i_field_map(source_fps: float, video_standard: str) -> str:
     TOL = 0.5
     if abs(source_fps - field_fps) <= TOL:
         # Double-rate source → genuine interlaced motion. Weave pairs (count halves).
-        return 'tinterlace=mode=interleave_top'
+        return ('tinterlace=mode=interleave_bottom' if field_order == 'BFF'
+                else 'tinterlace=mode=interleave_top')
     if abs(source_fps - frame_fps) <= TOL:
         raise ValueError(
             f"source is {source_fps:.2f}fps, the same frame rate as {video_standard} "
@@ -141,6 +148,46 @@ def _p_to_i_field_map(source_fps: float, video_standard: str) -> str:
         f"source is {source_fps:.2f}fps, which is incompatible with {video_standard} "
         f"({field_fps:.0f} fields/sec). MacHuna does not do frame-rate standards "
         f"conversion — convert the source to {field_fps:.0f}p (or {frame_fps:.0f}p) first.")
+
+
+def _i_to_p_filter(source_fps: float, video_standard: str, parity: str = None) -> str:
+    """Decide how an *interlaced* source maps onto a *progressive* standard.
+
+    Returns the ffmpeg filter chain that deinterlaces the source and lands it on the
+    target standard's frame rate. Shared by every interlaced→progressive path that
+    knows its source frame rate (video clips, SWS→SWS and clip→TGA) so the rate
+    decision lives in one place — the mirror of _p_to_i_field_map for the opposite
+    direction.
+
+    An interlaced source carries two fields per frame, so bob-deinterlacing (yadif
+    send_field) doubles the frame count. That alone is correct only when the target
+    progressive rate is exactly double the source frame rate (i50→p50, i5994→p5994).
+    Any other pairing needs an explicit fps resample on top, or the output carries
+    the wrong number of frames for the rate it claims and plays at the wrong speed:
+    i50→p60 would put 50 frames of motion per second into a 60fps standard, and
+    i5994→p25 would put 29.97 into 25.
+
+    parity ('tff'/'bff') is for callers whose ffmpeg input is a concat of still
+    frames, which carries no field-order metadata for yadif to read. Callers with a
+    real video input leave it unset so yadif uses the stream's own flags.
+    """
+    target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+    p = f':parity={parity}' if parity else ''
+    TOL = 0.5   # 59.94 and 60 are broadcast-equivalent; same tolerance as _p_to_i_field_map
+    if target_fps > source_fps + TOL:
+        # Target above the source frame rate: bob, so each field becomes a frame.
+        vf = f'yadif=mode=send_field{p}'
+        produced_fps = source_fps * 2
+    else:
+        # Target at or below the source frame rate: one frame out per frame in,
+        # discarding the second field.
+        vf = f'yadif=mode=send_frame{p}'
+        produced_fps = source_fps
+    if abs(produced_fps - target_fps) > TOL:
+        # Deinterlacing alone has landed on the wrong rate — resample to the target
+        # so the clip keeps real time (i50→p60, i5994→p50, i5994→p25).
+        vf += f',fps={target_fps:g}'
+    return vf
 
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -758,15 +805,11 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # correct number of frames for that fps — not the source frame rate.
         target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
         output_fps = target_fps
-        if target_fps > fps:
-            # Bob deinterlace: each field becomes a frame (doubles frame rate),
-            # then resample to exact target fps (handles cross-rate cases like i50→p60).
-            vf_tinterlace = f'yadif=mode=send_field,fps={target_fps}'
-            output_frame_count = int(round(frame_count * target_fps / fps))
-        else:
-            # Target fps ≤ source frame rate: simple deinterlace, same frame count.
-            vf_tinterlace = 'yadif=mode=send_frame'
-            output_frame_count = frame_count
+        # _i_to_p_filter bobs or drops fields as the rates require and appends an
+        # fps resample whenever deinterlacing alone would miss the target, so the
+        # output always lands on target_fps and the frame count follows from it.
+        vf_tinterlace = _i_to_p_filter(fps, video_standard)
+        output_frame_count = int(round(frame_count * target_fps / fps))
         log(f"  Transcoding interlaced→progressive: {frame_count} frames @ {fps:.2f}fps → ~{output_frame_count} frames @ {output_fps:.2f}fps")
     else:
         vf_tinterlace      = ''
@@ -3861,6 +3904,28 @@ def launch_gui():
             log(f"ERROR: {e}")
             return
 
+        # Stills are valid for Kahuna SWS output only. A single frame is not a clip:
+        # MacHuna deliberately does not produce single-frame EIF or TGA-sequence
+        # "clips" — a settled scope decision, see "Stills are SWS-only (settled)" in
+        # DEVELOPMENT_NOTES.md. Do not reintroduce it.
+        # Without this guard a still routes into _run_to_tga_seq / _run_to_eif, which
+        # handle only 'tga_seq'/'clip'/'sws' items, and vanishes with no file, no error
+        # and no log line — the silent failure logged as Fix 4.
+        if out in (OUTPUT_TGA_SEQ, OUTPUT_SONY_TGA, OUTPUT_KAYENNE_EIF):
+            _stills = [i for i in _selected_items if i['type'] == 'still']
+            if _stills:
+                _names = '\n'.join(f"  • {Path(s['path']).name}" for s in _stills[:5])
+                if len(_stills) > 5:
+                    _names += f"\n  … and {len(_stills) - 5} more"
+                messagebox.showerror(
+                    "Convert",
+                    f"{out} output needs a clip or a TGA sequence, not a still.\n\n"
+                    f"Selected still{'s' if len(_stills) > 1 else ''}:\n{_names}\n\n"
+                    f"Stills convert to Kahuna SWS only. Deselect them, or choose\n"
+                    f"Kahuna SWS as the output.",
+                    parent=root)
+                return
+
         # Warning for unconfirmed MOV→TGA path
         if itype == 'mov_only' and out in (OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA):
             if not _ask_confirm(root,
@@ -3941,9 +4006,10 @@ def launch_gui():
                                 raise ValueError(
                                     f"No frames extracted from {Path(item['path']).name}")
                             if src_interlaced and not out_interlaced:
-                                vf_sws = ('yadif=mode=send_field:parity=tff'
-                                          if tgt_fps > src_hdr.fps
-                                          else 'yadif=mode=send_frame:parity=tff')
+                                # Source SWS's own header fps drives the rate decision,
+                                # so a cross-rate target (i50→p60, i5994→p25) gets the
+                                # fps resample it needs instead of playing wrong-speed.
+                                vf_sws = _i_to_p_filter(src_hdr.fps, out_std, parity='tff')
                                 log(f"  {stem}: {src_hdr.standard} → {out_std}"
                                     f" (interlaced→progressive via yadif)")
                             elif not src_interlaced and out_interlaced:
@@ -4063,6 +4129,13 @@ def launch_gui():
             tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
             is_sony = (out == OUTPUT_SONY_TGA)
             cn = clip_name_var.get().strip().upper() if is_sony else None
+            # Fix 10: honour the UI's field-order toggle instead of hardcoding TFF.
+            # Only when the toggle is actually visible, which _update_adaptive_controls
+            # decides by (is_sony or interlaced target standard). When it is hidden the
+            # user has had no chance to choose, so fall back to TFF (SMPTE standard for
+            # 1080i HD) rather than silently reusing a stale value from an earlier job.
+            fo     = field_order_var.get() if (is_sony or out_interlaced) else 'TFF'
+            parity = 'bff' if fo == 'BFF' else 'tff'
             results = []
             cancelled = False
             for item in _selected_items:
@@ -4076,17 +4149,28 @@ def launch_gui():
                         tga_files = sorted(item['files'])
                         src_interlaced = source_interlaced_var.get()
                         if src_interlaced and not out_interlaced:
-                            vf = ('yadif=mode=send_field:parity=tff' if tgt_fps > 30
-                                  else 'yadif=mode=send_frame:parity=tff')
-                            log(f"  TGA→TGA: {base} — interlaced→progressive via yadif ({out_std})")
+                            # Raw TGA pile: no declared source frame rate anywhere in
+                            # the app (same gap as the p→i branch below). Assume the
+                            # source interlaced standard matches the chosen output
+                            # family — half a 50/59.94/60 target, equal to a 25 one.
+                            # Under that assumption bobbing lands on the target exactly
+                            # and no resample is needed; nor is one possible, as there
+                            # is no real source rate to resample from. A genuine
+                            # cross-family pile (i50 TGAs aimed at 1080p60) cannot be
+                            # detected here — that needs a UI field declaring the
+                            # sequence's rate.
+                            assumed_src_fps = tgt_fps / 2 if tgt_fps > 30 else tgt_fps
+                            vf = _i_to_p_filter(assumed_src_fps, out_std, parity=parity)
+                            log(f"  TGA→TGA: {base} — interlaced→progressive via yadif, {fo} ({out_std})")
                         elif not src_interlaced and out_interlaced:
                             # Raw TGA pile: no source fps to rate-check (see
                             # _p_to_i_field_map / convert_tga_sequence). Assumed to be a
                             # double-rate field stream and weaved. Parked: same-rate 25p
                             # TGA renders would double-speed here, but there is no UI to
                             # declare a TGA sequence's rate yet.
-                            vf = 'tinterlace=mode=interleave_top'
-                            log(f"  TGA→TGA: {base} — progressive→interlaced TFF ({out_std})")
+                            vf = ('tinterlace=mode=interleave_bottom' if fo == 'BFF'
+                                  else 'tinterlace=mode=interleave_top')
+                            log(f"  TGA→TGA: {base} — progressive→interlaced {fo} ({out_std})")
                         else:
                             vf = None
                             log(f"  TGA→TGA: {base} — passthrough ({out_std})")
@@ -4113,14 +4197,15 @@ def launch_gui():
                         src_interlaced = info.get('is_interlaced', False)
                         src_fps = info.get('fps', 25.0)
                         if src_interlaced and not out_interlaced:
-                            vf = ('yadif=mode=send_field:parity=tff' if tgt_fps > src_fps
-                                  else 'yadif=mode=send_frame:parity=tff')
-                            log(f"  Clip→TGA: {name} — interlaced→progressive via yadif ({out_std})")
+                            # Real clip: ffprobe gives a true source rate, so a
+                            # cross-rate target gets the fps resample it needs.
+                            vf = _i_to_p_filter(src_fps, out_std, parity=parity)
+                            log(f"  Clip→TGA: {name} — interlaced→progressive via yadif, {fo} ({out_std})")
                         elif not src_interlaced and out_interlaced:
                             # Weave only if the clip runs at the interlaced field rate;
                             # a same-rate/cross-rate clip is blocked (would double speed).
-                            vf = _p_to_i_field_map(src_fps, out_std)
-                            log(f"  Clip→TGA: {name} — progressive→interlaced TFF ({out_std})")
+                            vf = _p_to_i_field_map(src_fps, out_std, field_order=fo)
+                            log(f"  Clip→TGA: {name} — progressive→interlaced {fo} ({out_std})")
                         else:
                             vf = None
                             log(f"  Clip→TGA: {name} — passthrough ({out_std})")

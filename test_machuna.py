@@ -310,6 +310,27 @@ class TestPToIFieldMap(unittest.TestCase):
         self.assertEqual(m._p_to_i_field_map(59.94, '1080i60'), self.WEAVE)
         self.assertEqual(m._p_to_i_field_map(60.0, '1080i5994'), self.WEAVE)
 
+    def test_field_order_defaults_to_tff(self):
+        # Fix 10 added the field_order parameter. Every pre-existing caller omits it
+        # and must keep the hardware-confirmed TFF weave byte-for-byte.
+        self.assertEqual(m._p_to_i_field_map(50.0, '1080i50'), self.WEAVE)
+        self.assertEqual(m._p_to_i_field_map(50.0, '1080i50', field_order='TFF'),
+                         self.WEAVE)
+
+    def test_bff_weaves_bottom_field_first(self):
+        # Fix 10: the Sony TGA path passes the UI toggle through to here.
+        self.assertEqual(m._p_to_i_field_map(50.0, '1080i50', field_order='BFF'),
+                         'tinterlace=mode=interleave_bottom')
+
+    def test_field_order_does_not_defeat_the_rate_guard(self):
+        # Choosing BFF must not turn a blocked same-rate/cross-rate source into an
+        # allowed one — the speed guard is independent of which field leads.
+        for fo in ('TFF', 'BFF'):
+            with self.assertRaises(ValueError, msg=f'25→1080i50 must block ({fo})'):
+                m._p_to_i_field_map(25.0, '1080i50', field_order=fo)
+            with self.assertRaises(ValueError, msg=f'24→1080i50 must block ({fo})'):
+                m._p_to_i_field_map(24.0, '1080i50', field_order=fo)
+
     def test_same_rate_message_names_the_speed_problem(self):
         # The blocking error must be actionable, not a bare exception.
         try:
@@ -318,6 +339,74 @@ class TestPToIFieldMap(unittest.TestCase):
         except ValueError as e:
             self.assertIn('1080i50', str(e))
             self.assertIn('speed', str(e).lower())
+
+
+class TestIToPFilter(unittest.TestCase):
+    """Fix 9(b): _i_to_p_filter decides how an interlaced source maps onto a
+    progressive standard. Bob-deinterlacing doubles the frame count, which is only
+    correct when the target is exactly double the source frame rate; every other
+    pairing needs an fps resample or the clip plays at the wrong speed."""
+
+    def test_double_rate_target_bobs_without_resample(self):
+        # Target is exactly 2x the source frame rate — bobbing lands on it exactly,
+        # so no resample should be appended.
+        for src_fps, std in [(25.0, '1080p50'), (29.97, '1080p5994'), (30.0, '1080p60')]:
+            self.assertEqual(m._i_to_p_filter(src_fps, std), 'yadif=mode=send_field',
+                             f'{src_fps} → {std} should bob with no resample')
+
+    def test_same_rate_target_drops_fields_without_resample(self):
+        # Target equals the source frame rate — one frame out per frame in.
+        self.assertEqual(m._i_to_p_filter(25.0, '1080p25'), 'yadif=mode=send_frame')
+
+    def test_cross_rate_up_appends_resample(self):
+        # The Fix 9(b) bug: bobbing 25fps gives 50, but the target is 60/59.94.
+        self.assertEqual(m._i_to_p_filter(25.0, '1080p60'),
+                         'yadif=mode=send_field,fps=60')
+        self.assertEqual(m._i_to_p_filter(25.0, '1080p5994'),
+                         'yadif=mode=send_field,fps=59.94')
+        # Bobbing 29.97 gives 59.94, but the target is 50 — resample down.
+        self.assertEqual(m._i_to_p_filter(29.97, '1080p50'),
+                         'yadif=mode=send_field,fps=50')
+
+    def test_cross_rate_down_appends_resample(self):
+        # Target below the source frame rate: send_frame keeps the source count,
+        # which would run slow at the target rate, so it must resample too.
+        self.assertEqual(m._i_to_p_filter(29.97, '1080p25'),
+                         'yadif=mode=send_frame,fps=25')
+        self.assertEqual(m._i_to_p_filter(30.0, '1080p25'),
+                         'yadif=mode=send_frame,fps=25')
+
+    def test_5994_and_60_treated_as_equivalent(self):
+        # Broadcast-equivalent rates must not trigger a pointless resample —
+        # same 0.5fps tolerance as _p_to_i_field_map.
+        self.assertEqual(m._i_to_p_filter(30.0, '1080p5994'), 'yadif=mode=send_field')
+        self.assertEqual(m._i_to_p_filter(29.97, '1080p60'), 'yadif=mode=send_field')
+
+    def test_parity_injected_only_when_asked(self):
+        # Concat-of-stills callers must pass parity (no field metadata in the
+        # stream); real-video callers must not, so yadif reads the stream's flags.
+        self.assertEqual(m._i_to_p_filter(25.0, '1080p50', parity='tff'),
+                         'yadif=mode=send_field:parity=tff')
+        self.assertEqual(m._i_to_p_filter(25.0, '1080p60', parity='bff'),
+                         'yadif=mode=send_field:parity=bff,fps=60')
+        self.assertNotIn('parity', m._i_to_p_filter(25.0, '1080p50'))
+
+    def test_every_interlaced_to_progressive_pairing_lands_on_target(self):
+        # Sweep every real i→p pairing and assert the filter chain accounts for the
+        # target rate: either bobbing/dropping already lands on it, or an fps
+        # resample to it is present. This is the property the bug violated.
+        interlaced = {'1080i50': 25.0, '1080i5994': 29.97, '1080i60': 30.0}
+        for src_std, src_fps in interlaced.items():
+            for out_std in ('1080p25', '1080p50', '1080p5994', '1080p60'):
+                vf = m._i_to_p_filter(src_fps, out_std)
+                target = m.FORMAT_VARIANT_FPS[m.FORMAT_VARIANTS[out_std]]
+                produced = src_fps * 2 if 'send_field' in vf else src_fps
+                if abs(produced - target) > 0.5:
+                    self.assertIn(f'fps={target:g}', vf,
+                                  f'{src_std} → {out_std} needs a resample to {target}')
+                else:
+                    self.assertNotIn('fps=', vf,
+                                     f'{src_std} → {out_std} should need no resample')
 
 
 class TestEifFpsResample(unittest.TestCase):

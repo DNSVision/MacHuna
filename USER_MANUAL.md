@@ -1,4 +1,4 @@
-# MacHuna v1.6.11 — User Manual
+# MacHuna v1.6.12 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -131,10 +131,12 @@ MacHuna reads the contents of the folder you open and determines the input type 
 | `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of `.EIF` and `.SWS` files | EIF + SWS source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA, TGA Sequence |
-| TGA sequences and/or stills | TGA / stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence |
+| TGA sequences and/or stills | TGA / stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence — see note below |
 | Mix of SWS and other files | Error — shown in summary | — |
 
 > **NOTE** If you see a "mixed input" error, the folder contains both `.SWS` files and other file types. Move them into separate folders and convert each folder independently.
+
+> **NOTE — stills go to Kahuna SWS only.** A still image is a single frame, not a clip, so MacHuna does not convert stills to Kayenne EIF, Sony TGA or TGA Sequence output. Those outputs need a clip or a TGA sequence. If a still is selected with one of them, MacHuna names the file and stops rather than converting it. Deselect the still, or choose Kahuna SWS. A folder holding both stills and TGA sequences is fine: select the sequence and leave the stills unticked.
 
 ### 4.2 The File List
 
@@ -201,6 +203,17 @@ If you give MacHuna a **same-rate** progressive source (e.g. a 25p file destined
 When converting an interlaced source to a progressive standard, MacHuna bob-deinterlaces to produce the correct number of progressive frames. Playback speed on the Kahuna is preserved.
 
 Example: 50 frames of 1080i/50 source → 100 frames of 1080p/50 output.
+
+**Cross-rate conversions (corrected in v1.6.12).** Deinterlacing doubles the frame count, which lands on the target rate exactly only when the progressive standard is double the interlaced source's frame rate — 1080i/50 → 1080p/50, or 1080i/59.94 → 1080p/59.94. Any other pairing needs a rate change on top, and before v1.6.12 MacHuna did not apply one, so the clip played fast or slow:
+
+| Source | Target | Before v1.6.12 | Now |
+|---|---|---|---|
+| 1080i/50 | 1080p/50 | correct | correct |
+| 1080i/50 | 1080p/60 | ran fast | correct |
+| 1080i/59.94 | 1080p/50 | ran fast | correct |
+| 1080i/59.94 | 1080p/25 | ran 20% slow | correct |
+
+This applies to video clips, SWS→SWS, and TGA outputs. **A loose TGA image sequence is the exception:** it carries no frame rate anywhere, so MacHuna assumes the source standard matches the output family you pick (an interlaced pile aimed at 1080p/50 is treated as 1080i/50 material). That assumption is right for normal use. If you are converting a TGA sequence across families — interlaced 50Hz frames aimed at a 60Hz progressive standard — convert via a video clip or SWS instead, so MacHuna has a real frame rate to work from.
 
 ---
 
@@ -286,6 +299,8 @@ MacHuna logs a note describing what it did for each file.
 
 A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA. **TFF (Top Field First) is the default** — it is the SMPTE standard for HD (including 1080i) and is correct for all known 1080i HD workflows (default since v1.6.3). If you see motion artefacts or comb effects on the desk after import, switch to BFF and reconvert.
 
+> **Fixed in v1.6.12.** For Sony TGA output from a TGA sequence or a video clip, this toggle was displayed but had no effect — the conversion was hardcoded to TFF, so switching to BFF changed nothing in the output. It now works in both conversion directions, and the conversion log states which field order was applied, so you can confirm what was used. If you tested Sony TGA output before v1.6.12 and concluded BFF did not help, that test was not valid and is worth repeating.
+
 ### 7.5 Sony TGA — Clip Name
 
 Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
@@ -334,7 +349,7 @@ When **TGA source interlaced** is ticked and you select a **progressive** target
 
 ### 8.3 TGA Sequence Output
 
-When the input is a TGA sequence or a video clip, **TGA Sequence** appears as an output option. This re-writes the frames as a new numbered TGA sequence in a subfolder, applying an interlaced↔progressive conversion according to the selected **Standard** — useful for converting a sequence between field standards without going through SWS. Progressive→interlaced uses field-weaving (`tinterlace`, TFF); interlaced→progressive uses yadif deinterlacing. The alpha/key channel is preserved throughout.
+When the input is a TGA sequence or a video clip, **TGA Sequence** appears as an output option. This re-writes the frames as a new numbered TGA sequence in a subfolder, applying an interlaced↔progressive conversion according to the selected **Standard** — useful for converting a sequence between field standards without going through SWS. Progressive→interlaced uses field-weaving (`tinterlace`); interlaced→progressive uses yadif deinterlacing. Both follow the **Field order** toggle where it is shown, and default to TFF otherwise. The alpha/key channel is preserved throughout.
 
 ### 8.3 Alpha Channel
 

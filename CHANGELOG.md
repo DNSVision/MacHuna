@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.12 — 2026-08-05
+
+### Fixed
+- **Interlaced→progressive no longer plays at the wrong speed when the rates differ (Fix 9(b)).** Bob-deinterlacing turns each field into a frame, doubling the frame count. That lands on the target exactly only when the progressive target is double the interlaced source's frame rate (i50→p50, i5994→p5994). Every other pairing was left at whatever rate the deinterlace happened to produce, while the output claimed the target rate, so the clip ran fast or slow. A new shared helper `_i_to_p_filter()` now appends an explicit fps resample whenever deinterlacing alone would miss the target, and is used by all four i→p paths. Verified with real conversions: a 4s 25fps interlaced source aimed at 1080p60 produced 200 frames before (3.33s, too fast) and 240 after (4.00s, correct).
+  - This also fixed a **previously unrecorded instance in `convert_clip` itself**, the path the review notes cited as the good example to copy. Its down-rate branch kept the source frame count and stamped the target rate on it, so a 29.97fps interlaced source converted to 1080p25 SWS ran 20% slow (120 frames before, 100 after). This one affects SWS output, so it is the more consequential of the two.
+  - **Raw TGA sequences are unchanged and still assume the source standard matches the chosen output family.** A TGA pile has no declared frame rate anywhere in MacHuna, so there is no real rate to resample from. The assumption is now explicit in the code rather than implied by a magic number. Fixing it properly needs a UI field declaring a sequence's rate.
+- **Sony TGA field order toggle now works (Fix 10).** The TFF/BFF control was displayed for Sony TGA output but ignored: the weave and the deinterlace parity were both hardcoded to TFF, so switching to BFF changed nothing. It is now honoured in all four places, for TGA-sequence and video-clip inputs, in both conversion directions. The conversion log states which field order was applied. `_p_to_i_field_map` gained a `field_order` parameter defaulting to `'TFF'`, so every other caller, including the hardware-confirmed SWS weave, is byte-for-byte unchanged. *(Which setting a Sony MVS actually wants remains hardware-unconfirmed — this makes the toggle functional so the desk test can answer that.)*
+- **Stills no longer vanish silently on clip-style outputs (Fix 4).** A still selected with Kayenne EIF, Sony TGA or TGA Sequence output produced nothing at all: no file, no error, no log entry, because none of those paths has a handler for a single-image item. MacHuna now blocks the combination up front with an error naming the files. **Stills convert to Kahuna SWS only** — a single frame is not a clip, and single-frame EIF/TGA output is deliberately out of scope. Stills→SWS is unaffected. *(The same silent gap was found in the EIF output path, which the original review missed; one guard covers all three.)*
+
+### Changed
+- `USER_MANUAL.md`, `README.md` and `DEVELOPMENT_NOTES.md` corrected where they implied stills were valid input for clip-style outputs. The contradiction between those documents is what kept the question reopening.
+
+---
+
 ## v1.6.11 — 2026-07-09
 
 ### Fixed

@@ -76,7 +76,7 @@ A conversion log is written to the destination folder on completion.
 |---|---|---|
 | `.SWS` files only | SWS source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA |
 | Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA, TGA Sequence |
-| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence |
+| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence — **stills can only go to Kahuna SWS** |
 | `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, Kayenne TGA, Sony TGA |
 | Mix of SWS and other non-EIF files | Error — shown in summary | — |
@@ -97,7 +97,7 @@ A conversion log is written to the destination folder on completion.
 
 - **Standard** — video standard for the output (TGA targets; not shown for Kayenne MOV)
 - **Clip name** — 4-character clip name (Sony TGA); output files use this name
-- **Field order** — BFF or TFF for interlaced standards (Sony TGA always; Kayenne TGA for interlaced standards)
+- **Field order** — BFF or TFF for interlaced standards (Sony TGA always; Kayenne TGA for interlaced standards). Honoured in both conversion directions since v1.6.12; before that it was ignored for Sony TGA output from TGA/clip input. The conversion log records which order was applied.
 - **Include audio** — include audio in Kayenne MOV output (shown only if source SWS contains audio)
 
 #### Kayenne EIF output options *(UNCONFIRMED on hardware)*
@@ -109,7 +109,7 @@ EIF output is always 1920×1080 progressive. Frame rate is rounded to the neares
 
 #### TGA Sequence output options
 
-- **Standard** — controls the conversion direction. Selecting an interlaced standard (e.g. 1080i/50) with a progressive source applies `tinterlace=mode=interleave_top` to produce genuinely interlaced output (frame count halves). This requires a double-rate (field-rate) source; a same-rate source (e.g. 25p → 1080i/50) is blocked with an error to avoid a 2×-speed clip. Selecting a progressive standard with an interlaced source applies yadif.
+- **Standard** — controls the conversion direction. Selecting an interlaced standard (e.g. 1080i/50) with a progressive source applies `tinterlace=mode=interleave_top` to produce genuinely interlaced output (frame count halves). This requires a double-rate (field-rate) source; a same-rate source (e.g. 25p → 1080i/50) is blocked with an error to avoid a 2×-speed clip. Selecting a progressive standard with an interlaced source applies yadif, plus an fps resample when the target rate is not double the source's frame rate (since v1.6.12 — cross-rate pairings such as 1080i/50 → 1080p/60 previously played at the wrong speed). A loose TGA sequence has no frame rate to work from, so it assumes the source standard matches the chosen output family.
 - **TGA source interlaced** — shown when input is a TGA sequence. Tick when the source frames are from an interlaced source (e.g. extracted from 1080i/50 SWS).
 
 Output frames are written as `0001.tga, 0002.tga…` in a subfolder named after the source sequence or clip, inside the destination folder. One subfolder per input item.
