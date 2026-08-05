@@ -354,9 +354,9 @@ MacHuna repo is currently **private**.
 
 ## Development Environment
 
-- **Machine:** MacBook Air M1 - all development and building must happen here
-- **Python:** 3.12 (`python3.12`)
-- **ffmpeg:** Homebrew at `/opt/homebrew/Cellar/ffmpeg/7.1.1_3/bin/`
+- **Machine:** MacBook Air M5 (Apple Silicon) - all development and building happens here
+- **Python:** 3.12 (`/opt/homebrew/bin/python3.12`)
+- **ffmpeg:** Homebrew; resolved from PATH via `shutil.which` (version not pinned)
 - **PyInstaller:** pip3.12
 - **Key libraries:** Pillow, numpy, tkinter, sounddevice, tkinterdnd2-universal
 
@@ -495,17 +495,14 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 
 ---
 
-## Swift Rewrite Discussion
+## Swift Rewrite - see design/ and the plan
 
-David has discussed potentially rewriting MacHuna as a native Swift/SwiftUI app as a hobby project (not a production necessity - the Python version is complete and working). Key points:
+The native Swift/SwiftUI rewrite is a planned "for fun" project, gated on the MacHuna feature roadmap being complete and hardware-tested first (the Python version stays the reference implementation throughout). The approach is settled:
 
-- Would be a staged rewrite: core SWS engine first, then SwiftUI interface
-- Python version remains the reference implementation throughout
-- ffmpeg would still be required even in Swift - bundle binaries approach
-- Suggested repo name: `MacHuna-Swift` running alongside the Python version
-- Development machine split: M1 MacBook Air = Python development, M5 MacBook Air = Swift/Xcode
-- Swift is less forgiving than Python - harder days expected - but the fully documented SWS format and working reference implementation make it more tractable than a typical rewrite
-- Decision deferred - no action needed until David decides to pursue it
+- **Option 1:** keep FFmpeg (shell out to the bundled binary, byte-identical pipeline) and build a native "mac-arsed" SwiftUI GUI around it. A full native-transcode rewrite (AVFoundation) is an optional "someday", not the goal - FFmpeg wins on MXF and exotic codecs regardless.
+- **Architecture:** four Swift Package modules - FormatKit (pure-Swift port of the SWS/EIF/v210 crown jewels; lowest risk; start here), TranscodeKit (a TranscodeBackend protocol, FFmpegBackend first), PlayerKit (native player + AVAudioEngine), App (SwiftUI).
+- **Its own repo** when it starts (e.g. `DNSVision/MacHuna-Swift`), not this one. Only Phase 1 (FormatKit + XCTest parity) is safe to begin before the roadmap gate clears.
+- Reference material lives in `design/` (native GUI mockup + menu model). The `mac-arsed-mac-app` skill drives the UI work. Prereqs: an Apple Developer account for notarisation, plus sandbox + security-scoped bookmarks.
 
 ---
 
@@ -568,8 +565,8 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 
 ---
 
-## Files to Request Before Writing Code
+## Working on machuna.py
 
-Before making any changes to machuna.py, ask for the current version to be uploaded - the file is large (~110KB) and changes frequently. Do not work from a cached version.
+Claude Code reads and edits `machuna.py` directly - do not work from a cached copy. Read the current file (it changes frequently) and reconcile against the Session Anchor at the top of this document before editing. See "Staying current between sessions" in `CLAUDE.md`.
 
-There is no standalone Hula repo to maintain — `DNSVision/Hula` is archived. All Hula development happens in `machuna.py`.
+There is no standalone Hula repo to maintain - `DNSVision/Hula` is archived. All Hula development happens in `machuna.py`.
