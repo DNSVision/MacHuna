@@ -5,3 +5,6 @@ __pycache__/
 !MacHuna.spec
 *.pyc
 .DS_Store
+
+# Personal Claude Code overrides (permissions etc.) - not shared
+.claude/settings.local.json

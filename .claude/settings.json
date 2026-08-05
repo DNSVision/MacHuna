@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/session-anchor-check.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking MacHuna session anchor..."
+          }
+        ]
+      }
+    ]
+  }
+}
