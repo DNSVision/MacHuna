@@ -159,26 +159,13 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 ## Roadmap
 
-### MacHuna conversion engine
-- P→I field order hardware confirmation -- TFF is SMPTE standard for 1080i HD and is used by default; unconfirmed on a 1080i Kahuna setup
-- HLG Rec.2020 colour space option (requires a real HLG SWS file to verify)
-- Split file support in Video Player
+The authoritative roadmap lives in [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md) under "Roadmap (canonical)". In short, the feature set is essentially complete and the remaining work is mostly **hardware verification**:
 
-### EIF -- pending hardware verification (HIGH PRIORITY)
-- **Kayenne hardware test** -- load a MacHuna-generated `.eif` file on a live Kayenne ClipStore / Image Store and verify playback, frame count, speed, colours, and key
-- **25fps EIF movi tag** -- verify/correct the header chunk tag at 0x8DC for 25fps clips using a real Kayenne-produced 25fps reference file
-- **EIF audio (.eaf companion files)** -- hex-analyse a real `.eaf` file and implement audio read/write
-- **EIF tail length** -- confirm whether Kayenne validates the 128-byte vs 140-byte tail difference
-- **EIF→Kayenne MOV** -- not yet implemented; requires EIF→ProRes 4444 ffmpeg encode path
-- **1080i content in EIF** -- confirm how Kayenne stores originally-interlaced content
+- **EIF** write and conversion paths are coded and verified by analysis, but not yet confirmed on a live Grass Valley Kayenne desk (the top priority).
+- **Extraction outputs** (Kayenne TGA, Sony MVS TGA) need confirming on real Kayenne and Sony MVS hardware.
+- A few small code items (cross-rate interlaced-to-progressive resample, Sony TGA field-order toggle) and future options (HLG Rec.2020, EIF to MOV) remain.
 
-### Extraction outputs -- pending hardware verification
-All items below are coded and working by analysis; hardware tests on Kayenne and Sony MVS desks are needed to confirm.
-- Kayenne TGA output -- frame naming and format assumed correct; unconfirmed
-- Sony MVS clip naming -- 4-char prefix + frame number convention unconfirmed on a live Sony MVS
-- Sony MVS 25i field order -- TFF default (engineer advice); toggle present if incorrect
-- MOV → TGA -- full path coded, never hardware-tested
-- EIF → Kayenne TGA / EIF → Sony TGA -- coded and working by analysis; never hardware-tested
+See `DEVELOPMENT_NOTES.md` for the full status list.
 
 ## Licence
 

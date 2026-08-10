@@ -475,23 +475,9 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 
 ## Roadmap
 
-### MacHuna
-- **Format transcoding (P→I) field order confirmation:** Implemented in v1.5.18 using TFF (SMPTE standard for 1080i HD). Tested on a 1080P Kahuna — file loaded correctly, genuine interlaced fields confirmed. Field order TFF vs BFF cannot be assessed on a 1080P desk. Next test: load MacHuna P→I output on a 1080i/50 Kahuna and check for clean motion. If motion artefacts, change `interleave_top` → `interleave_bottom` in `convert_clip` (one word). See DEVELOPMENT_NOTES.md "Format Transcoding" section.
-- Verify additional standards against K-Watch reference files before adding back to dropdown: 1080p/29.97, 1080p/30, SD standards (625/50, 525/59.94), sF variants, 2160p
-- Ignore Alpha behaviour for TGA sequences - fixed in v1.5.11
-- TGA in Batch Convert - clarify single-frame only, or detect sequences and warn
-- HLG Rec.2020 colour space option (requires a real HLG .SWS file to verify)
-- Split file support in SWS Preview Player
+The canonical roadmap is in `DEVELOPMENT_NOTES.md` under "Roadmap (canonical - the one list to work from)". Do not keep a separate copy here - read it there and reconcile against the code.
 
-### Extraction outputs (standalone DNSVision/Hula archived)
-- Live hardware test on Kayenne and Sony MVS — Sony MVS clip naming unverified on hardware
-- Sony MVS 25i field order confirmation — BFF assumed for PAL/50Hz; flip the toggle in MacHuna if motion artefacts appear on a real desk
-
-### Future consideration
-- Windows port - the core Python code has no Mac-specific dependencies. Main changes needed: ffmpeg path handling, macOS menu bar code conditionally skipped, PyInstaller build on Windows machine. Someone with a Windows machine could fork and port without needing to redo any of the reverse engineering. Worth adding "Windows port contributions welcome" to README when repos go public.
-
-### Going public
-- Recommendation: do live hardware test on Kayenne and Sony MVS first, then make MacHuna repo public.
+Everything that used to live in this section is folded into that list, including the two items that were only recorded here: the **Windows port** (community contribution once repos go public - the core Python has no Mac-specific dependencies beyond ffmpeg path handling and the macOS menu code) and **going public** (do the live Kayenne/Sony hardware tests first, then make the repo public).
 
 ---
 

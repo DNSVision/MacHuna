@@ -16,6 +16,7 @@ To stop Claude's understanding of the code drifting from what is actually built,
 - **On resuming** a session that will touch this repo: read the "Session Anchor" block at the top of `HANDOVER_NOTES.md`, then run `git log --oneline <anchor>..HEAD` and `git status -s`. Reconcile anything that changed since the anchor before trusting the docs or prior memory — the code is the source of truth. A full re-read of `machuna.py` is only needed when that diff is large, after a long gap, or before a big undertaking (e.g. the Swift port); otherwise just read the changed areas.
 - **On finishing** a session that changed the repo: update the "Session Anchor" block in `HANDOVER_NOTES.md` to the new HEAD (short commit + date) with a one-line note of what moved.
 - Always distinguish "we decided this" from "I verified this in the code" — never assert a file/line fact from memory, check it. Same discipline as the UNCONFIRMED hardware flags.
+- The **canonical roadmap / open-work list** is in `DEVELOPMENT_NOTES.md` under "Roadmap (canonical)". Treat it as the single authoritative list of what is left to do; `README.md` and `HANDOVER_NOTES.md` point to it. Reconcile it against git and the code, and do not start a second roadmap anywhere else.
 
 ## On every release (version bump)
 

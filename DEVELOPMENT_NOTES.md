@@ -82,7 +82,36 @@ git push
 
 ---
 
-## Roadmap (Priority Order)
+## Roadmap (canonical - the one list to work from)
+
+> **This is the single authoritative list of open work.** `README.md` and `HANDOVER_NOTES.md` point here rather than keeping their own copies. The detailed sections lower down (EIF Roadmap, Outstanding review items, Extraction output hardware unknowns, Future Considerations) hold the specifics; this is the index. Reconcile it against git and the code when resuming - see the Session Anchor in `HANDOVER_NOTES.md`.
+
+**Blocked on hardware (the gate before "feature-complete"):**
+- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. Unblocks: EIF write confirmation, 25fps movi tag, `.eaf` audio, tail length, clip-name/slot rules, interlaced-EIF storage.
+- **Extraction outputs on real desks** - Kayenne TGA/MOV, Sony TGA clip naming, Sony MVS 25i field order, interlaced-SWS to MOV field metadata, MOV to TGA. See "Extraction output hardware unknowns" below.
+- **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
+
+**Open code work (no hardware needed):**
+- **White key (INVESTIGATE ONLY)** - possible Y-value inversion in `_generate_white_key`; do not change without a hex-compare against a real K-Watch reference. Detail in "Outstanding review items" + "White Key Plane". *(This is the only open code item. Fix 9(b) and Fix 10 were both resolved in v1.6.12.)*
+
+**Future / low priority (no demand yet):**
+- Additional output standards (1080p/29.97, 1080p/30, SD 625/50 & 525/59.94, sF variants, 2160p) - need confirmed K-Watch reference files before re-adding to the dropdown.
+- 720p/59.94 reinstatement (genuine US demand, ABC/Fox) - needs a K-Watch 720p reference, hardware, and the plane_size fix. See "Format Support Rationale".
+- EIF -> Kayenne MOV (pure code, no user demand).
+- HLG Rec.2020 colour space (needs a real HLG SWS to reverse-engineer).
+- Split-file support in the Video Player.
+- Windows port (community contribution; note in README when repos go public).
+- Going public - make the repo public once the Kayenne/Sony hardware tests pass.
+
+**Settled - do not reopen:** stills are SWS-only (see "Stills are SWS-only (settled)"); true drag-and-drop dropped; manual batch reorder dropped.
+
+**After the gate:** the native Swift port (see HANDOVER_NOTES "Swift Rewrite" and `design/`).
+
+---
+
+## Completed milestones (history)
+
+*(Done items, kept for the record. Live open work is in the canonical roadmap above.)*
 
 1. ~~**Tidy dev environment / GitHub**~~ -- DONE
 2. ~~**Ignore alpha/key option**~~ -- DONE. Checkbox in GUI. When ticked, no key plane is written at all and header fields 0x1A8 and 0x1B4 are zeroed -- matches K-Watch behaviour exactly (confirmed by live Kahuna test and hex analysis of K-Watch reference file). Note: earlier implementation wrote a solid white key plane which was incorrect -- the Kahuna was showing a black key panel rather than no key at all.
@@ -103,8 +132,8 @@ A full adversarial code review (Fable 5) produced a working file `REVIEW_FIXES_v
 **Still genuinely open** (re-verify against the code before acting — line refs are approximate):
 
 1. ~~**Fix 4 (HIGH) — a still produces no output on TGA-Sequence / Sony-TGA outputs.**~~ — RESOLVED in v1.6.12 by **blocking the combination**, not by converting it. The review suggested "handle a still as single-frame TGA output, or log an error"; the first half of that is explicitly out of scope. See "Stills are SWS-only (settled)" below. The same silent-vanish gap was found in `_run_to_eif` (it handles `'tga_seq'`/`'clip'`/`'sws'` only) and is covered by the same guard.
-2. **Fix 9(b) (MEDIUM) — cross-rate i→p on SWS→SWS / TGA-Sequence / Sony-TGA plays at the wrong speed.** *(Fix 9(a), the p→i same-rate 2×-speed bug, is RESOLVED in v1.6.10 via `_p_to_i_field_map()` — see the resolved list above.)* The remaining i→p cousin: the `convert_clip` I→P path already resamples correctly via `yadif…,fps={target}`, but the i→p paths in SWS→SWS, TGA-Sequence and Sony-TGA use bare `yadif=mode=send_field` with no fps resample. `send_field` doubles the frame count (correct only when the target progressive rate is exactly double the source interlaced frame rate, e.g. i50→p50); a cross-rate target like i50→p60 or i5994→p50 comes out wrong-speed. Fix: give those i→p paths the same target-fps resample the clip path uses (mirror the `_p_to_i_field_map` approach for the i→p direction).
-3. **Fix 10 (MEDIUM) — Sony TGA field-order toggle ignored.** In `_run_to_tga_seq`, tinterlace mode / yadif parity are hardcoded TFF; the UI's TFF/BFF `field_order_var` is not honoured for Sony TGA output. Wire it through (`interleave_top`/`interleave_bottom`, parity `tff`/`bff`).
+2. ~~**Fix 9(b) (MEDIUM) — cross-rate i→p on SWS→SWS / TGA-Sequence / Sony-TGA plays at the wrong speed.**~~ — RESOLVED in v1.6.12. A new shared `_i_to_p_filter()` appends an explicit fps resample on all four i→p paths so the output frame count matches the stamped target rate; it also fixed a previously-unrecorded instance in `convert_clip` itself (a down-rate SWS output, e.g. i5994→p25, ran ~20% slow). Raw TGA sequences are left unchanged (a TGA pile carries no declared frame rate to resample from). See CHANGELOG v1.6.12. *(Fix 9(a), the p→i cousin, was resolved earlier in v1.6.10.)*
+3. ~~**Fix 10 (MEDIUM) — Sony TGA field-order toggle ignored.**~~ — RESOLVED in v1.6.12. `_run_to_tga_seq` now honours the UI's `field_order_var` (BFF → parity `bff` / `interleave_bottom`) in both directions, for TGA-sequence and video-clip inputs; `_p_to_i_field_map` gained a `field_order` parameter so the hardware-confirmed SWS weave stays byte-for-byte unchanged. *Which* field order a Sony MVS actually wants is still hardware-unconfirmed — this just makes the toggle functional. See CHANGELOG v1.6.12.
 4. **White key — INVESTIGATE ONLY, do not change without evidence.** `_generate_white_key` (~404–418) decodes as Y=64 (black in the 64–940 convention), while the alphaextract and EIF→SWS key paths write 940 as opaque — a contradiction. *But* the white-key behaviour was confirmed on hardware, so the generated key is presumably correct as-is. Before any change: hex-compare `_generate_white_key`'s output against a real K-Watch reference file that has a generated key, and check what value the alphaextract path actually produces for a fully-opaque alpha. Document the finding here; change code only if the comparison proves an inversion. See also "### White Key Plane" below.
 
 ### Stills are SWS-only (settled — do not reopen)
