@@ -6,9 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `bdba160` - 2026-08-05. Claude read all of `machuna.py` in full at `15c73f1`; since then the only code change is the v1.6.12 release itself (Fixes 9(b), 10 and 4), which Claude wrote and verified, so understanding of the app code is current through here.
+**Understanding baseline:** commit `e573eb1` - 2026-08-05. App-code currency was established at `bdba160` (the v1.6.12 release, Fixes 9(b)/10/4, written and verified by that session). Everything since is doc-only: the roadmap consolidation (canonical roadmap now lives in `DEVELOPMENT_NOTES.md`; README/HANDOVER point to it), which also corrected the open-items list where it still showed 9(b) and 10 as open.
 
-**On resuming:** run `git log --oneline bdba160..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
+**On resuming:** run `git log --oneline e573eb1..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
 
 *(Note: the per-session narrative below stops at v1.6.6. v1.6.7-v1.6.11 are recorded in `CHANGELOG.md` and the version-history line in `DEVELOPMENT_NOTES.md`, not here.)*
 
