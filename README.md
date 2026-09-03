@@ -28,6 +28,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Unified format-in / format-out interface -- open a folder and MacHuna detects the input type (SWS, video, TGA/stills) and adapts the Output dropdown and controls accordingly
 - Built-in Video Player -- opens .SWS, .TGA sequences, and video files (MOV, MP4, MXF, MKV, AVI) in a quad display (fill, key, composite, audio meters) with transport controls, launched directly from the MacHuna window
 - Batch convert with file picker, auto-incrementing file numbers, and Cancel button for stopping mid-batch
+- **Bespoke per-item output IDs** (v1.6.13) — instead of an auto-sequence, give each selected item its own output number (Kahuna SWS, Kayenne EIF) or its own 4-character clip name (Sony TGA). Blank, duplicate and already-in-the-destination values block the batch with a message naming the items; nothing is ever overwritten. Bespoke Sony names also let several Sony clips convert in one batch
 - Supports all confirmed standards: 1080i/50, 1080i/59.94, 1080i/60, 1080p/25, 1080p/50, 1080p/59.94, 1080p/60 -- all verified against K-Watch reference files. (720p output was withdrawn in v1.6.8 pending hardware verification.)
 - Progressive-to-interlaced transcoding -- MacHuna weaves pairs of progressive frames into genuine interlaced frames when converting to an interlaced standard (e.g. 1080p/50 → 1080i/50). Frame count halves automatically. This is only valid when the source runs at the interlaced **field** rate (double the frame rate: 50p→1080i50, 59.94p→1080i5994, 60p→1080i60); a **same-rate** source (e.g. 25p→1080i50) would play at 2× speed if weaved, so MacHuna blocks it with a clear error rather than produce a wrong-speed clip.
 - Interlaced-to-progressive transcoding -- MacHuna bob-deinterlaces interlaced sources to produce the correct number of progressive frames for the target standard (e.g. 1080i/50 → 1080p/50 produces 50fps output at the correct playback speed).
@@ -93,10 +94,13 @@ A conversion log is written to the destination folder on completion.
 
 **"Use source file number"** — tick this when converting K-Watch named files (e.g. `TNTS201_30_0001.tga`). MacHuna reads the slot number from the filename rather than the Start Number.
 
+**"Use bespoke numbering"** (v1.6.13) — tick this to set each item's output number yourself rather than take an auto-sequence. A scrollable panel lists every selected item with its own field (1-9999); the Start number and "Use source file number" controls are hidden while it is on. Fields start blank on purpose, so it is obvious which items still need a number. Before converting, MacHuna blocks the batch if any field is blank or out of range, if two items share a number, or if a number would collide with something already in the destination (`12.SWS` as a file or as a split-file folder). Clashes must be corrected — there is no overwrite option. The same checkbox appears for Kayenne EIF output, where the number becomes the slot (`0012.eif`). It is not offered for Kayenne TGA or TGA Sequence output, which name their folders from the source file.
+
 #### Kayenne MOV / Kayenne TGA / Sony TGA output options
 
 - **Standard** — video standard for the output (TGA targets; not shown for Kayenne MOV)
-- **Clip name** — 4-character clip name (Sony TGA); output files use this name
+- **Clip name** — 4-character clip name (Sony TGA); output files use this name. With one shared name, Sony TGA converts one clip per batch (a second clip would overwrite the first in the same folder)
+- **Use bespoke names** (v1.6.13; Sony TGA) — give each selected clip its own 4-character name instead, one per row in a scrollable panel, replacing the shared Clip name field. Each name becomes its own output folder, so **several Sony clips can be converted in one batch**. Blank, malformed, duplicate, or already-present names block the batch with a message naming the clips
 - **Field order** — BFF or TFF for interlaced standards (Sony TGA always; Kayenne TGA for interlaced standards). Honoured in both conversion directions since v1.6.12; before that it was ignored for Sony TGA output from TGA/clip input. The conversion log records which order was applied.
 - **Include audio** — include audio in Kayenne MOV output (shown only if source SWS contains audio)
 
@@ -141,7 +145,7 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 - **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 
-For TGA targets, choose the **Standard** from the dropdown. For progressive standards, frames are extracted as-is. For interlaced standards, pairs of progressive source frames are field-woven into interlaced output. If the source SWS is already interlaced, frames are passed through directly with a log note. A **BFF/TFF field order** toggle appears for interlaced selections and always for Sony TGA. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import).
+For TGA targets, choose the **Standard** from the dropdown. For progressive standards, frames are extracted as-is. For interlaced standards, pairs of progressive source frames are field-woven into interlaced output. If the source SWS is already interlaced, frames are passed through directly with a log note. A **BFF/TFF field order** toggle appears for interlaced selections and always for Sony TGA. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import), or a bespoke name per clip when several clips are converted together.
 
 For Kahuna SWS output, the Standard dropdown controls the output standard and conversion direction. The Split >4GB and Ignore alpha options apply.
 

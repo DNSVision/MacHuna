@@ -1,4 +1,4 @@
-# MacHuna v1.6.12 — User Manual
+# MacHuna v1.6.13 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -157,7 +157,35 @@ For Kahuna SWS output, the **Start Number** field sets the number assigned to th
 
 For Kayenne EIF output, a **Start slot** spinner sets the first slot number (e.g. `0001`). Output files are named `0001.eif`, `0002.eif`, and so on.
 
-### 4.4 Cancel
+### 4.4 Bespoke Numbering and Names (v1.6.13)
+
+Sometimes an auto-incrementing sequence is not what you want — you may be filling specific empty slots on the desk, or replacing a scattered handful of existing clips. **Bespoke mode lets you set each item's output identity individually.**
+
+Tick the checkbox next to the numbering controls:
+
+| Output | Checkbox | What you type per item |
+|---|---|---|
+| Kahuna SWS | **Use bespoke numbering** | An output number, 1-9999 → `12.SWS` |
+| Kayenne EIF | **Use bespoke numbering** | A slot number, 1-9999 → `0012.eif` |
+| Sony TGA | **Use bespoke names** | A 4-character clip name → folder `WIPE/` |
+
+The checkbox is not offered for **Kayenne TGA** or **TGA Sequence** output, because those name their output folders after the source file — there is nothing for you to choose.
+
+When ticked, a scrollable panel appears listing every item you selected, one row each, with its own input field. The control it replaces is hidden while it is on (Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA).
+
+**The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence. If you change your selection, the list refreshes but keeps whatever you have already typed for items that are still selected.
+
+**Checks before conversion starts.** Because you are choosing the names, MacHuna checks them before writing anything, and **blocks** if it finds a problem, naming the items involved:
+
+1. **Every item needs a valid, in-range value.** Blank or out-of-range fields stop the batch.
+2. **No two items may share a value.** Two items with the same number or clip name would mean the second overwriting the first.
+3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 11); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
+
+**There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe already on a desk is not something to offer behind a confirmation dialog.
+
+Leaving the checkbox unticked keeps the original behaviour exactly — Start number, "Use source file number", and the EIF start slot all work as before.
+
+### 4.5 Cancel
 
 Click **Cancel** during a conversion to stop after the current file. The conversion log is not written if cancelled mid-batch.
 
@@ -305,7 +333,9 @@ A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA
 
 Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
 
-If you are converting multiple distinct clips in one batch, be aware they will all share the same clip name. Convert each clip separately if they need to appear as separate clips on the desk.
+Because every clip in the batch would share that one name and be written to the same folder, **Sony TGA output converts one clip at a time** when this single field is in use. Selecting more than one is blocked rather than silently overwriting.
+
+**To convert several Sony clips in one batch (v1.6.13),** tick **Use bespoke names** and give each clip its own 4-character name (see Section 4.4). Each name becomes its own output folder, so the clips stay separate and can be converted together.
 
 ### 7.6 Output Structure
 

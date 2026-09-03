@@ -5,9 +5,12 @@ Run with:  /opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
        or: /opt/homebrew/bin/python3.12 -m unittest test_machuna -v
 """
 
+import os
 import struct
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, '.')
 import machuna as m
@@ -486,6 +489,157 @@ class TestEifFpsResample(unittest.TestCase):
     def test_already_50_stays_50(self):
         vf_extra, _ = self._run_for(50.0)
         self.assertEqual(vf_extra, 'fps=50')
+
+
+# ── Bespoke per-item output IDs ────────────────────────────────────────────────
+
+class TestBespokeNormalise(unittest.TestCase):
+    """normalise_bespoke_value: what counts as a usable ID."""
+
+    def test_number_in_range(self):
+        self.assertEqual(m.normalise_bespoke_value('7', m.BESPOKE_MODE_SWS), 7)
+        self.assertEqual(m.normalise_bespoke_value(' 42 ', m.BESPOKE_MODE_EIF), 42)
+        self.assertEqual(m.normalise_bespoke_value('9999', m.BESPOKE_MODE_SWS), 9999)
+
+    def test_number_blank_or_out_of_range(self):
+        for bad in ('', '   ', '0', '10000', 'abc', '1.5', '-3', None):
+            self.assertIsNone(m.normalise_bespoke_value(bad, m.BESPOKE_MODE_SWS), bad)
+
+    def test_sony_name_four_alnum_uppercased(self):
+        self.assertEqual(m.normalise_bespoke_value('wipe', m.BESPOKE_MODE_SONY), 'WIPE')
+        self.assertEqual(m.normalise_bespoke_value(' bg01 ', m.BESPOKE_MODE_SONY), 'BG01')
+
+    def test_sony_name_rejected(self):
+        for bad in ('', 'ABC', 'ABCDE', 'AB-1', 'AB 1', None):
+            self.assertIsNone(m.normalise_bespoke_value(bad, m.BESPOKE_MODE_SONY), bad)
+
+    def test_output_names(self):
+        self.assertEqual(m.bespoke_output_name(7, m.BESPOKE_MODE_SWS), '7.SWS')
+        self.assertEqual(m.bespoke_output_name(7, m.BESPOKE_MODE_EIF), '0007.eif')
+        self.assertEqual(m.bespoke_output_name('WIPE', m.BESPOKE_MODE_SONY), 'WIPE')
+
+
+class TestBespokeValidation(unittest.TestCase):
+    """validate_bespoke_ids: blank/range, in-batch duplicates, destination clashes.
+
+    Every failure blocks — there is no overwrite path — so each test asserts
+    both that a problem is reported and that the offending item is named.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dest = self._tmp.name
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    # -- valid batches --
+
+    def test_valid_numbers_pass(self):
+        entries = [('clip_a.mov', '1'), ('clip_b.mov', '2'), ('clip_c.mov', '9999')]
+        self.assertEqual(m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest), [])
+
+    def test_valid_sony_names_pass(self):
+        entries = [('clip_a.mov', 'WIPE'), ('clip_b.mov', 'bg01')]
+        self.assertEqual(m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SONY, self.dest), [])
+
+    # -- blank / out of range --
+
+    def test_blank_field_blocks_and_names_item(self):
+        entries = [('clip_a.mov', '3'), ('clip_b.mov', '')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('clip_b.mov', problems[0])
+        self.assertNotIn('clip_a.mov', problems[0])
+
+    def test_out_of_range_number_blocks(self):
+        entries = [('clip_a.mov', '0'), ('clip_b.mov', '10000'), ('clip_c.mov', '5')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('clip_a.mov', problems[0])
+        self.assertIn('clip_b.mov', problems[0])
+
+    def test_short_sony_name_blocks(self):
+        entries = [('clip_a.mov', 'AB'), ('clip_b.mov', 'GOOD')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SONY, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('clip_a.mov', problems[0])
+
+    # -- duplicates within the batch --
+
+    def test_duplicate_numbers_block(self):
+        entries = [('clip_a.mov', '4'), ('clip_b.mov', '4'), ('clip_c.mov', '5')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('clip_a.mov', problems[0])
+        self.assertIn('clip_b.mov', problems[0])
+        self.assertNotIn('clip_c.mov', problems[0])
+
+    def test_duplicate_numbers_ignore_leading_zeros(self):
+        entries = [('clip_a.mov', '7'), ('clip_b.mov', '007')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_EIF, self.dest)
+        self.assertEqual(len(problems), 1)
+
+    def test_duplicate_sony_names_block_case_insensitively(self):
+        entries = [('clip_a.mov', 'WIPE'), ('clip_b.mov', 'wipe')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SONY, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('clip_a.mov', problems[0])
+        self.assertIn('clip_b.mov', problems[0])
+
+    # -- collisions with the destination folder --
+
+    def test_existing_sws_file_blocks(self):
+        Path(self.dest, '3.SWS').write_bytes(b'x')
+        entries = [('clip_a.mov', '3'), ('clip_b.mov', '4')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('3.SWS', problems[0])
+        self.assertIn('clip_a.mov', problems[0])
+
+    def test_existing_split_sws_folder_blocks(self):
+        # A >4GB SWS is written as a folder called <N>.SWS, not a file.
+        Path(self.dest, '12.SWS').mkdir()
+        entries = [('clip_a.mov', '12')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('split-file folder', problems[0])
+        self.assertIn('12.SWS', problems[0])
+
+    def test_existing_eif_slot_blocks(self):
+        Path(self.dest, '0004.eif').write_bytes(b'x')
+        entries = [('clip_a.mov', '4'), ('clip_b.mov', '5')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_EIF, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('0004.eif', problems[0])
+
+    def test_existing_sony_folder_blocks(self):
+        Path(self.dest, 'WIPE').mkdir()
+        entries = [('clip_a.mov', 'wipe'), ('clip_b.mov', 'BG01')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SONY, self.dest)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('WIPE', problems[0])
+        self.assertIn('clip_a.mov', problems[0])
+
+    def test_unrelated_files_do_not_block(self):
+        Path(self.dest, '3.SWS').write_bytes(b'x')
+        entries = [('clip_a.mov', '4'), ('clip_b.mov', '5')]
+        self.assertEqual(m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest), [])
+
+    def test_missing_destination_folder_skips_collision_check(self):
+        entries = [('clip_a.mov', '1')]
+        self.assertEqual(
+            m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS,
+                                   os.path.join(self.dest, 'not_created_yet')), [])
+
+    # -- all three at once --
+
+    def test_all_three_problems_reported_together(self):
+        Path(self.dest, '9.SWS').write_bytes(b'x')
+        entries = [('clip_a.mov', ''), ('clip_b.mov', '2'),
+                   ('clip_c.mov', '2'), ('clip_d.mov', '9')]
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest)
+        self.assertEqual(len(problems), 3)
 
 
 if __name__ == '__main__':

@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.12"
+VERSION = "1.6.13"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3298,31 +3298,37 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
+                    clip_names: list = None,
                     log=print):
-    """Convert a list of SWS or MOV files to the specified extraction target."""
+    """Convert a list of SWS or MOV files to the specified extraction target.
+
+    clip_names, when given, is one Sony clip name per input path (bespoke
+    names) and overrides the single shared clip_name for that item.
+    """
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
     interlaced = 'i' in standard
     for idx, path in enumerate(input_paths, start=1):
         log(f"\n[{idx}/{len(input_paths)}] {os.path.basename(path)}")
+        cn = clip_names[idx - 1] if clip_names else clip_name
         try:
             ext = Path(path).suffix.lower()
             if ext == '.eif':
                 if interlaced:
                     _hula_convert_eif_to_tga_interlaced(
                         path, dest_dir, target=target,
-                        clip_name=clip_name, field_order=field_order, log=log)
+                        clip_name=cn, field_order=field_order, log=log)
                 else:
                     _hula_convert_eif_to_tga(
                         path, dest_dir, target=target,
-                        clip_name=clip_name, log=log)
+                        clip_name=cn, log=log)
             elif ext == '.mov':
                 if target == HULA_TARGET_KAYENNE_MOV:
                     raise ValueError(
                         "MOV input is not supported for Kayenne MOV output. "
                         "Select a TGA target or use an SWS file.")
                 _hula_convert_mov_to_tga(path, dest_dir, target, standard,
-                                         clip_name=clip_name,
+                                         clip_name=cn,
                                          field_order=field_order, log=log)
             elif target == HULA_TARGET_KAYENNE_MOV:
                 _hula_convert_mov(path, dest_dir, idx, log=log)
@@ -3331,7 +3337,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                 if src_header.fps >= 48.0:
                     # Progressive source: field-weave pairs of frames into interlaced output.
                     _hula_convert_tga_interlaced(path, dest_dir, target=target,
-                                                 clip_name=clip_name,
+                                                 clip_name=cn,
                                                  field_order=field_order, log=log)
                 else:
                     # Source is already interlaced: pass frames through as-is.
@@ -3339,10 +3345,10 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                         f"— already interlaced, outputting as interlaced TGA frames. "
                         f"If re-importing into MacHuna, tick 'TGA source already interlaced'.")
                     _hula_convert_tga(path, dest_dir, target,
-                                      clip_name=clip_name, log=log)
+                                      clip_name=cn, log=log)
             else:
                 _hula_convert_tga(path, dest_dir, target,
-                                  clip_name=clip_name, log=log)
+                                  clip_name=cn, log=log)
             ok += 1
         except Exception as e:
             log(f"  ERROR: {e}")
@@ -3479,6 +3485,114 @@ def _scan_folder_unified(folder: str) -> tuple:
     return items, 'to_sws_only', has_aud, bool(seq_items)
 
 
+# ─────────────────────────────────────────────────────────────
+#  Bespoke per-item output IDs
+# ─────────────────────────────────────────────────────────────
+#  Batch convert normally names its outputs from a single control: the Start
+#  number (auto-incrementing), "Use source file number", the EIF start slot, or
+#  the one shared Sony clip name. Bespoke mode instead gives every selected item
+#  its own output identity, typed in by hand. Because the user is now choosing
+#  the names, MacHuna has to police them before a single frame is written —
+#  nothing here ever overwrites, it only blocks and explains.
+
+BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
+BESPOKE_MODE_EIF  = 'eif'    # Kayenne EIF  — integer 1-9999, writes <NNNN>.eif
+BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
+
+
+def normalise_bespoke_value(raw, mode: str):
+    """Canonical form of one bespoke ID, or None if it is not valid.
+
+    Numbers come back as ints (1-9999), Sony clip names as 4-char uppercase.
+    """
+    v = (raw or '').strip()
+    if mode == BESPOKE_MODE_SONY:
+        if len(v) != 4 or not v.isalnum():
+            return None
+        return v.upper()
+    if not v.isdigit():
+        return None
+    n = int(v)
+    if not 1 <= n <= 9999:
+        return None
+    return n
+
+
+def bespoke_output_name(value, mode: str) -> str:
+    """The file or folder a bespoke value will produce in the destination."""
+    if mode == BESPOKE_MODE_SWS:
+        return f"{value}.SWS"
+    if mode == BESPOKE_MODE_EIF:
+        return f"{value:04d}.eif"
+    return str(value)
+
+
+def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
+    """Check a batch of bespoke IDs before conversion starts.
+
+    entries   list of (label, raw_value) in selection order
+    mode      BESPOKE_MODE_SWS | BESPOKE_MODE_EIF | BESPOKE_MODE_SONY
+    dest_dir  destination folder, checked for existing outputs
+
+    Returns a list of problem descriptions. Empty means the batch is safe to
+    run. Three checks, all blocking: every item needs a valid value, values
+    must be unique within the batch, and none may collide with something
+    already in the destination. There is deliberately no overwrite path.
+    """
+    is_sony  = (mode == BESPOKE_MODE_SONY)
+    problems = []
+
+    # 1. Blank or out-of-range values.
+    invalid = []
+    valid   = []          # (label, normalised value)
+    for label, raw in entries:
+        value = normalise_bespoke_value(raw, mode)
+        if value is None:
+            invalid.append(label)
+        else:
+            valid.append((label, value))
+    if invalid:
+        what = ("a 4-character clip name (letters and digits only)" if is_sony
+                else "a number from 1 to 9999")
+        problems.append(
+            f"These items still need {what}:\n    "
+            + '\n    '.join(invalid))
+
+    # 2. Duplicates within the batch. Two items sharing an ID would mean the
+    #    second silently overwriting the first, which is the whole thing this
+    #    mode exists to prevent.
+    by_value = {}
+    for label, value in valid:
+        by_value.setdefault(value, []).append(label)
+    for value, labels in by_value.items():
+        if len(labels) > 1:
+            noun = "Clip name" if is_sony else "Number"
+            problems.append(
+                f"{noun} {value} is used by more than one item:\n    "
+                + '\n    '.join(labels))
+
+    # 3. Collisions with what is already in the destination folder.
+    if dest_dir and os.path.isdir(dest_dir):
+        for value, labels in by_value.items():
+            name = bespoke_output_name(value, mode)
+            path = os.path.join(dest_dir, name)
+            if not os.path.exists(path):
+                continue
+            if mode == BESPOKE_MODE_SWS and os.path.isdir(path):
+                # A split (>4GB) SWS is a folder called <N>.SWS, not a file.
+                kind = f"the split-file folder {name}"
+            elif is_sony:
+                kind = f"a folder called {name}"
+            else:
+                kind = name
+            problems.append(
+                f"The destination folder already contains {kind} — "
+                f"used by:\n    " + '\n    '.join(labels)
+                + "\n    Change the value; MacHuna will not overwrite it.")
+
+    return problems
+
+
 def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
     """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir."""
     date_str = datetime.now().strftime('%d-%m-%Y')
@@ -3588,6 +3702,14 @@ def launch_gui():
     _input_type      = [None]   # 'to_sws_only' | 'mov_only' | 'from_sws'
     _has_audio_clips = [False]
     _has_tga_seq     = [False]
+    # Bespoke per-item output IDs. _bespoke_store keeps typed-in values across
+    # rebuilds so changing the selection (or toggling the mode off and on again)
+    # does not lose work already done; numbers and Sony names are kept apart
+    # because they are not interchangeable.
+    _bespoke_store   = {'num': {}, 'name': {}}
+    _bespoke_rows    = []       # [(item, StringVar)] in selection order
+    _bespoke_mode_of_rows = [None]
+    _bespoke_sig     = [None]
 
     # ── All tk variables (defined before load_settings) ──
     std_var               = tk.StringVar(value='1080i50')
@@ -3599,6 +3721,7 @@ def launch_gui():
     source_interlaced_var = tk.BooleanVar(value=False)
     start_num_var         = tk.IntVar(value=1)
     use_source_num_var    = tk.BooleanVar(value=False)
+    bespoke_var           = tk.BooleanVar(value=False)
     eif_slot_var          = tk.StringVar(value='0001')
     clip_name_var         = tk.StringVar(value='WIPE')
     field_order_var       = tk.StringVar(value='TFF')
@@ -3685,6 +3808,36 @@ def launch_gui():
     ttk.Label(frm_row_eif, text="(output named 0001.eif, 0002.eif … increments per clip)",
               foreground='#888888').pack(side='left', padx=(8, 0), pady=4)
 
+    # Bespoke per-item IDs: a checkbox row plus a scrollable, fixed-height panel
+    # with one row per selected item. Offered for Kahuna SWS, Kayenne EIF and
+    # Sony TGA only — Kayenne TGA and TGA Sequence name themselves from the
+    # source stem and already batch cleanly.
+    frm_row_bespoke = tk.Frame(frm_convert)
+    chk_bespoke = ttk.Checkbutton(frm_row_bespoke, text="Use bespoke numbering",
+                                   variable=bespoke_var)
+    chk_bespoke.pack(side='left', **pad)
+    lbl_bespoke_hint = ttk.Label(frm_row_bespoke, text="", foreground='#888888')
+    lbl_bespoke_hint.pack(side='left')
+
+    frm_row_bespoke_list = tk.Frame(frm_convert)
+    bespoke_canvas = tk.Canvas(frm_row_bespoke_list, height=132,
+                                highlightthickness=0, borderwidth=0)
+    bespoke_sb = ttk.Scrollbar(frm_row_bespoke_list, orient='vertical',
+                                command=bespoke_canvas.yview)
+    bespoke_inner = tk.Frame(bespoke_canvas)
+    bespoke_canvas.create_window((0, 0), window=bespoke_inner, anchor='nw')
+    bespoke_canvas.configure(yscrollcommand=bespoke_sb.set)
+    bespoke_inner.bind('<Configure>', lambda e: bespoke_canvas.configure(
+        scrollregion=bespoke_canvas.bbox('all')))
+    bespoke_canvas.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=(0, 4))
+    bespoke_sb.pack(side='right', fill='y', pady=(0, 4))
+    bespoke_canvas.bind('<Enter>', lambda e: bespoke_canvas.bind_all(
+        '<MouseWheel>', lambda ev: bespoke_canvas.yview_scroll(-ev.delta, 'units')))
+    bespoke_canvas.bind('<Leave>', lambda e: bespoke_canvas.unbind_all('<MouseWheel>'))
+    # Blank is a valid keystroke state (fields start empty on purpose); the
+    # real check is validate_bespoke_ids() at convert time.
+    vcmd_num = root.register(lambda P: P == '' or (P.isdigit() and len(P) <= 4))
+
     # Action row
     batch_cancel_event = threading.Event()
     cancel_btn  = ttk.Button(frm_row_open, text="✕  Cancel", state='disabled')
@@ -3704,15 +3857,89 @@ def launch_gui():
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())
                ).pack(side='right', **pad)
 
+    def _bespoke_key(item):
+        """Stable identity for one selected item, across list rebuilds."""
+        return item.get('path') or f"tga_seq:{item.get('base', '')}"
+
+    def _bespoke_mode():
+        """Which bespoke flavour the current output wants, or None."""
+        return {OUTPUT_KAHUNA_SWS:  BESPOKE_MODE_SWS,
+                OUTPUT_KAYENNE_EIF: BESPOKE_MODE_EIF,
+                OUTPUT_SONY_TGA:    BESPOKE_MODE_SONY}.get(output_var.get())
+
+    def _bespoke_bucket(mode):
+        return _bespoke_store['name' if mode == BESPOKE_MODE_SONY else 'num']
+
+    def _bespoke_harvest():
+        """Copy what is on screen back into the store before rows are rebuilt."""
+        mode = _bespoke_mode_of_rows[0]
+        if mode is None:
+            return
+        bucket = _bespoke_bucket(mode)
+        for item, var in _bespoke_rows:
+            bucket[_bespoke_key(item)] = var.get()
+
+    def _bespoke_rebuild():
+        _bespoke_harvest()
+        for w in bespoke_inner.winfo_children():
+            w.destroy()
+        _bespoke_rows.clear()
+        mode = _bespoke_mode()
+        _bespoke_mode_of_rows[0] = mode
+        if mode is None:
+            return
+        is_sony = (mode == BESPOKE_MODE_SONY)
+        bucket  = _bespoke_bucket(mode)
+        for item in _selected_items:
+            row = tk.Frame(bespoke_inner)
+            row.pack(fill='x', pady=1)
+            # Deliberately blank unless the user already typed something for this
+            # item: an empty field is the signal that it still needs an ID.
+            var = tk.StringVar(value=bucket.get(_bespoke_key(item), ''))
+            ttk.Label(row, text=item['display'][:46], width=46, anchor='w',
+                      font=('Menlo', 10)).pack(side='left', padx=(4, 8))
+            ttk.Entry(row, textvariable=var, width=6, validate='key',
+                      validatecommand=(vcmd if is_sony else vcmd_num, '%P')
+                      ).pack(side='left')
+            ttk.Label(row, text="4 chars" if is_sony else "1-9999",
+                      foreground='#999999').pack(side='left', padx=(6, 0))
+            _bespoke_rows.append((item, var))
+        bespoke_inner.update_idletasks()
+        bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'))
+
+    def _bespoke_sync():
+        """Rebuild the rows only when the selection or the mode has changed,
+        so re-running the adaptive layout does not wipe half-typed fields."""
+        sig = (_bespoke_mode(), tuple(_bespoke_key(i) for i in _selected_items))
+        if sig != _bespoke_sig[0]:
+            _bespoke_rebuild()
+            _bespoke_sig[0] = sig
+
     def _update_adaptive_controls(*_):
         out = output_var.get()
         is_interlaced_std = 'i' in std_var.get()
         for frm in (frm_row_std, frm_row_flags, frm_row_tga_opts,
-                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering, frm_row_eif):
+                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering, frm_row_eif,
+                    frm_row_bespoke, frm_row_bespoke_list):
             frm.pack_forget()
         if not out:
             return
         bf = dict(fill='x', anchor='w', before=frm_row_actions)
+        # Bespoke mode replaces whichever auto-naming control the output uses,
+        # so those controls are hidden while it is on.
+        b_mode    = _bespoke_mode()
+        bespoke_on = bespoke_var.get() and b_mode is not None
+
+        def _pack_bespoke():
+            chk_bespoke.config(text="Use bespoke names" if b_mode == BESPOKE_MODE_SONY
+                               else "Use bespoke numbering")
+            lbl_bespoke_hint.config(
+                text="(a 4-character clip name for each item)" if b_mode == BESPOKE_MODE_SONY
+                else "(an output number for each item, 1-9999)")
+            frm_row_bespoke.pack(**bf)
+            if bespoke_on:
+                _bespoke_sync()
+                frm_row_bespoke_list.pack(**bf)
         if out != OUTPUT_KAYENNE_MOV:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
@@ -3727,7 +3954,9 @@ def launch_gui():
                 chk_audio_tosws.pack(side='left', **pad)
             if show_tga or show_aud:
                 frm_row_tga_opts.pack(**bf)
-            frm_numbering.pack(side='left')
+            if not bespoke_on:
+                frm_numbering.pack(side='left')
+            _pack_bespoke()
         elif out == OUTPUT_KAYENNE_MOV:
             if _has_audio_clips[0]:
                 frm_row_hula_mov.pack(**bf)
@@ -3736,7 +3965,7 @@ def launch_gui():
             frm_clip_inner.pack_forget()
             frm_field_inner.pack_forget()
             chk_tga_int.pack_forget()
-            if is_sony:
+            if is_sony and not bespoke_on:
                 frm_clip_inner.pack(side='left', padx=(8, 0), pady=4)
             if is_sony or is_interlaced_std:
                 frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
@@ -3744,12 +3973,16 @@ def launch_gui():
             if is_sony and _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
+            if is_sony:
+                _pack_bespoke()
         elif out == OUTPUT_KAYENNE_EIF:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
-            frm_row_eif.pack(**bf)
+            if not bespoke_on:
+                frm_row_eif.pack(**bf)
+            _pack_bespoke()
         elif out == OUTPUT_TGA_SEQ:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
@@ -3774,6 +4007,7 @@ def launch_gui():
             output_var.set(opts[0] if opts else '')
         _update_adaptive_controls()
 
+    chk_bespoke.config(command=_update_adaptive_controls)
     std_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
     output_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
 
@@ -3942,20 +4176,45 @@ def launch_gui():
                     "Proceed anyway?"):
                 return
 
-        if out == OUTPUT_SONY_TGA and len(clip_name_var.get().strip()) != 4:
-            messagebox.showerror("Convert",
-                                 "Clip name must be exactly 4 characters for Sony TGA output.",
-                                 parent=root)
-            return
+        # Bespoke per-item IDs: validate every row before anything is written.
+        # Nothing here offers an overwrite — a clash has to be corrected.
+        bespoke_mode = _bespoke_mode() if bespoke_var.get() else None
+        bespoke_map  = {}
+        if bespoke_mode:
+            _bespoke_sync()
+            entries  = [(item['display'], var.get()) for item, var in _bespoke_rows]
+            problems = validate_bespoke_ids(entries, bespoke_mode, d)
+            if problems:
+                messagebox.showerror(
+                    "Convert",
+                    ("Bespoke names cannot be used as they are:\n\n"
+                     if bespoke_mode == BESPOKE_MODE_SONY else
+                     "Bespoke numbering cannot be used as it is:\n\n")
+                    + '\n\n'.join(f"• {prob}" for prob in problems),
+                    parent=root)
+                return
+            bespoke_map = {_bespoke_key(item):
+                           normalise_bespoke_value(var.get(), bespoke_mode)
+                           for item, var in _bespoke_rows}
 
-        if out == OUTPUT_SONY_TGA and len(_selected_items) > 1:
-            messagebox.showerror("Convert",
-                                 "Sony TGA output can only convert one clip at a time.\n\n"
-                                 "All frames would be written to the same folder and the\n"
-                                 "second clip would overwrite the first.\n\n"
-                                 "Please select a single clip and convert again.",
-                                 parent=root)
-            return
+        if out == OUTPUT_SONY_TGA and bespoke_mode is None:
+            if len(clip_name_var.get().strip()) != 4:
+                messagebox.showerror("Convert",
+                                     "Clip name must be exactly 4 characters for Sony TGA output.",
+                                     parent=root)
+                return
+            # One shared clip name means one output folder, so a second clip
+            # would overwrite the first. Bespoke names give each clip its own
+            # folder, which is why they lift this restriction.
+            if len(_selected_items) > 1:
+                messagebox.showerror("Convert",
+                                     "Sony TGA output can only convert one clip at a time.\n\n"
+                                     "All frames would be written to the same folder and the\n"
+                                     "second clip would overwrite the first.\n\n"
+                                     "Select a single clip, or tick \"Use bespoke names\" to give\n"
+                                     "each clip its own name and convert them together.",
+                                     parent=root)
+                return
 
         def _run_to_sws():
             start_num  = start_num_var.get()
@@ -3968,9 +4227,12 @@ def launch_gui():
                     log("Batch cancelled.")
                     cancelled = True
                     break
-                fnum = item['source_num'] if use_src and item['source_num'] else next_slot
-                if not (use_src and item['source_num']):
-                    next_slot += 1
+                if bespoke_map:
+                    fnum = bespoke_map[_bespoke_key(item)]
+                else:
+                    fnum = item['source_num'] if use_src and item['source_num'] else next_slot
+                    if not (use_src and item['source_num']):
+                        next_slot += 1
                 try:
                     if item['type'] == 'eif':
                         convert_eif_to_sws(
@@ -4066,7 +4328,7 @@ def launch_gui():
                     results.append((fnum, name, f'ERROR: {e}'))
             if results and not cancelled:
                 _write_batch_log(results, d, std_var.get(), log)
-                if not use_src:
+                if not use_src and not bespoke_map:
                     root.after(0, lambda v=next_slot: start_num_var.set(v))
 
         def _run_from_sws():
@@ -4076,10 +4338,13 @@ def launch_gui():
             }
             hula_target = target_map.get(out, HULA_TARGET_KAYENNE_TGA)
             paths = [item['path'] for item in _selected_items]
+            names = ([bespoke_map[_bespoke_key(item)] for item in _selected_items]
+                     if bespoke_map else None)
             _hula_run_batch(paths, d, hula_target,
                             standard=std_var.get(),
                             clip_name=clip_name_var.get().strip().upper(),
                             field_order=field_order_var.get(),
+                            clip_names=names,
                             log=log)
 
         def _run_to_eif():
@@ -4092,7 +4357,8 @@ def launch_gui():
                     log("Batch cancelled.")
                     cancelled = True
                     break
-                out_name = f"{next_slot:04d}"
+                out_name = (f"{bespoke_map[_bespoke_key(item)]:04d}" if bespoke_map
+                            else f"{next_slot:04d}")
                 name = item.get('base', '').rstrip('._- ') or Path(item.get('path', '')).stem
                 try:
                     if item['type'] == 'tga_seq':
@@ -4120,7 +4386,8 @@ def launch_gui():
                     results.append((out_name, name, f'ERROR: {e}'))
             if results and not cancelled:
                 _write_batch_log(results, d, std_var.get(), log)
-            root.after(0, lambda v=next_slot: eif_slot_var.set(f"{v:04d}"))
+            if not bespoke_map:
+                root.after(0, lambda v=next_slot: eif_slot_var.set(f"{v:04d}"))
 
         def _run_to_tga_seq():
             ffmpeg = _get_ffmpeg_path('ffmpeg')
@@ -4143,6 +4410,9 @@ def launch_gui():
                     log("Batch cancelled.")
                     cancelled = True
                     break
+                # Bespoke names give each Sony clip its own output folder;
+                # without them every clip shares the single clip-name field.
+                cn_i = bespoke_map[_bespoke_key(item)] if (is_sony and bespoke_map) else cn
                 try:
                     if item['type'] == 'tga_seq':
                         base = item['base'].rstrip('._- ') or 'CLIP'
@@ -4174,14 +4444,14 @@ def launch_gui():
                         else:
                             vf = None
                             log(f"  TGA→TGA: {base} — passthrough ({out_std})")
-                        out_dir = os.path.join(d, cn if is_sony else base)
+                        out_dir = os.path.join(d, cn_i if is_sony else base)
                         os.makedirs(out_dir, exist_ok=True)
                         with tempfile.TemporaryDirectory() as tmp:
                             concat_file = os.path.join(tmp, 'concat.txt')
                             with open(concat_file, 'w') as cf:
                                 for f in tga_files:
                                     cf.write(f"file '{f}'\n")
-                            out_pattern = os.path.join(out_dir, f'{cn}%04d.tga' if is_sony else '%04d.tga')
+                            out_pattern = os.path.join(out_dir, f'{cn_i}%04d.tga' if is_sony else '%04d.tga')
                             cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
                                    '-i', concat_file]
                             if vf:
@@ -4209,9 +4479,9 @@ def launch_gui():
                         else:
                             vf = None
                             log(f"  Clip→TGA: {name} — passthrough ({out_std})")
-                        out_dir = os.path.join(d, cn if is_sony else name)
+                        out_dir = os.path.join(d, cn_i if is_sony else name)
                         os.makedirs(out_dir, exist_ok=True)
-                        out_pattern = os.path.join(out_dir, f'{cn}%04d.tga' if is_sony else '%04d.tga')
+                        out_pattern = os.path.join(out_dir, f'{cn_i}%04d.tga' if is_sony else '%04d.tga')
                         cmd = [ffmpeg, '-y', '-i', item['path']]
                         if vf:
                             cmd += ['-vf', vf]

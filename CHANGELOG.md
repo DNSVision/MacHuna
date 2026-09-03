@@ -4,6 +4,24 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.13 — 2026-09-03
+
+### Added
+- **Bespoke per-item output IDs on batch convert.** A new checkbox alongside the existing numbering and naming controls lets you set each selected item's output identity individually, instead of relying on the auto-sequence. Offered for the three outputs where MacHuna chooses the name: **Kahuna SWS** and **Kayenne EIF** ("Use bespoke numbering", an output number per item, 1-9999) and **Sony TGA** ("Use bespoke names", a 4-character clip name per item). Kayenne TGA and TGA Sequence are unaffected — they name themselves from the source and already batch cleanly.
+  - Ticking it shows a scrollable panel with one row per selected item: the item's name and its own input field. **Fields start blank on purpose**, so it is obvious at a glance which items still need an ID. Changing the selection refreshes the list but keeps values already typed for items that are still selected.
+  - While bespoke mode is on, the control it replaces is hidden — Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA.
+- **Multiple Sony TGA clips in one batch.** Sony TGA output was capped at one clip per batch because every clip shared the single Clip name field and would have overwritten the others in one folder. Bespoke names give each clip its own name, and therefore its own folder, so a Sony batch can now convert several clips at once. **The one-clip-at-a-time guard is retained when bespoke names are not in use** — the overwrite it prevents is still real there.
+
+### Changed
+- **Three blocking checks run before a bespoke batch starts**, all naming the offending items so they can be corrected:
+  1. every row must hold a valid, in-range value;
+  2. no two items may share a value within the batch;
+  3. no value may collide with what is already in the destination folder — for SWS that covers both `N.SWS` as a file and `N.SWS/` as a split-file folder, for EIF `NNNN.eif`, for Sony a folder of that clip name.
+  There is deliberately **no overwrite option**: a clash has to be resolved by changing the value.
+- Default (unticked) behaviour is unchanged in every respect — Start number auto-increment, "Use source file number", and the EIF start slot all work exactly as before.
+
+---
+
 ## v1.6.12 — 2026-08-05
 
 ### Fixed
