@@ -671,5 +671,73 @@ class TestMergeInputTypes(unittest.TestCase):
         self.assertIsNone(m.merge_input_types('mixed_error', 'to_sws_only'))
 
 
+class TestBespokeRowIssues(unittest.TestCase):
+    """bespoke_row_issues: the per-row codes that mark fields in the panel.
+
+    Index-aligned with the rows, so the GUI can flag exactly the fields that
+    need attention rather than only naming them in the dialog.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dest = self._tmp.name
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_all_good_rows_are_none(self):
+        entries = [('a.mov', '1'), ('b.mov', '2')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest),
+                         [None, None])
+
+    def test_only_the_offending_rows_are_flagged(self):
+        entries = [('a.mov', '1'), ('b.mov', ''), ('c.mov', '3')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest),
+                         [None, m.BESPOKE_ISSUE_INVALID, None])
+
+    def test_both_halves_of_a_duplicate_are_flagged(self):
+        entries = [('a.mov', '4'), ('b.mov', '5'), ('c.mov', '4')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest),
+                         [m.BESPOKE_ISSUE_DUPLICATE, None, m.BESPOKE_ISSUE_DUPLICATE])
+
+    def test_collision_row_is_flagged(self):
+        Path(self.dest, '7.SWS').write_bytes(b'x')
+        entries = [('a.mov', '6'), ('b.mov', '7')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest),
+                         [None, m.BESPOKE_ISSUE_EXISTS])
+
+    def test_split_folder_collision_is_flagged(self):
+        Path(self.dest, '8.SWS').mkdir()
+        self.assertEqual(m.bespoke_row_issues([('a.mov', '8')], m.BESPOKE_MODE_SWS, self.dest),
+                         [m.BESPOKE_ISSUE_EXISTS])
+
+    def test_duplicate_wins_over_collision_on_the_same_row(self):
+        # Both are the same edit to fix, and "duplicate" is the more specific
+        # thing to tell the user about.
+        Path(self.dest, '3.SWS').write_bytes(b'x')
+        entries = [('a.mov', '3'), ('b.mov', '3')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest),
+                         [m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE])
+
+    def test_sony_names_flagged_the_same_way(self):
+        Path(self.dest, 'WIPE').mkdir()
+        entries = [('a.mov', 'ABC'), ('b.mov', 'wipe'), ('c.mov', 'GOOD')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SONY, self.dest),
+                         [m.BESPOKE_ISSUE_INVALID, m.BESPOKE_ISSUE_EXISTS, None])
+
+    def test_codes_stay_aligned_with_every_row(self):
+        entries = [('a.mov', str(i)) for i in range(1, 8)]
+        self.assertEqual(len(m.bespoke_row_issues(entries, m.BESPOKE_MODE_EIF, self.dest)), 7)
+
+    def test_hint_column_is_wide_enough_for_every_issue_text(self):
+        # The panel is measured once at rebuild; a mark wider than the reserved
+        # column would be clipped (the v1.6.17 truncation bug).
+        longest = max(len(t) for pair in (("needs a name", "needs a number"),
+                                          ("duplicate name", "duplicate number"),
+                                          ("already in use", "already in use"))
+                      for t in pair)
+        self.assertGreaterEqual(m._BESPOKE_HINT_WIDTH, longest)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

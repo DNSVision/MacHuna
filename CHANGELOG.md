@@ -4,6 +4,23 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.17 — 2026-09-03
+
+### Added
+- **A blocked bespoke batch now takes you to the field that needs fixing.** Naming the offending items in the dialog was not much help when only four or five rows are visible at a time. Now, on top of the message:
+  - every offending field's hint turns red and says what is wrong with *that* row — `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA), while valid rows keep their neutral grey hint, so scrolling the panel shows exactly what is outstanding;
+  - the panel scrolls to the **first** offending row and puts the cursor in its field;
+  - typing in a marked field clears its own mark straight away, so the red marks left are the work remaining.
+- New `bespoke_row_issues()` returns the per-row problem codes, alongside the existing grouped messages from `validate_bespoke_ids()`. Both are now thin wrappers over one shared analysis pass, so the dialog text and the field marks can never disagree.
+
+### Fixed
+- **Issue text no longer truncates.** The panel is measured once when the rows are built, at which point every hint reads `1-9999`; a longer mark such as `duplicate number` then needed more width than the canvas had been given and was clipped to `duplicat…`. The hint column now reserves a fixed width sized for the longest message, so nothing clips and — just as importantly — marking a field never shifts the layout sideways.
+
+### Notes
+- **The panel height stays fixed.** Growing it to fit the list was considered and rejected: it only moves the problem to "what happens when the list is taller than the window", which needs a resizable or paged layout rather than a taller frame. That is a job for the planned SwiftUI rewrite; jump-to-field makes the fixed height workable in the meantime.
+
+---
+
 ## v1.6.16 — 2026-09-03
 
 ### Changed

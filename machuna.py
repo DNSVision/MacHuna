@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.16"
+VERSION = "1.6.17"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3527,6 +3527,92 @@ def bespoke_output_name(value, mode: str) -> str:
     return str(value)
 
 
+# Per-row problem codes, used to mark the offending fields in the panel.
+BESPOKE_ISSUE_INVALID   = 'invalid'      # blank, malformed or out of range
+BESPOKE_ISSUE_DUPLICATE = 'duplicate'    # another item in the batch has it
+BESPOKE_ISSUE_EXISTS    = 'exists'       # the destination already has it
+
+# Character width reserved for a row's hint/issue text, so a mark can never be
+# clipped by the fixed-width panel. Keep >= the longest string in
+# _BESPOKE_ISSUE_TEXT ("duplicate number", 16).
+_BESPOKE_HINT_WIDTH = 17
+
+
+def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
+    """Shared worker: returns (per-row issue codes, grouped problem messages).
+
+    Codes are index-aligned with `entries`, None where the row is fine, so the
+    GUI can mark exactly the fields that need attention. Messages group by
+    value, which reads better in a dialog than one line per row.
+    """
+    is_sony  = (mode == BESPOKE_MODE_SONY)
+    codes    = [None] * len(entries)
+    problems = []
+
+    # 1. Blank or out-of-range values.
+    invalid  = []
+    values   = {}         # index -> normalised value
+    for i, (label, raw) in enumerate(entries):
+        value = normalise_bespoke_value(raw, mode)
+        if value is None:
+            codes[i] = BESPOKE_ISSUE_INVALID
+            invalid.append(label)
+        else:
+            values[i] = value
+    if invalid:
+        what = ("a 4-character clip name (letters and digits only)" if is_sony
+                else "a number from 1 to 9999")
+        problems.append(
+            f"These items still need {what}:\n    "
+            + '\n    '.join(invalid))
+
+    # 2. Duplicates within the batch. Two items sharing an ID would mean the
+    #    second silently overwriting the first, which is the whole thing this
+    #    mode exists to prevent.
+    by_value = {}
+    for i, value in values.items():
+        by_value.setdefault(value, []).append(i)
+    for value, idxs in by_value.items():
+        if len(idxs) > 1:
+            noun = "Clip name" if is_sony else "Number"
+            for i in idxs:
+                codes[i] = BESPOKE_ISSUE_DUPLICATE
+            problems.append(
+                f"{noun} {value} is used by more than one item:\n    "
+                + '\n    '.join(entries[i][0] for i in idxs))
+
+    # 3. Collisions with what is already in the destination folder.
+    if dest_dir and os.path.isdir(dest_dir):
+        for value, idxs in by_value.items():
+            name = bespoke_output_name(value, mode)
+            path = os.path.join(dest_dir, name)
+            if not os.path.exists(path):
+                continue
+            if mode == BESPOKE_MODE_SWS and os.path.isdir(path):
+                # A split (>4GB) SWS is a folder called <N>.SWS, not a file.
+                kind = f"the split-file folder {name}"
+            elif is_sony:
+                kind = f"a folder called {name}"
+            else:
+                kind = name
+            for i in idxs:
+                # A duplicate that also collides is still first a duplicate:
+                # fixing the clash is the same edit either way.
+                if codes[i] is None:
+                    codes[i] = BESPOKE_ISSUE_EXISTS
+            problems.append(
+                f"The destination folder already contains {kind} — "
+                f"used by:\n    " + '\n    '.join(entries[i][0] for i in idxs)
+                + "\n    Change the value; MacHuna will not overwrite it.")
+
+    return codes, problems
+
+
+def bespoke_row_issues(entries: list, mode: str, dest_dir: str) -> list:
+    """Per-row problem code (or None), index-aligned with `entries`."""
+    return _analyse_bespoke_ids(entries, mode, dest_dir)[0]
+
+
 def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
     """Check a batch of bespoke IDs before conversion starts.
 
@@ -3539,58 +3625,7 @@ def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
     must be unique within the batch, and none may collide with something
     already in the destination. There is deliberately no overwrite path.
     """
-    is_sony  = (mode == BESPOKE_MODE_SONY)
-    problems = []
-
-    # 1. Blank or out-of-range values.
-    invalid = []
-    valid   = []          # (label, normalised value)
-    for label, raw in entries:
-        value = normalise_bespoke_value(raw, mode)
-        if value is None:
-            invalid.append(label)
-        else:
-            valid.append((label, value))
-    if invalid:
-        what = ("a 4-character clip name (letters and digits only)" if is_sony
-                else "a number from 1 to 9999")
-        problems.append(
-            f"These items still need {what}:\n    "
-            + '\n    '.join(invalid))
-
-    # 2. Duplicates within the batch. Two items sharing an ID would mean the
-    #    second silently overwriting the first, which is the whole thing this
-    #    mode exists to prevent.
-    by_value = {}
-    for label, value in valid:
-        by_value.setdefault(value, []).append(label)
-    for value, labels in by_value.items():
-        if len(labels) > 1:
-            noun = "Clip name" if is_sony else "Number"
-            problems.append(
-                f"{noun} {value} is used by more than one item:\n    "
-                + '\n    '.join(labels))
-
-    # 3. Collisions with what is already in the destination folder.
-    if dest_dir and os.path.isdir(dest_dir):
-        for value, labels in by_value.items():
-            name = bespoke_output_name(value, mode)
-            path = os.path.join(dest_dir, name)
-            if not os.path.exists(path):
-                continue
-            if mode == BESPOKE_MODE_SWS and os.path.isdir(path):
-                # A split (>4GB) SWS is a folder called <N>.SWS, not a file.
-                kind = f"the split-file folder {name}"
-            elif is_sony:
-                kind = f"a folder called {name}"
-            else:
-                kind = name
-            problems.append(
-                f"The destination folder already contains {kind} — "
-                f"used by:\n    " + '\n    '.join(labels)
-                + "\n    Change the value; MacHuna will not overwrite it.")
-
-    return problems
+    return _analyse_bespoke_ids(entries, mode, dest_dir)[1]
 
 
 # Input types that can be combined when items are added to an existing
@@ -3741,7 +3776,7 @@ def launch_gui():
     # because they are not interchangeable.
     _selected_folders = []      # folder names feeding the current selection
     _bespoke_store   = {'num': {}, 'name': {}}
-    _bespoke_rows    = []       # [(item, StringVar)] in selection order
+    _bespoke_rows    = []       # [(item, StringVar, hint Label)] in selection order
     _bespoke_mode_of_rows = [None]
     _bespoke_sig     = [None]
 
@@ -3913,7 +3948,7 @@ def launch_gui():
         if mode is None:
             return
         bucket = _bespoke_bucket(mode)
-        for item, var in _bespoke_rows:
+        for item, var, _hint in _bespoke_rows:
             bucket[_bespoke_key(item)] = var.get()
 
     def _bespoke_rebuild():
@@ -3935,12 +3970,26 @@ def launch_gui():
             var = tk.StringVar(value=bucket.get(_bespoke_key(item), ''))
             ttk.Label(row, text=item['display'][:46], width=46, anchor='w',
                       font=('Menlo', 10)).pack(side='left', padx=(4, 8))
-            ttk.Entry(row, textvariable=var, width=6, validate='key',
-                      validatecommand=(vcmd if is_sony else vcmd_num, '%P')
-                      ).pack(side='left')
-            ttk.Label(row, text="4 chars" if is_sony else "1-9999",
-                      foreground='#999999').pack(side='left', padx=(6, 0))
-            _bespoke_rows.append((item, var))
+            entry = ttk.Entry(row, textvariable=var, width=6, validate='key',
+                              validatecommand=(vcmd if is_sony else vcmd_num, '%P'))
+            entry.pack(side='left')
+            neutral = "4 chars" if is_sony else "1-9999"
+            # Fixed width, sized for the longest issue text ("duplicate
+            # number"). The panel is measured once at rebuild, when the hints
+            # still read "1-9999"; without a reserved column a mark would need
+            # more room than the canvas was given and get clipped. Reserving it
+            # also means marking never shifts the layout sideways.
+            hint = ttk.Label(row, text=neutral, width=_BESPOKE_HINT_WIDTH,
+                             anchor='w', foreground='#999999')
+            hint.pack(side='left', padx=(6, 0))
+            hint.entry = entry
+            hint.neutral = neutral
+            # Typing in a marked field clears its own mark, so the panel shows
+            # what is still outstanding rather than a stale list of failures.
+            var.trace_add('write',
+                          lambda *_a, _h=hint: _h.config(text=_h.neutral,
+                                                         foreground='#999999'))
+            _bespoke_rows.append((item, var, hint))
         bespoke_inner.update_idletasks()
         bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'),
                                  width=max(320, bespoke_inner.winfo_reqwidth()))
@@ -3952,6 +4001,37 @@ def launch_gui():
         if sig != _bespoke_sig[0]:
             _bespoke_rebuild()
             _bespoke_sig[0] = sig
+
+    _BESPOKE_ISSUE_TEXT = {
+        BESPOKE_ISSUE_INVALID:   ("needs a name",   "needs a number"),
+        BESPOKE_ISSUE_DUPLICATE: ("duplicate name", "duplicate number"),
+        BESPOKE_ISSUE_EXISTS:    ("already in use", "already in use"),
+    }
+
+    def _bespoke_mark(codes):
+        """Flag every offending field, then scroll to the first and focus it.
+
+        The dialog names all the problems, but with only a few rows visible at
+        a time, naming them is not the same as being able to find them.
+        """
+        is_sony = (_bespoke_mode() == BESPOKE_MODE_SONY)
+        first = None
+        for (item, var, hint), code in zip(_bespoke_rows, codes):
+            if code is None:
+                hint.config(text=hint.neutral, foreground='#999999')
+                continue
+            texts = _BESPOKE_ISSUE_TEXT.get(code)
+            hint.config(text=texts[0] if is_sony else texts[1],
+                        foreground='#cc2200')
+            if first is None:
+                first = hint
+        if first is None:
+            return
+        bespoke_inner.update_idletasks()
+        total = max(1, bespoke_inner.winfo_height())
+        y     = first.master.winfo_y()
+        bespoke_canvas.yview_moveto(min(1.0, max(0.0, (y - 4) / total)))
+        first.entry.focus_set()
 
     def _bespoke_reset():
         """Throw away every typed value and blank the fields.
@@ -4309,8 +4389,10 @@ def launch_gui():
         bespoke_map  = {}
         if bespoke_mode:
             _bespoke_sync()
-            entries  = [(item['display'], var.get()) for item, var in _bespoke_rows]
-            problems = validate_bespoke_ids(entries, bespoke_mode, d)
+            entries = [(item['display'], var.get())
+                       for item, var, _h in _bespoke_rows]
+            codes, problems = _analyse_bespoke_ids(entries, bespoke_mode, d)
+            _bespoke_mark(codes)
             if problems:
                 messagebox.showerror(
                     "Convert",
@@ -4322,7 +4404,7 @@ def launch_gui():
                 return
             bespoke_map = {_bespoke_key(item):
                            normalise_bespoke_value(var.get(), bespoke_mode)
-                           for item, var in _bespoke_rows}
+                           for item, var, _h in _bespoke_rows}
 
         if out == OUTPUT_SONY_TGA and bespoke_mode is None:
             if len(clip_name_var.get().strip()) != 4:

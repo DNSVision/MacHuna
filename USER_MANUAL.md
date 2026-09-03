@@ -1,4 +1,4 @@
-# MacHuna v1.6.16 — User Manual
+# MacHuna v1.6.17 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -202,6 +202,13 @@ Values are kept in the two cases where retyping them would be a nuisance:
 1. **Every item needs a valid, in-range value.** Blank or out-of-range fields stop the batch.
 2. **No two items may share a value.** Two items with the same number or clip name would mean the second overwriting the first.
 3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 11); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
+
+**MacHuna takes you to the problem (v1.6.17).** As well as listing the problems, it marks the fields:
+
+- the hint beside an offending field turns red and says what is wrong with that row — `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA)
+- valid rows keep their neutral grey hint, so scrolling the panel shows you exactly what is left to do
+- the panel scrolls to the first offending row and puts the cursor in its field, ready to type
+- typing in a marked field clears its own mark, so the red marks remaining are the work remaining
 
 **There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe already on a desk is not something to offer behind a confirmation dialog.
 
