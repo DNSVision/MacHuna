@@ -1,4 +1,4 @@
-# MacHuna v1.6.15 — User Manual
+# MacHuna v1.6.16 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -187,6 +187,8 @@ When ticked, a scrollable panel appears listing every item you selected, one row
 **The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence.
 
 They are emptied again **every time you leave or come back to bespoke mode**: when you tick the checkbox on, when you untick it, and once a bespoke batch has finished. You always start a batch from a clean panel, so a number you have already written can never be reused by accident.
+
+> **Unticking the checkbox starts over completely (v1.6.16).** It clears the file list as well as the numbers — the summary returns to "No files selected." and Convert greys out, with a note in the log. Because items can be *added* to a selection, this is the one gesture that empties it again. Use **Open Files… → Select** if you only want to swap the list for a different one.
 
 Values are kept in the two cases where retyping them would be a nuisance:
 

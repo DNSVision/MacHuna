@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.16 — 2026-09-03
+
+### Changed
+- **Unticking the bespoke checkbox now clears the whole selection, not just the typed values.** It is the "start over" gesture: the file list, the folders it came from, the detected input type and the typed IDs all go, the summary returns to "No files selected." and Convert greys out. A log line says so, so the list is not seen to vanish without explanation. This is what stops a selection only ever growing — since v1.6.15 items can be *added* to a list, so there needed to be one clear way to empty it. **Open Files… → Select** still replaces the list without clearing anything else.
+
+---
+
 ## v1.6.15 — 2026-09-03
 
 ### Added

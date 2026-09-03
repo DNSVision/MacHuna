@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.15"
+VERSION = "1.6.16"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3970,11 +3970,31 @@ def launch_gui():
         if bespoke_var.get() and _bespoke_mode():
             _bespoke_sync()
 
-    def _on_bespoke_toggle():
-        # Blank on the way out as well as the way in — nothing typed into the
-        # panel is remembered once bespoke mode is switched off.
+    def _clear_selection():
+        """Back to a clean slate: no items, no folders, no typed values."""
+        _selected_items.clear()
+        _selected_folders.clear()
+        _input_type[0]      = None
+        _has_audio_clips[0] = False
+        _has_tga_seq[0]     = False
         _bespoke_reset()
-        _update_adaptive_controls()
+        summary_var.set("No files selected.")
+        convert_btn.config(state='disabled')
+        _update_output_options()
+
+    def _on_bespoke_toggle():
+        if bespoke_var.get():
+            # Blank fields on the way in — nothing is carried over from an
+            # earlier batch.
+            _bespoke_reset()
+            _update_adaptive_controls()
+        else:
+            # Unticking is the way to start over. Since items can only be added
+            # to a selection, clearing the list here is what stops it growing
+            # in one direction forever.
+            _clear_selection()
+            log("Bespoke numbering off — selection cleared. "
+                "Open Files… to start a new list.")
 
     def _update_adaptive_controls(*_):
         out = output_var.get()
