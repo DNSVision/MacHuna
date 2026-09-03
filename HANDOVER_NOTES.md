@@ -8,7 +8,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 **Understanding baseline:** commit `e2beab2` - 2026-09-03. The v1.6.13 release: bespoke per-item output IDs on batch convert (per-item numbers for Kahuna SWS and Kayenne EIF, per-item 4-character names for Sony TGA), with blank/duplicate/destination-collision checks that block rather than overwrite, and the Sony TGA one-clip-per-batch cap lifted when bespoke names are in use. Written and verified by that session, in the unit tests (79, 20 new) and by driving the real GUI. Prior baseline `e573eb1` was doc-only; app-code currency before this release was `bdba160` (v1.6.12).
 
-**On resuming:** run `git log --oneline e573eb1..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
+**On resuming:** run `git log --oneline e2beab2..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
 
 *(Note: the per-session narrative below stops at v1.6.6. v1.6.7-v1.6.11 are recorded in `CHANGELOG.md` and the version-history line in `DEVELOPMENT_NOTES.md`, not here.)*
 
