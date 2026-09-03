@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.17"
+VERSION = "1.6.18"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3984,11 +3984,11 @@ def launch_gui():
             hint.pack(side='left', padx=(6, 0))
             hint.entry = entry
             hint.neutral = neutral
-            # Typing in a marked field clears its own mark, so the panel shows
-            # what is still outstanding rather than a stale list of failures.
-            var.trace_add('write',
-                          lambda *_a, _h=hint: _h.config(text=_h.neutral,
-                                                         foreground='#999999'))
+            hint.marked = None
+            # Typing re-checks the whole batch, not just this row: "duplicate"
+            # is a relationship between two rows, so fixing one has to clear
+            # the other's mark too.
+            var.trace_add('write', lambda *_a: _bespoke_recheck())
             _bespoke_rows.append((item, var, hint))
         bespoke_inner.update_idletasks()
         bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'),
@@ -4008,23 +4008,38 @@ def launch_gui():
         BESPOKE_ISSUE_EXISTS:    ("already in use", "already in use"),
     }
 
+    def _bespoke_apply_marks(codes, only_marked=False):
+        """Set or clear each row's mark. Returns the first marked row's hint.
+
+        With only_marked set, rows that are not already flagged are left alone.
+        That is what keeps re-checking as you type from turning the panel red
+        before you have even tried to convert — blank fields are the normal
+        starting state, not an error to shout about.
+        """
+        is_sony = (_bespoke_mode() == BESPOKE_MODE_SONY)
+        first = None
+        for (item, var, hint), code in zip(_bespoke_rows, codes):
+            if only_marked and hint.marked is None:
+                continue
+            if code is None:
+                hint.config(text=hint.neutral, foreground='#999999')
+                hint.marked = None
+                continue
+            texts = _BESPOKE_ISSUE_TEXT.get(code)
+            hint.config(text=texts[0] if is_sony else texts[1],
+                        foreground='#cc2200')
+            hint.marked = code
+            if first is None:
+                first = hint
+        return first
+
     def _bespoke_mark(codes):
         """Flag every offending field, then scroll to the first and focus it.
 
         The dialog names all the problems, but with only a few rows visible at
         a time, naming them is not the same as being able to find them.
         """
-        is_sony = (_bespoke_mode() == BESPOKE_MODE_SONY)
-        first = None
-        for (item, var, hint), code in zip(_bespoke_rows, codes):
-            if code is None:
-                hint.config(text=hint.neutral, foreground='#999999')
-                continue
-            texts = _BESPOKE_ISSUE_TEXT.get(code)
-            hint.config(text=texts[0] if is_sony else texts[1],
-                        foreground='#cc2200')
-            if first is None:
-                first = hint
+        first = _bespoke_apply_marks(codes)
         if first is None:
             return
         bespoke_inner.update_idletasks()
@@ -4032,6 +4047,24 @@ def launch_gui():
         y     = first.master.winfo_y()
         bespoke_canvas.yview_moveto(min(1.0, max(0.0, (y - 4) / total)))
         first.entry.focus_set()
+
+    def _bespoke_recheck(*_a):
+        """Re-evaluate the marks after an edit, without moving the cursor.
+
+        Only refreshes rows that are already marked: an edit can clear another
+        row's mark (fixing one half of a duplicate frees the other) or change
+        what a marked row is complaining about, but typing never marks a field
+        that was not already flagged.
+        """
+        if not any(h.marked is not None for _i, _v, h in _bespoke_rows):
+            return
+        mode = _bespoke_mode()
+        if mode is None:
+            return
+        entries = [(item['display'], var.get())
+                   for item, var, _h in _bespoke_rows]
+        codes = bespoke_row_issues(entries, mode, dest_var.get().strip())
+        _bespoke_apply_marks(codes, only_marked=True)
 
     def _bespoke_reset():
         """Throw away every typed value and blank the fields.
@@ -4044,6 +4077,11 @@ def launch_gui():
         """
         _bespoke_store['num'].clear()
         _bespoke_store['name'].clear()
+        # Destroy the row widgets, not just the list that tracks them. Left
+        # behind they are invisible (the panel is unpacked) but still hold the
+        # old values and marks until the next rebuild happens to clear them.
+        for w in bespoke_inner.winfo_children():
+            w.destroy()
         _bespoke_rows.clear()
         _bespoke_mode_of_rows[0] = None
         _bespoke_sig[0] = None

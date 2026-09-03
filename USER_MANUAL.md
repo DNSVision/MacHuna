@@ -1,4 +1,4 @@
-# MacHuna v1.6.17 — User Manual
+# MacHuna v1.6.18 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -208,7 +208,8 @@ Values are kept in the two cases where retyping them would be a nuisance:
 - the hint beside an offending field turns red and says what is wrong with that row — `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA)
 - valid rows keep their neutral grey hint, so scrolling the panel shows you exactly what is left to do
 - the panel scrolls to the first offending row and puts the cursor in its field, ready to type
-- typing in a marked field clears its own mark, so the red marks remaining are the work remaining
+- typing in a marked field re-checks the whole batch, so the red marks remaining are the work remaining — fixing one half of a duplicate clears the other half too, while a three-way clash keeps the rows that are still duplicates of each other marked (v1.6.18)
+- marks only ever appear after you press Convert; typing never turns a field red on its own, since a blank field is the normal starting state
 
 **There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe already on a desk is not something to offer behind a confirmation dialog.
 

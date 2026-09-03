@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.18 — 2026-09-03
+
+### Fixed
+- **A resolved duplicate now clears both rows, not just the one you edited.** With two items set to the same number, correcting one left the *other* still showing `duplicate number` — a stale warning about a problem that no longer existed. Editing a field now re-checks the whole batch rather than only its own row, which is what a duplicate needs: it is a relationship between two rows, so fixing one half frees the other. A three-way clash behaves correctly too — fix one and the remaining pair stay marked, because they are still duplicates of each other. A marked row can also change its reason live (edit a duplicate into a number that already exists in the destination and it switches to `already in use`).
+  - The re-check only refreshes rows that are **already** marked, so typing never turns a field red before you have tried to convert. Blank fields are the normal starting state, not something to warn about.
+- Resetting the panel now destroys the old row widgets rather than only forgetting about them. They were invisible either way, but they held their old values and marks until something happened to trigger a rebuild.
+
+---
+
 ## v1.6.17 — 2026-09-03
 
 ### Added
