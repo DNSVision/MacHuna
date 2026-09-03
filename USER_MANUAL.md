@@ -1,4 +1,4 @@
-# MacHuna v1.6.19 — User Manual
+# MacHuna v1.6.20 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -81,6 +81,8 @@ MacHuna is distributed as a self-contained `.app` bundle. ffmpeg is bundled insi
 3. Subsequent launches work by double-clicking normally
 
 > **NOTE** Gatekeeper may warn that the app is from an unidentified developer. This is expected — MacHuna is not signed with an Apple Developer certificate. Right-click → Open bypasses this check.
+
+**Checking which version you have (v1.6.20).** Select `MacHuna.app` in Finder and press ⌘I: the version is shown in the Get Info panel, and the title bar shows it once running. Before v1.6.20 the bundle reported its version as 0.0.0, so if Get Info says 0.0.0 you are running v1.6.19 or earlier. This matters if you keep more than one copy of the app.
 
 ### 2.2 Settings
 

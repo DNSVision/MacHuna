@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.20 — 2026-09-03
+
+### Fixed
+- **The app now reports its real version to macOS.** `MacHuna.spec` left `bundle_identifier=None`, so PyInstaller defaulted it to the bundle name `MacHuna`, and no version was stamped at all — every copy on the machine claimed the same identity and reported version `0.0.0` in Finder. The bundle is now `com.dnsvision.machuna` and stamps `CFBundleShortVersionString` / `CFBundleVersion` from the `VERSION` constant, so ⌘I in Finder tells one build from another. (A pre-v1.6.20 copy still shows `0.0.0`, which is now a useful signal in itself.)
+  - This mattered in practice: with two copies of the app both claiming to be `MacHuna`, macOS could not distinguish a current build from an old one, and a stale copy was being launched from the Dock.
+
+### Changed
+- **The release checklist now refreshes David's own copy at `/Applications/MacHuna.app` on every release, and treats publishing to the public share folder as a separate, opt-in step.** The two were previously the same action, because the Dock pointed straight at the copy inside the shared folder — so keeping the public link on an older version also froze his own app. Running a build and publishing it are now independent decisions.
+
+---
+
 ## v1.6.19 — 2026-09-03
 
 ### Changed

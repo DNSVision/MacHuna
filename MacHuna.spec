@@ -6,6 +6,7 @@
 # version or the username. Build with:  python3.12 -m PyInstaller MacHuna.spec -y
 
 import os
+import re
 import shutil
 
 # Directory containing this spec file (provided by PyInstaller as SPECPATH;
@@ -29,6 +30,24 @@ def _resolve_binary(name):
 
 FFMPEG  = _resolve_binary('ffmpeg')
 FFPROBE = _resolve_binary('ffprobe')
+
+def _read_version():
+    """Read VERSION from machuna.py so the bundle reports the real version.
+
+    Without this the .app claims CFBundleShortVersionString 0.0.0, and Finder,
+    Get Info and the Dock tooltip cannot tell one build from another — which
+    matters now that a private copy in /Applications and the published copy in
+    the share folder can legitimately be different versions.
+    """
+    src = os.path.join(PROJECT_DIR, 'machuna.py')
+    with open(src) as fh:
+        found = re.search(r'^VERSION = "([^"]+)"', fh.read(), re.M)
+    if not found:
+        raise SystemExit("MacHuna build: could not find VERSION in machuna.py")
+    return found.group(1)
+
+
+APP_VERSION = _read_version()
 
 ICON = os.path.join(PROJECT_DIR, 'machuna.icns')
 ICON_PNG = os.path.join(PROJECT_DIR, 'machuna_final_1024.png')
@@ -81,5 +100,15 @@ app = BUNDLE(
     coll,
     name='MacHuna.app',
     icon=ICON,
-    bundle_identifier=None,
+    # A real reverse-DNS identifier. Left as None, PyInstaller defaults it to
+    # the bundle name "MacHuna", so every copy on the machine claimed the same
+    # identity and macOS could not tell a v1.6.12 copy from a current one —
+    # which is how the Dock ended up launching a stale build.
+    bundle_identifier='com.dnsvision.machuna',
+    version=APP_VERSION,
+    info_plist={
+        'CFBundleShortVersionString': APP_VERSION,
+        'CFBundleVersion':            APP_VERSION,
+        'NSHighResolutionCapable':    True,
+    },
 )

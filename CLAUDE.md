@@ -44,12 +44,14 @@ Before building, run the test suite and confirm it passes:
 
 Then build with PyInstaller and push to GitHub unless David says otherwise.
 
-8. **Sync the public share folder** (`~/Desktop/Machuna Share`) — after the build and push, refresh the three published artefacts so people with the link get the latest release. Only these three, nothing else:
+8. **Refresh David's own copy** — `rm -rf /Applications/MacHuna.app && cp -R dist/MacHuna.app /Applications/MacHuna.app`. His Dock points at `/Applications/MacHuna.app`, so without this step he keeps launching the previous release while `dist/` quietly moves ahead. This is his private copy and is **not** published; do it on every release.
+
+9. **Sync the public share folder** (`~/Desktop/Machuna Share`) — **only when David explicitly asks.** This is deliberately decoupled from step 8: he wants to run a build himself before the public gets it, so a release does not imply a publish. When he does ask, refresh the three published artefacts. Only these three, nothing else:
    - `dist/MacHuna.app` → `MACHUNA APP/MacHuna.app` — remove the old bundle first (`rm -rf`), then `cp -R` the fresh build.
    - `MacHuna_User_Manual.pdf` → `USER MANUAL/MacHuna_User_Manual_vX.X.X.pdf` (versioned filename matching the release). **Delete the previous `MacHuna_User_Manual_v*.pdf`** first so only the current version remains.
    - `DEVELOPMENT_NOTES.md` → `DEV NOTES/DEVELOPMENT_NOTES.md` (replace).
 
-   The share is an iCloud-shared Desktop folder; verify the exact subfolder names before copying (`ls "$HOME/Desktop/Machuna Share"`) in case they change. This publishes to a public download link, so only run it for a finished, pushed release.
+   The share is an iCloud-shared Desktop folder; verify the exact subfolder names before copying (`ls "$HOME/Desktop/Machuna Share"`) in case they change. This publishes to a public download link, so only run it for a finished, pushed release **that David has asked to publish**. The share copy may legitimately sit several versions behind `/Applications` — that is the point, not a fault to correct.
 
 ## Architecture notes
 
@@ -57,7 +59,7 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 - Version constant: `VERSION` near top of file — title bar reads from it.
 - SWS format constants (`VIDEO_STANDARDS`, `FORMAT_VARIANTS`, `FORMAT_VARIANT_FPS`, `FORMAT_VARIANT_DISPLAY`) are all keyed by standard name string (e.g. `'1080i50'`).
 - All ffmpeg calls go through `_run_ffmpeg()` so Stop/Cancel can kill them.
-- Build output: `dist/MacHuna.app`
+- Build output: `dist/MacHuna.app`. Two other copies exist and must not be confused: `/Applications/MacHuna.app` is David's own copy (what his Dock launches — refresh it every release) and `~/Desktop/Machuna Share/MACHUNA APP/MacHuna.app` is the published one (only on request). The spec sets `bundle_identifier='com.dnsvision.machuna'` and stamps `CFBundleShortVersionString` from `VERSION`, so Get Info tells the copies apart; the pre-v1.6.20 published bundle still identifies itself as `MacHuna` at version 0.0.0.
 - Tests live in `test_machuna.py` and cover the SWS header builder and all four format constant tables. Update them if `build_sws_header`'s signature changes or any header byte offsets/constants change. The format table tests auto-cover new video standards (they iterate the dicts), so adding a standard doesn't require new test cases — just run the suite to confirm consistency.
 
 ## Key constraints
