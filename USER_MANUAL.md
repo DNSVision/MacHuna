@@ -1,4 +1,4 @@
-# MacHuna v1.6.18 — User Manual
+# MacHuna v1.6.19 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -363,7 +363,7 @@ A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA
 
 Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
 
-Because every clip in the batch would share that one name and be written to the same folder, **Sony TGA output converts one clip at a time** when this single field is in use. Selecting more than one is blocked rather than silently overwriting.
+Because every clip in the batch would share that one name and be written to the same folder, **Sony TGA output converts one clip at a time** when this single field is in use. Selecting more than one is blocked rather than silently overwriting, and the message tells you to switch to bespoke names.
 
 **To convert several Sony clips in one batch (v1.6.13),** tick **Use bespoke names** and give each clip its own 4-character name (see Section 4.4). Each name becomes its own output folder, so the clips stay separate and can be converted together.
 

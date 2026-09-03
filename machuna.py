@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.18"
+VERSION = "1.6.19"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3858,7 +3858,8 @@ def launch_gui():
     ttk.Entry(frm_clip_inner, textvariable=clip_name_var, width=5,
               validate='key', validatecommand=(vcmd, '%P')).pack(side='left', padx=(4, 4))
     ttk.Label(frm_clip_inner,
-              text="(all clips share this name — they will merge on import)",
+              text="(all clips share this name, so they merge on import; "
+                   "for a batch, use bespoke names)",
               foreground='#888888').pack(side='left')
     frm_field_inner = tk.Frame(frm_row_hula_tga)
     ttk.Label(frm_field_inner, text="Field order:").pack(side='left', padx=(0, 4))
@@ -4452,14 +4453,19 @@ def launch_gui():
                 return
             # One shared clip name means one output folder, so a second clip
             # would overwrite the first. Bespoke names give each clip its own
-            # folder, which is why they lift this restriction.
+            # folder, which is why they lift this restriction. Lead with that
+            # rather than with the restriction: the user wants the batch, and
+            # there is a way to have it.
             if len(_selected_items) > 1:
                 messagebox.showerror("Convert",
-                                     "Sony TGA output can only convert one clip at a time.\n\n"
-                                     "All frames would be written to the same folder and the\n"
-                                     "second clip would overwrite the first.\n\n"
-                                     "Select a single clip, or tick \"Use bespoke names\" to give\n"
-                                     "each clip its own name and convert them together.",
+                                     "To batch convert to Sony TGA, tick "
+                                     "\u201cUse bespoke names\u201d.\n\n"
+                                     "Every clip would otherwise share the single Clip name "
+                                     "field, so they would all be written to the same folder "
+                                     "and overwrite each other. That is why the shared name "
+                                     "converts one clip at a time.\n\n"
+                                     "Bespoke names give each clip its own 4-character name, "
+                                     "and so its own folder, and they convert together.",
                                      parent=root)
                 return
 

@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.19 — 2026-09-03
+
+### Changed
+- **The Sony TGA "one clip at a time" message now leads with the fix instead of the restriction.** It already mentioned bespoke names, but only in its third paragraph, after two paragraphs about what could not be done. It now opens with "To batch convert to Sony TGA, tick 'Use bespoke names'", then explains why the shared Clip name field is limited to one clip. Someone who has just selected several clips wants the batch, and there is a way to have it.
+- The grey note beside the shared **Clip name** field points at the alternative as well: "(all clips share this name, so they merge on import; for a batch, use bespoke names)".
+
+---
+
 ## v1.6.18 — 2026-09-03
 
 ### Fixed
