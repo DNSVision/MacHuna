@@ -6,6 +6,9 @@ All notable changes to MacHuna are documented here.
 
 ## v1.6.20 — 2026-09-03
 
+### Documentation
+- **Section 4.4 of the user manual rewritten as one coherent section.** Bespoke mode was documented a paragraph at a time across v1.6.13-v1.6.19, and it read like a changelog in prose: it appeared to contradict itself on when typed values are kept versus cleared (two true statements about different events, landing on the reader as a conflict), the "unticking starts over" note interrupted a passage about field values to talk about the file list, the pre-conversion checks arrived after a digression, and five inline version tags cluttered a section in a manual that already carries its version on the title page. It is now ordered by task — what it is for, turning it on, filling in the panel, what is kept and what is cleared (as a table rather than contradictory prose), the checks, what a blocked batch shows you, a worked example — and states that the panel shows about five rows at a time, which is the reason a blocked batch jumps to the offending field.
+
 ### Fixed
 - **The app now reports its real version to macOS.** `MacHuna.spec` left `bundle_identifier=None`, so PyInstaller defaulted it to the bundle name `MacHuna`, and no version was stamped at all — every copy on the machine claimed the same identity and reported version `0.0.0` in Finder. The bundle is now `com.dnsvision.machuna` and stamps `CFBundleShortVersionString` / `CFBundleVersion` from the `VERSION` constant, so ⌘I in Finder tells one build from another. (A pre-v1.6.20 copy still shows `0.0.0`, which is now a useful signal in itself.)
   - This mattered in practice: with two copies of the app both claiming to be `MacHuna`, macOS could not distinguish a current build from an old one, and a stale copy was being launched from the Dock.

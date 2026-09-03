@@ -170,52 +170,81 @@ For Kahuna SWS output, the **Start Number** field sets the number assigned to th
 
 For Kayenne EIF output, a **Start slot** spinner sets the first slot number (e.g. `0001`). Output files are named `0001.eif`, `0002.eif`, and so on.
 
-### 4.4 Bespoke Numbering and Names (v1.6.13)
+### 4.4 Bespoke Numbering and Names
 
-Sometimes an auto-incrementing sequence is not what you want — you may be filling specific empty slots on the desk, or replacing a scattered handful of existing clips. **Bespoke mode lets you set each item's output identity individually.**
+An auto-incrementing sequence is not always what you want. You may be filling a scattered set of empty slots on the desk, replacing three specific wipes out of a folder of twenty, or converting several Sony clips that each need their own name. **Bespoke mode lets you set every selected item's output identity by hand.**
 
-Tick the checkbox next to the numbering controls:
+#### Turning it on
 
-| Output | Checkbox | What you type per item |
-|---|---|---|
-| Kahuna SWS | **Use bespoke numbering** | An output number, 1-9999 → `12.SWS` |
-| Kayenne EIF | **Use bespoke numbering** | A slot number, 1-9999 → `0012.eif` |
-| Sony TGA | **Use bespoke names** | A 4-character clip name → folder `WIPE/` |
+Tick the checkbox beside the numbering controls:
 
-The checkbox is not offered for **Kayenne TGA** or **TGA Sequence** output, because those name their output folders after the source file — there is nothing for you to choose.
+| Output | Checkbox | What you type per item | Produces |
+|---|---|---|---|
+| Kahuna SWS | **Use bespoke numbering** | A number, 1-9999 | `12.SWS` |
+| Kayenne EIF | **Use bespoke numbering** | A slot number, 1-9999 | `0012.eif` |
+| Sony TGA | **Use bespoke names** | 4 characters, letters and digits | folder `WIPE/` |
 
-When ticked, a scrollable panel appears listing every item you selected, one row each, with its own input field. The control it replaces is hidden while it is on (Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA).
+It is not offered for **Kayenne TGA** or **TGA Sequence** output, which name their folders after the source file — there is nothing for you to choose.
 
-**The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence.
+Ticking it hides the control it replaces (Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA) and shows a panel listing every item you have selected, one row each with its own input field.
 
-They are emptied again **every time you leave or come back to bespoke mode**: when you tick the checkbox on, when you untick it, and once a bespoke batch has finished. You always start a batch from a clean panel, so a number you have already written can never be reused by accident.
+#### Filling in the panel
 
-> **Unticking the checkbox starts over completely (v1.6.16).** It clears the file list as well as the numbers — the summary returns to "No files selected." and Convert greys out, with a note in the log. Because items can be *added* to a selection, this is the one gesture that empties it again. Use **Open Files… → Select** if you only want to swap the list for a different one.
+**The fields start empty on purpose.** An empty field is how you see at a glance which items you have not given an ID to yet, so MacHuna deliberately does not pre-fill them with the auto-sequence.
 
-Values are kept in the two cases where retyping them would be a nuisance:
+The panel is a fixed height and scrolls, showing about five rows at a time. With a longer batch, some rows are below the fold — which is why a blocked conversion takes you straight to the field that needs attention (see below) rather than leaving you to hunt for it.
 
-- **Add to List** — the items already in the list keep their numbers, and the newly added ones get blank fields (v1.6.15)
-- **Deselecting an item** while bespoke mode stays on — the rest keep their numbers
+#### What is kept, and what is cleared
 
-**Select** replaces the list, so it starts you blank.
+Bespoke IDs are kept while you are building a batch up, and cleared whenever you start afresh:
 
-**Checks before conversion starts.** Because you are choosing the names, MacHuna checks them before writing anything, and **blocks** if it finds a problem, naming the items involved:
+| Action | Typed IDs |
+|---|---|
+| Adding items with **Add to List** | Kept. The new rows get empty fields. |
+| Deselecting an item, bespoke mode still on | Kept for the rows that remain |
+| **Open Files… → Select** (replaces the list) | Cleared — this is a new list |
+| Ticking the checkbox on | Cleared |
+| Unticking the checkbox | Cleared, **and the file list is emptied too** |
+| Finishing a bespoke conversion | Cleared |
 
-1. **Every item needs a valid, in-range value.** Blank or out-of-range fields stop the batch.
-2. **No two items may share a value.** Two items with the same number or clip name would mean the second overwriting the first.
+You therefore always begin a batch from a clean panel, and a number you have already written to disk can never be reused by accident.
+
+> **Unticking the checkbox starts over completely.** It clears the selected files as well as the numbers: the summary returns to "No files selected.", Convert greys out, and the log says so. Since items can only be *added* to a selection, this is the one gesture that empties it. If you only want to swap the list for a different one, use **Open Files… → Select** instead.
+
+#### Checks before anything is written
+
+Because you are choosing the names, MacHuna checks them before writing a single frame, and **blocks** the batch if it finds a problem:
+
+1. **Every item needs a valid, in-range value.** Blank, malformed or out-of-range fields stop the batch.
+2. **No two items may share a value.** The second would otherwise overwrite the first.
 3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 11); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
 
-**MacHuna takes you to the problem (v1.6.17).** As well as listing the problems, it marks the fields:
+**There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe that is already on a desk is not something to offer behind a confirmation dialog.
 
-- the hint beside an offending field turns red and says what is wrong with that row — `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA)
-- valid rows keep their neutral grey hint, so scrolling the panel shows you exactly what is left to do
-- the panel scrolls to the first offending row and puts the cursor in its field, ready to type
-- typing in a marked field re-checks the whole batch, so the red marks remaining are the work remaining — fixing one half of a duplicate clears the other half too, while a three-way clash keeps the rows that are still duplicates of each other marked (v1.6.18)
-- marks only ever appear after you press Convert; typing never turns a field red on its own, since a blank field is the normal starting state
+#### When a batch is blocked
 
-**There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe already on a desk is not something to offer behind a confirmation dialog.
+The dialog lists every problem it found, and the panel then shows you where they are:
 
-Leaving the checkbox unticked keeps the original behaviour exactly — Start number, "Use source file number", and the EIF start slot all work as before.
+- the hint beside each offending field turns **red** and names that row's problem: `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA)
+- rows that are fine keep their grey hint, so scrolling the panel shows exactly what is left to do
+- the panel scrolls to the **first** offending row and puts the cursor in its field, ready to type
+- correcting a field re-checks the whole batch, so the red marks left are the work remaining. Fixing one half of a duplicate clears the other half as well; in a three-way clash, the rows still duplicating each other stay marked
+- marks appear only after you press Convert. Typing never turns a field red on its own, because an empty field is the normal starting state
+
+#### Example
+
+Three clips in a folder, to go into Kahuna slots 12, 47 and 48:
+
+1. **Open Files…**, choose the folder, **Select** the three clips
+2. Output: **Kahuna SWS**. Tick **Use bespoke numbering**
+3. Type `12`, `47`, `48` into the three rows
+4. **Convert** → `12.SWS`, `47.SWS`, `48.SWS` in the destination folder
+
+If `47.SWS` were already there, the batch would stop before writing anything, that row would show `already in use` in red with the cursor in it, and nothing else in the batch would have been touched.
+
+#### Leaving it off
+
+Unticked, batch convert behaves exactly as it always has: Start number auto-increment, "Use source file number", and the EIF start slot are unchanged.
 
 ### 4.5 Cancel
 
@@ -367,7 +396,7 @@ Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in 
 
 Because every clip in the batch would share that one name and be written to the same folder, **Sony TGA output converts one clip at a time** when this single field is in use. Selecting more than one is blocked rather than silently overwriting, and the message tells you to switch to bespoke names.
 
-**To convert several Sony clips in one batch (v1.6.13),** tick **Use bespoke names** and give each clip its own 4-character name (see Section 4.4). Each name becomes its own output folder, so the clips stay separate and can be converted together.
+**To convert several Sony clips in one batch,** tick **Use bespoke names** and give each clip its own 4-character name (see Section 4.4). Each name becomes its own output folder, so the clips stay separate and can be converted together.
 
 ### 7.6 Output Structure
 
