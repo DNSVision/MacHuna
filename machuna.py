@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.14"
+VERSION = "1.6.15"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3593,6 +3593,39 @@ def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
     return problems
 
 
+# Input types that can be combined when items are added to an existing
+# selection. Encoding to SWS and extracting from SWS are different jobs with
+# different output options, so a batch has to stay inside one family.
+_INPUT_FAMILY = {
+    'to_sws_only':   'encode',
+    'mov_only':      'encode',
+    'from_sws':      'extract',
+    'from_eif':      'extract',
+    'mixed_eif_sws': 'extract',
+}
+
+
+def merge_input_types(current, incoming):
+    """Input type for a selection after `incoming` items are added to it.
+
+    Returns None when the two cannot live in one batch, which is what the
+    "Add to List" button checks before appending anything.
+    """
+    if current is None:
+        return incoming
+    if current not in _INPUT_FAMILY or incoming not in _INPUT_FAMILY:
+        return None
+    if _INPUT_FAMILY[current] != _INPUT_FAMILY[incoming]:
+        return None
+    if _INPUT_FAMILY[current] == 'encode':
+        # mov_only is just the narrower case of to_sws_only; mixing in a TGA
+        # sequence or a still widens it back out.
+        return 'mov_only' if current == incoming == 'mov_only' else 'to_sws_only'
+    if current == incoming:
+        return current
+    return 'mixed_eif_sws'
+
+
 def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
     """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir."""
     date_str = datetime.now().strftime('%d-%m-%Y')
@@ -3706,6 +3739,7 @@ def launch_gui():
     # rebuilds so changing the selection (or toggling the mode off and on again)
     # does not lose work already done; numbers and Sony names are kept apart
     # because they are not interchangeable.
+    _selected_folders = []      # folder names feeding the current selection
     _bespoke_store   = {'num': {}, 'name': {}}
     _bespoke_rows    = []       # [(item, StringVar)] in selection order
     _bespoke_mode_of_rows = [None]
@@ -3937,8 +3971,9 @@ def launch_gui():
             _bespoke_sync()
 
     def _on_bespoke_toggle():
-        if bespoke_var.get():
-            _bespoke_reset()
+        # Blank on the way out as well as the way in — nothing typed into the
+        # panel is remembered once bespoke mode is switched off.
+        _bespoke_reset()
         _update_adaptive_controls()
 
     def _update_adaptive_controls(*_):
@@ -4072,9 +4107,11 @@ def launch_gui():
             log(f"No supported files found in {os.path.basename(folder)}.")
             return
 
-        _input_type[0]      = itype
-        _has_audio_clips[0] = has_aud
-        _has_tga_seq[0]     = has_tga
+        # State is not touched until a button is pressed, so cancelling the
+        # dialog leaves the existing selection exactly as it was.
+        base = os.path.basename(folder)
+        can_add = bool(_selected_items)
+        merged_type = merge_input_types(_input_type[0], itype) if can_add else itype
 
         # ── Folder browser dialog ──
         dlg = tk.Toplevel(root)
@@ -4084,7 +4121,7 @@ def launch_gui():
         dlg.grab_set()
 
         pad2 = {'padx': 8, 'pady': 4}
-        ttk.Label(dlg, text=f"Folder: {os.path.basename(folder)}",
+        ttk.Label(dlg, text=f"Folder: {base}",
                   font=('Helvetica', 11, 'bold')).pack(anchor='w', **pad2)
 
         list_frame = ttk.Frame(dlg)
@@ -4100,45 +4137,89 @@ def launch_gui():
             lb.insert('end', '  ' + item['display'])
         lb.select_set(0, 'end')
 
-        dlg_status = tk.StringVar(value=f"{len(items)} item(s). Select all or choose individually.")
+        hint = f"{len(items)} item(s). Select all or choose individually."
+        if can_add:
+            hint += (f"  “Add to List” keeps the {len(_selected_items)} already selected;"
+                     f" “Select” replaces them.")
+        dlg_status = tk.StringVar(value=hint)
         ttk.Label(dlg, textvariable=dlg_status, foreground='#888888').pack(anchor='w', padx=8)
 
         btn_frame_dlg = ttk.Frame(dlg)
         btn_frame_dlg.pack(fill='x', padx=8, pady=8)
 
-        def on_select():
+        def _summarise():
+            counts = {}
+            for item in _selected_items:
+                counts[item['type']] = counts.get(item['type'], 0) + 1
+            parts = []
+            for key, singular in (('tga_seq', 'TGA sequence'), ('clip', 'video file'),
+                                  ('still', 'still'), ('sws', 'SWS file'), ('eif', 'EIF file')):
+                if key in counts:
+                    n = counts[key]
+                    parts.append(f"{n} {singular}{'s' if n > 1 else ''}")
+            where = (_selected_folders[0] if len(_selected_folders) == 1
+                     else f"{len(_selected_folders)} folders")
+            summary_var.set(f"{where}: " + ', '.join(parts))
+
+        def _finish(append):
             sel = lb.curselection()
             if not sel:
                 dlg_status.set("Select at least one item.")
                 return
             chosen = [items[i] for i in sel]
-            _selected_items.clear()
-            _selected_items.extend(chosen)
 
-            counts = {}
-            for item in chosen:
-                counts[item['type']] = counts.get(item['type'], 0) + 1
-            parts = []
-            if 'tga_seq' in counts:
-                n = counts['tga_seq']
-                parts.append(f"{n} TGA sequence{'s' if n > 1 else ''}")
-            if 'clip' in counts:
-                n = counts['clip']
-                parts.append(f"{n} video file{'s' if n > 1 else ''}")
-            if 'still' in counts:
-                n = counts['still']
-                parts.append(f"{n} still{'s' if n > 1 else ''}")
-            if 'sws' in counts:
-                n = counts['sws']
-                parts.append(f"{n} SWS file{'s' if n > 1 else ''}")
-            summary_var.set(f"{os.path.basename(folder)}: " + ', '.join(parts))
+            if append:
+                if merged_type is None:
+                    messagebox.showwarning(
+                        "Add to List",
+                        "These items cannot be added to the current selection.\n\n"
+                        "One batch converts either media into SWS, or SWS/EIF files\n"
+                        "back out again — not both. Use “Select” to start a new\n"
+                        "list from this folder instead.",
+                        parent=dlg)
+                    return
+                # Adding the same item twice would give it two rows in the
+                # bespoke panel and convert it twice.
+                already = {_bespoke_key(i) for i in _selected_items}
+                fresh   = [c for c in chosen if _bespoke_key(c) not in already]
+                if not fresh:
+                    dlg_status.set("Those items are already in the list.")
+                    return
+                _input_type[0]      = merged_type
+                _has_audio_clips[0] = _has_audio_clips[0] or has_aud
+                _has_tga_seq[0]     = _has_tga_seq[0] or has_tga
+                _selected_items.extend(fresh)
+                if base not in _selected_folders:
+                    _selected_folders.append(base)
+                skipped = len(chosen) - len(fresh)
+                log(f"Added {len(fresh)} item(s) from {base}"
+                    + (f" ({skipped} already in the list)" if skipped else "")
+                    + f" — {len(_selected_items)} item(s) selected.")
+            else:
+                _input_type[0]      = itype
+                _has_audio_clips[0] = has_aud
+                _has_tga_seq[0]     = has_tga
+                _selected_items.clear()
+                _selected_items.extend(chosen)
+                _selected_folders.clear()
+                _selected_folders.append(base)
+                # "Select" starts a new list, so any bespoke values typed for
+                # the old one go with it. "Add to List" keeps them: there you
+                # are building the list up, not starting again.
+                _bespoke_reset()
 
+            _summarise()
             convert_btn.config(state='normal')
             dlg.destroy()
             _update_output_options()
 
-        ttk.Button(btn_frame_dlg, text="Cancel", command=dlg.destroy).pack(side='right', padx=2)
-        ttk.Button(btn_frame_dlg, text="Select", command=on_select).pack(side='right', padx=2)
+        ttk.Button(btn_frame_dlg, text="Cancel",
+                   command=dlg.destroy).pack(side='right', padx=2)
+        ttk.Button(btn_frame_dlg, text="Select",
+                   command=lambda: _finish(False)).pack(side='right', padx=2)
+        if can_add:
+            ttk.Button(btn_frame_dlg, text="Add to List",
+                       command=lambda: _finish(True)).pack(side='right', padx=2)
 
         dlg.update_idletasks()
         px = root.winfo_x() + (root.winfo_width()  - dlg.winfo_width())  // 2

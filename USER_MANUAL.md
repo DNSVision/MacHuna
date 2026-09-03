@@ -1,4 +1,4 @@
-# MacHuna v1.6.14 — User Manual
+# MacHuna v1.6.15 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -149,6 +149,17 @@ The file list shows one entry per item to be converted:
 
 Click entries to select or deselect them. By default, all files are selected.
 
+**Building a batch from more than one folder (v1.6.15).** Once you have a selection, opening another folder gives you two buttons:
+
+- **Select** — replaces the list with what you have chosen here (the original behaviour)
+- **Add to List** — appends it to what is already selected
+
+So you can take two files from one folder, one from another, and convert all three in a single batch. Items already in the list are not added twice, and the summary line next to **Open Files…** reports the whole selection (e.g. `2 folders: 3 video files`).
+
+One batch has to be one kind of job, so you can only add items of a compatible type: media being encoded **to** SWS, or SWS/EIF files being extracted **back out**. Trying to mix the two is refused with an explanation — use **Select** to start a fresh list instead. Adding EIF files to SWS files (or the reverse) is fine.
+
+Cancelling the folder browser leaves your current selection untouched.
+
 ### 4.3 Numbering
 
 For Kahuna SWS output, the **Start Number** field sets the number assigned to the first output file. Subsequent files are numbered sequentially.
@@ -175,7 +186,14 @@ When ticked, a scrollable panel appears listing every item you selected, one row
 
 **The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence.
 
-They are emptied again **every time you come back to bespoke mode**: when you tick the checkbox on, and once a bespoke batch has finished (v1.6.14). You always start a batch from a clean panel, so a number you have already written can never be reused by accident. The one exception is a **selection change while the mode stays on** — there the list refreshes but keeps whatever you have already typed for items that are still selected, since retyping them would be a nuisance.
+They are emptied again **every time you leave or come back to bespoke mode**: when you tick the checkbox on, when you untick it, and once a bespoke batch has finished. You always start a batch from a clean panel, so a number you have already written can never be reused by accident.
+
+Values are kept in the two cases where retyping them would be a nuisance:
+
+- **Add to List** — the items already in the list keep their numbers, and the newly added ones get blank fields (v1.6.15)
+- **Deselecting an item** while bespoke mode stays on — the rest keep their numbers
+
+**Select** replaces the list, so it starts you blank.
 
 **Checks before conversion starts.** Because you are choosing the names, MacHuna checks them before writing anything, and **blocks** if it finds a problem, naming the items involved:
 

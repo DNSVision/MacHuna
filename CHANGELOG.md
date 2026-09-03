@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.15 — 2026-09-03
+
+### Added
+- **Build a batch up from several folders — "Add to List".** The folder browser now offers a second button whenever something is already selected: **Select** replaces the list as before, **Add to List** appends to it. Open a folder, take two files, open another folder, take one more, and you have a three-item batch with three bespoke rows. Items already in the list are not added twice, and the summary line reports the combined selection (`2 folders: 3 video files`).
+  - A batch has to stay one kind of job, so items can only be added within the same family: encoding media *to* SWS, or extracting SWS/EIF *back out*. Mixing the two is refused with an explanation rather than silently reinterpreted. Adding SWS to EIF (or the reverse) is allowed and yields the mixed selection MacHuna already supported.
+  - New module-level `merge_input_types()` holds the rule, so it is unit-tested outside the GUI.
+
+### Changed
+- **Bespoke values are cleared when you untick the checkbox**, not just when you tick it — nothing typed into the panel is held while the mode is off.
+- **"Select" now starts the bespoke panel blank**, since it replaces the list. **"Add to List" keeps what you have already typed** and gives the new items blank fields, which is the point of building a list up piece by piece. A selection change while bespoke stays on continues to preserve values, as before.
+- Cancelling the folder browser no longer alters the current selection's input type. Previously the scanned folder's type was applied as soon as the dialog opened, before any button was pressed.
+
+---
+
 ## v1.6.14 — 2026-09-03
 
 ### Changed

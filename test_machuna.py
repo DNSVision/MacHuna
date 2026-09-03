@@ -642,5 +642,34 @@ class TestBespokeValidation(unittest.TestCase):
         self.assertEqual(len(problems), 3)
 
 
+class TestMergeInputTypes(unittest.TestCase):
+    """merge_input_types: which selections can be combined by "Add to List"."""
+
+    def test_first_selection_takes_the_incoming_type(self):
+        self.assertEqual(m.merge_input_types(None, 'from_sws'), 'from_sws')
+
+    def test_same_type_is_unchanged(self):
+        for t in ('to_sws_only', 'mov_only', 'from_sws', 'from_eif', 'mixed_eif_sws'):
+            self.assertEqual(m.merge_input_types(t, t), t)
+
+    def test_mov_widens_to_to_sws_only_when_mixed_with_other_media(self):
+        self.assertEqual(m.merge_input_types('mov_only', 'to_sws_only'), 'to_sws_only')
+        self.assertEqual(m.merge_input_types('to_sws_only', 'mov_only'), 'to_sws_only')
+
+    def test_sws_plus_eif_becomes_mixed(self):
+        self.assertEqual(m.merge_input_types('from_sws', 'from_eif'), 'mixed_eif_sws')
+        self.assertEqual(m.merge_input_types('from_eif', 'from_sws'), 'mixed_eif_sws')
+        self.assertEqual(m.merge_input_types('mixed_eif_sws', 'from_sws'), 'mixed_eif_sws')
+
+    def test_encoding_and_extracting_cannot_be_combined(self):
+        for a, b in (('to_sws_only', 'from_sws'), ('from_sws', 'mov_only'),
+                     ('mov_only', 'from_eif'), ('mixed_eif_sws', 'to_sws_only')):
+            self.assertIsNone(m.merge_input_types(a, b), f'{a}+{b}')
+
+    def test_unknown_type_is_rejected(self):
+        self.assertIsNone(m.merge_input_types('to_sws_only', 'mixed_error'))
+        self.assertIsNone(m.merge_input_types('mixed_error', 'to_sws_only'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
