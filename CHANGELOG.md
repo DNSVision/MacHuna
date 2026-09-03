@@ -4,6 +4,14 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.14 — 2026-09-03
+
+### Changed
+- **Bespoke fields now start blank every time you return to them.** Typed values were being kept for the whole session, so ticking the checkbox again — or starting a second batch — showed the numbers from the previous one. They are now cleared whenever you tick the checkbox on, and again once a bespoke batch has finished. Values are still kept across a **selection change** while bespoke mode stays on, which is the case where retyping them would be a nuisance. Carrying old numbers any further either invites reusing a number that has just been written, or leaves a guaranteed collision sitting in the field.
+- **The bespoke panel's scrollbar now sits immediately beside the list** rather than out at the right-hand edge of the window. The panel is sized to its content instead of stretching to the full window width.
+
+---
+
 ## v1.6.13 — 2026-09-03
 
 ### Added

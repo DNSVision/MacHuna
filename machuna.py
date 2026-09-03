@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.13"
+VERSION = "1.6.14"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3829,8 +3829,11 @@ def launch_gui():
     bespoke_canvas.configure(yscrollcommand=bespoke_sb.set)
     bespoke_inner.bind('<Configure>', lambda e: bespoke_canvas.configure(
         scrollregion=bespoke_canvas.bbox('all')))
-    bespoke_canvas.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=(0, 4))
-    bespoke_sb.pack(side='right', fill='y', pady=(0, 4))
+    # Canvas is sized to its content in _bespoke_rebuild rather than stretched,
+    # so the scrollbar sits immediately beside the list instead of way out at
+    # the right-hand edge of the window.
+    bespoke_canvas.pack(side='left', padx=(8, 0), pady=(0, 4))
+    bespoke_sb.pack(side='left', fill='y', padx=(2, 0), pady=(0, 4))
     bespoke_canvas.bind('<Enter>', lambda e: bespoke_canvas.bind_all(
         '<MouseWheel>', lambda ev: bespoke_canvas.yview_scroll(-ev.delta, 'units')))
     bespoke_canvas.bind('<Leave>', lambda e: bespoke_canvas.unbind_all('<MouseWheel>'))
@@ -3905,7 +3908,8 @@ def launch_gui():
                       foreground='#999999').pack(side='left', padx=(6, 0))
             _bespoke_rows.append((item, var))
         bespoke_inner.update_idletasks()
-        bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'))
+        bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'),
+                                 width=max(320, bespoke_inner.winfo_reqwidth()))
 
     def _bespoke_sync():
         """Rebuild the rows only when the selection or the mode has changed,
@@ -3914,6 +3918,28 @@ def launch_gui():
         if sig != _bespoke_sig[0]:
             _bespoke_rebuild()
             _bespoke_sig[0] = sig
+
+    def _bespoke_reset():
+        """Throw away every typed value and blank the fields.
+
+        Values are kept across a selection change while bespoke mode stays on,
+        but any *return* to it starts from scratch: ticking the checkbox, and
+        finishing a bespoke batch. Carrying old numbers forward would either
+        invite reuse of a number just written or sit there as a guaranteed
+        collision, and neither is worth the typing it saves.
+        """
+        _bespoke_store['num'].clear()
+        _bespoke_store['name'].clear()
+        _bespoke_rows.clear()
+        _bespoke_mode_of_rows[0] = None
+        _bespoke_sig[0] = None
+        if bespoke_var.get() and _bespoke_mode():
+            _bespoke_sync()
+
+    def _on_bespoke_toggle():
+        if bespoke_var.get():
+            _bespoke_reset()
+        _update_adaptive_controls()
 
     def _update_adaptive_controls(*_):
         out = output_var.get()
@@ -4007,7 +4033,7 @@ def launch_gui():
             output_var.set(opts[0] if opts else '')
         _update_adaptive_controls()
 
-    chk_bespoke.config(command=_update_adaptive_controls)
+    chk_bespoke.config(command=_on_bespoke_toggle)
     std_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
     output_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
 
@@ -4514,6 +4540,8 @@ def launch_gui():
             finally:
                 root.after(0, lambda: cancel_btn.config(state='disabled'))
                 root.after(0, lambda: convert_btn.config(state='normal'))
+                if bespoke_map:
+                    root.after(0, _bespoke_reset)
 
         threading.Thread(target=worker, daemon=True).start()
 

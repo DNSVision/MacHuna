@@ -1,4 +1,4 @@
-# MacHuna v1.6.13 — User Manual
+# MacHuna v1.6.14 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -173,7 +173,9 @@ The checkbox is not offered for **Kayenne TGA** or **TGA Sequence** output, beca
 
 When ticked, a scrollable panel appears listing every item you selected, one row each, with its own input field. The control it replaces is hidden while it is on (Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA).
 
-**The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence. If you change your selection, the list refreshes but keeps whatever you have already typed for items that are still selected.
+**The fields start empty on purpose.** A blank field is how you tell at a glance which items you have not given an ID to yet — MacHuna deliberately does not pre-fill them with the auto-sequence.
+
+They are emptied again **every time you come back to bespoke mode**: when you tick the checkbox on, and once a bespoke batch has finished (v1.6.14). You always start a batch from a clean panel, so a number you have already written can never be reused by accident. The one exception is a **selection change while the mode stays on** — there the list refreshes but keeps whatever you have already typed for items that are still selected, since retyping them would be a nuisance.
 
 **Checks before conversion starts.** Because you are choosing the names, MacHuna checks them before writing anything, and **blocks** if it finds a problem, naming the items involved:
 
