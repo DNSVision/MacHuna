@@ -37,6 +37,22 @@ if [ "$DECLARED" != "$VERSION" ]; then
   exit 1
 fi
 
+# The page announces the version too, in three places, and it drifts silently.
+# version.json being right is not enough: the download button is on the page.
+for want in "v$VERSION" "MacHuna-$VERSION.zip"; do
+  grep -qF "$want" website/machuna/index.html || {
+    echo "ERROR: website/machuna/index.html does not mention $want."
+    echo "       Update the current-release panel, the download link and the"
+    echo "       release notes before publishing $VERSION."
+    exit 1
+  }
+done
+PREV=$(grep -oE 'MacHuna-[0-9]+\.[0-9]+\.[0-9]+\.zip' website/machuna/index.html | grep -v "MacHuna-$VERSION.zip" | head -1 || true)
+if [ -n "$PREV" ]; then
+  echo "ERROR: the download button still points at $PREV."
+  exit 1
+fi
+
 rm -rf publish
 mkdir -p publish
 
@@ -44,6 +60,7 @@ mkdir -p publish
 # ever one manual to keep current.
 cp -R website publish/site
 rm -f publish/site/README.md
+find publish/site -name .DS_Store -delete
 cp MacHuna_User_Manual.pdf publish/site/machuna/MacHuna_User_Manual.pdf
 
 # The download
