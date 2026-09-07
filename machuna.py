@@ -14,7 +14,9 @@ Usage:
 """
 
 import argparse
+import json
 import os
+import platform
 import re
 import struct
 import subprocess
@@ -22,6 +24,7 @@ import sys
 import tempfile
 import time
 import threading
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -38,7 +41,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.21"
+VERSION = "1.7.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3682,6 +3685,146 @@ def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
         log_fn(f"  Could not write log file: {e}")
 
 
+# ─────────────────────────────────────────────────────────────
+#  Update check and contact
+#
+#  The manifest is a small public JSON file. MacHuna only ever reads it: it
+#  sends nothing about the user or their files, and there is no telemetry.
+#  Everything here fails silently by design, because MacHuna runs in OB trucks
+#  and air-gapped galleries where a hang or a nag would be unacceptable.
+# ─────────────────────────────────────────────────────────────
+
+UPDATE_MANIFEST_URL = "https://dnsvision.tv/machuna/version.json"
+UPDATE_TIMEOUT_S    = 5
+CONTACT_EMAIL       = "machuna@dnsvision.tv"
+
+
+def parse_version(text) -> Optional[tuple]:
+    """Parse "1.6.21" into a comparable tuple, or None if it is not that shape.
+
+    Deliberately strict: anything with a suffix, a letter or an empty part is
+    rejected rather than guessed at, and a rejected version is treated as "no
+    update" by the caller. Padded to four parts so "1.7" and "1.7.0" compare equal.
+    """
+    if not isinstance(text, str):
+        return None
+    parts = text.strip().split('.')
+    if not 1 <= len(parts) <= 4:
+        return None
+    out = []
+    for part in parts:
+        if not part.isdigit():
+            return None
+        out.append(int(part))
+    return tuple(out + [0] * (4 - len(out)))
+
+
+def is_update_available(remote_version, local_version=None) -> bool:
+    """True only if remote parses, local parses, and remote is strictly newer.
+
+    Strictly greater matters: a rolled-back or mistyped manifest must never
+    prompt someone to "update" to what they already have, or downgrade.
+    """
+    remote = parse_version(remote_version)
+    local  = parse_version(VERSION if local_version is None else local_version)
+    if remote is None or local is None:
+        return False
+    return remote > local
+
+
+def parse_update_manifest(raw) -> Optional[dict]:
+    """Validate the manifest. Returns None for anything malformed."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if parse_version(data.get('version')) is None:
+        return None
+    # The download URL is handed to `open`, so it must be a plain https address.
+    # Without this check a compromised or mistyped manifest could open anything.
+    download = data.get('download')
+    if not isinstance(download, str) or not download.startswith('https://'):
+        return None
+    summary = data.get('summary')
+    return {
+        'version':  data['version'].strip(),
+        'download': download,
+        'summary':  summary.strip() if isinstance(summary, str) else '',
+        'released': data.get('released') if isinstance(data.get('released'), str) else '',
+    }
+
+
+def fetch_update_manifest(url: str = UPDATE_MANIFEST_URL,
+                          timeout: int = UPDATE_TIMEOUT_S) -> Optional[dict]:
+    """Fetch and validate the manifest. Returns None on any failure at all.
+
+    Uses /usr/bin/curl rather than Python's own HTTPS. The bundled app ships
+    Homebrew's libssl, whose compiled-in OPENSSLDIR is /opt/homebrew/etc/openssl@3.
+    That path exists on the build machine and on no one else's Mac, so Python's
+    certificate verification would fail everywhere except here -- silently, which
+    would mean nobody ever saw an update notice. curl uses the macOS system trust
+    store, so it works on any Mac. Never "fix" this by disabling verification:
+    this manifest tells people where to download software from.
+    """
+    try:
+        result = subprocess.run(
+            ['/usr/bin/curl', '--silent', '--fail', '--location',
+             '--max-time', str(timeout), url],
+            capture_output=True, timeout=timeout + 3,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_update_manifest(result.stdout.decode('utf-8', 'replace'))
+
+
+def _mac_model() -> str:
+    try:
+        out = subprocess.run(['sysctl', '-n', 'hw.model'],
+                             capture_output=True, timeout=3)
+        return out.stdout.decode().strip() or 'unknown'
+    except Exception:
+        return 'unknown'
+
+
+def build_contact_body(kind: str, context: Optional[dict] = None) -> str:
+    """The pre-filled email body.
+
+    The point of this is that a report arrives with the version, the OS and the
+    settings already in it, instead of costing three emails to establish them.
+    Everything here is about the machine and the conversion settings; nothing
+    identifies the user, and they see it and can edit it before sending.
+    """
+    context = context or {}
+    if kind == 'problem':
+        lines = ["What I was doing:", "", "What happened:", "", "What I expected:", ""]
+    else:
+        lines = ["What I would like MacHuna to do:", "",
+                 "Why it would help:", ""]
+    lines += ["--- please leave the details below ---",
+              f"MacHuna      {VERSION}",
+              f"macOS        {platform.mac_ver()[0] or 'unknown'}",
+              f"Mac          {_mac_model()}"]
+    for label, key in (('Standard', 'standard'), ('Output', 'output'),
+                       ('Source', 'source'), ('Log', 'log')):
+        value = context.get(key)
+        if value:
+            lines.append(f"{label:<12} {value}")
+    return "\n".join(lines)
+
+
+def build_mailto(kind: str, context: Optional[dict] = None) -> str:
+    subject = (f"MacHuna {VERSION} - problem report" if kind == 'problem'
+               else f"MacHuna {VERSION} - feature request")
+    query = urllib.parse.urlencode(
+        {'subject': subject, 'body': build_contact_body(kind, context)},
+        quote_via=urllib.parse.quote)
+    return f"mailto:{CONTACT_EMAIL}?{query}"
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -3738,6 +3881,19 @@ def launch_gui():
     style.theme_use('aqua' if sys.platform == 'darwin' else 'clam')
 
     pad = dict(padx=8, pady=4)
+
+    # ── Update notice strip ──
+    # A strip inside the main window rather than a floating panel: a panel can
+    # open behind the window, steal focus while a clip name is being typed, or
+    # be missed entirely. This cannot do any of those, and it waits quietly.
+    update_bar = ttk.Frame(root)
+    update_sep = ttk.Separator(root, orient='horizontal')
+    update_head = ttk.Label(update_bar, text='', font=('Helvetica', 13, 'bold'))
+    update_head.pack(side='left', padx=(10, 6), pady=(8, 0))
+    update_note = ttk.Label(update_bar, text='', font=('Helvetica', 11),
+                            foreground='#666666', wraplength=520, justify='left')
+    update_note.pack(side='left', padx=(0, 10), pady=(8, 0))
+    update_state = {'info': None, 'dismissed': False, 'closing': False, 'auto_done': False}
 
     # ── Destination folder row ──
     frm2 = ttk.LabelFrame(root, text="Destination Folder")
@@ -4793,7 +4949,76 @@ def launch_gui():
 
     cancel_btn.config(command=cancel_batch)
 
+    # ─── Update check ────────────────────────────────────────────────
+    def _hide_update_bar():
+        update_bar.pack_forget()
+        update_sep.pack_forget()
+
+    def _open_download():
+        info = update_state['info']
+        if info:
+            subprocess.run(['open', info['download']])
+
+    def _dismiss_update():
+        update_state['dismissed'] = True
+        _hide_update_bar()
+
+    ttk.Button(update_bar, text="Download…", command=_open_download).pack(
+        side='left', padx=(0, 6), pady=(6, 0))
+    ttk.Button(update_bar, text="Dismiss", command=_dismiss_update).pack(
+        side='left', padx=(0, 10), pady=(6, 0))
+
+    def _show_update_bar(info):
+        update_state['info'] = info
+        update_head.config(text=f"MacHuna {info['version']} is available")
+        update_note.config(text=info['summary'] or "")
+        update_bar.pack(side='top', fill='x', before=frm2)
+        update_sep.pack(side='top', fill='x', before=frm2)
+
+    def _on_update_result(info, manual):
+        if update_state['closing']:
+            return
+        if info is None:
+            if manual:
+                messagebox.showinfo(
+                    "Check for Updates",
+                    f"Couldn't check for updates just now.\n\n"
+                    f"You are running MacHuna {VERSION}.",
+                    parent=root)
+            return
+        if is_update_available(info['version']):
+            # A manual check always shows it, even if it was dismissed earlier:
+            # asking is an explicit request to be told.
+            if manual or not update_state['dismissed']:
+                _show_update_bar(info)
+            if manual:
+                log(f"Update available: MacHuna {info['version']}.")
+        elif manual:
+            messagebox.showinfo(
+                "Check for Updates",
+                f"You're on the latest version.\n\nMacHuna {VERSION}.",
+                parent=root)
+
+    def _check_for_updates(manual=False):
+        def work():
+            info = fetch_update_manifest()
+            try:
+                root.after(0, lambda: _on_update_result(info, manual))
+            except Exception:
+                pass   # window closed while the request was in flight
+        threading.Thread(target=work, daemon=True).start()
+
+    def _auto_check():
+        # Fires a few seconds after launch so it never competes with starting
+        # up, and never delays the window appearing.
+        if not update_state['auto_done'] and not update_state['closing']:
+            update_state['auto_done'] = True
+            _check_for_updates(manual=False)
+
+    root.after(4000, _auto_check)
+
     def on_closing():
+        update_state['closing'] = True
         save_settings()
         root.destroy()
 
@@ -4852,11 +5077,108 @@ def launch_gui():
         y = root.winfo_y() + (root.winfo_height() - win.winfo_height()) // 2
         win.geometry(f"+{x}+{y}")
 
+    # ─── Contact ─────────────────────────────────────────────────────
+    def _contact_context():
+        """What MacHuna knows about the current job, to save asking for it."""
+        ctx = {'standard': std_var.get(), 'output': output_var.get()}
+        n = len(_selected_items)
+        if n:
+            kinds = sorted({item['type'] for item in _selected_items})
+            ctx['source'] = f"{n} item(s): {', '.join(kinds)}"
+        dest = dest_var.get().strip()
+        if dest:
+            log_name = f"MacHuna_Log_{datetime.now().strftime('%d-%m-%Y')}.txt"
+            if os.path.exists(os.path.join(dest, log_name)):
+                ctx['log'] = os.path.join(dest, log_name)
+        return ctx
+
+    def _show_contact(kind):
+        """Show the details before anything is sent, then hand over to Mail.
+
+        Nothing leaves the machine here. It opens a draft in the user's own mail
+        app, which they read, edit and send themselves. On a truck with no signal
+        it simply waits in the outbox.
+        """
+        ctx  = _contact_context()
+        body = build_contact_body(kind, ctx)
+        title = "Report a Problem" if kind == 'problem' else "Suggest a Feature"
+
+        win = tk.Toplevel(root)
+        win.title(title)
+        win.transient(root)
+        win.resizable(False, False)
+
+        ttk.Label(win, text=title, font=('Helvetica', 15, 'bold')).pack(
+            anchor='w', padx=16, pady=(16, 2))
+        ttk.Label(win,
+                  text=f"This opens an email to {CONTACT_EMAIL} with the details below "
+                       f"already filled in.\nNothing is sent until you send it, and you "
+                       f"can edit or delete any of it first.",
+                  font=('Helvetica', 11), foreground='#666666',
+                  justify='left').pack(anchor='w', padx=16, pady=(0, 10))
+
+        box = scrolledtext.ScrolledText(win, width=64, height=14,
+                                        font=('Menlo', 11), wrap='none')
+        box.pack(fill='both', expand=True, padx=16)
+        box.insert('1.0', body)
+        box.config(state='disabled')
+
+        btns = ttk.Frame(win)
+        btns.pack(fill='x', padx=16, pady=12)
+
+        def _open_email():
+            subprocess.run(['open', build_mailto(kind, ctx)])
+            win.destroy()
+
+        def _copy_details():
+            root.clipboard_clear()
+            root.clipboard_append(body)
+            log("Report details copied to the clipboard.")
+
+        ttk.Button(btns, text="Open Email", command=_open_email).pack(side='left')
+        ttk.Button(btns, text="Copy Details", command=_copy_details).pack(side='left', padx=6)
+        if ctx.get('log'):
+            ttk.Button(btns, text="Show Log in Finder",
+                       command=lambda: subprocess.run(['open', '-R', ctx['log']])
+                       ).pack(side='left', padx=(0, 6))
+        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side='right')
+
+        win.update_idletasks()
+        win.geometry(f"+{root.winfo_x() + 60}+{root.winfo_y() + 60}")
+
+    def _open_manual():
+        """Open the manual bundled inside the .app, so it works with no internet
+        and always matches the version actually running."""
+        if getattr(sys, 'frozen', False):
+            path = os.path.join(sys._MEIPASS, 'MacHuna_User_Manual.pdf')
+        else:
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'MacHuna_User_Manual.pdf')
+        if os.path.exists(path):
+            subprocess.run(['open', path])
+        else:
+            messagebox.showwarning("User Manual",
+                                   "The manual could not be found in this build.",
+                                   parent=root)
+
     menubar = tk.Menu(root)
     apple_menu = tk.Menu(menubar, name='apple')
     menubar.add_cascade(menu=apple_menu)
     apple_menu.add_command(label="About MacHuna", command=show_about)
     apple_menu.add_separator()
+
+    help_menu = tk.Menu(menubar, name='help')
+    menubar.add_cascade(label="Help", menu=help_menu)
+    help_menu.add_command(label="MacHuna User Manual", command=_open_manual)
+    help_menu.add_separator()
+    help_menu.add_command(label="Check for Updates\u2026",
+                          command=lambda: _check_for_updates(manual=True))
+    help_menu.add_separator()
+    help_menu.add_command(label="Report a Problem\u2026",
+                          command=lambda: _show_contact('problem'))
+    help_menu.add_command(label="Suggest a Feature\u2026",
+                          command=lambda: _show_contact('feature'))
+
     root.config(menu=menubar)
 
     root.mainloop()

@@ -5,11 +5,13 @@ Run with:  /opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
        or: /opt/homebrew/bin/python3.12 -m unittest test_machuna -v
 """
 
+import json
 import os
 import struct
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, '.')
@@ -741,3 +743,128 @@ class TestBespokeRowIssues(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+# ── update check ──────────────────────────────────────────────────────────────
+#
+# These decide whether somebody is told to go and download software, so they are
+# worth covering properly. The network fetch itself is not unit tested; the
+# parsing and comparison around it are.
+
+class TestParseVersion(unittest.TestCase):
+
+    def test_plain_three_part(self):
+        self.assertEqual(m.parse_version('1.6.21'), (1, 6, 21, 0))
+
+    def test_short_forms_pad_out(self):
+        self.assertEqual(m.parse_version('1.7'), m.parse_version('1.7.0'))
+        self.assertEqual(m.parse_version('2'), (2, 0, 0, 0))
+
+    def test_whitespace_tolerated(self):
+        self.assertEqual(m.parse_version('  1.6.21  '), (1, 6, 21, 0))
+
+    def test_rejects_anything_it_cannot_read_exactly(self):
+        for bad in ('1.7.0-beta1', 'v1.7.0', '1.7.0a', '1..7', '1.7.', '', '   ',
+                    'one.seven', '1.7.0.0.0', None, 1.7, ['1', '7']):
+            with self.subTest(bad=bad):
+                self.assertIsNone(m.parse_version(bad))
+
+
+class TestIsUpdateAvailable(unittest.TestCase):
+
+    def test_newer_patch_is_an_update(self):
+        self.assertTrue(m.is_update_available('1.6.22', '1.6.21'))
+
+    def test_newer_minor_beats_a_bigger_patch_number(self):
+        # plain string comparison gets this wrong: '1.7.0' sorts below '1.6.21'
+        self.assertTrue(m.is_update_available('1.7.0', '1.6.21'))
+
+    def test_same_version_is_not_an_update(self):
+        self.assertFalse(m.is_update_available('1.6.21', '1.6.21'))
+
+    def test_older_is_never_an_update(self):
+        # a rolled-back or mistyped manifest must never prompt a downgrade
+        self.assertFalse(m.is_update_available('1.6.20', '1.6.21'))
+
+    def test_equivalent_short_form_is_not_an_update(self):
+        self.assertFalse(m.is_update_available('1.7', '1.7.0'))
+
+    def test_unreadable_version_is_never_an_update(self):
+        self.assertFalse(m.is_update_available('banana', '1.6.21'))
+        self.assertFalse(m.is_update_available('1.7.0', 'banana'))
+
+    def test_defaults_to_the_running_version(self):
+        self.assertFalse(m.is_update_available(m.VERSION))
+
+
+class TestParseUpdateManifest(unittest.TestCase):
+
+    GOOD = json.dumps({
+        'version': '1.7.0',
+        'released': '2026-09-08',
+        'summary': 'Something changed.',
+        'download': 'https://downloads.dnsvision.tv/MacHuna-1.7.0.zip',
+    })
+
+    def test_reads_a_good_manifest(self):
+        out = m.parse_update_manifest(self.GOOD)
+        self.assertEqual(out['version'], '1.7.0')
+        self.assertEqual(out['summary'], 'Something changed.')
+        self.assertTrue(out['download'].startswith('https://'))
+
+    def test_summary_is_optional(self):
+        raw = json.dumps({'version': '1.7.0', 'download': 'https://example.com/a.zip'})
+        self.assertEqual(m.parse_update_manifest(raw)['summary'], '')
+
+    def test_rejects_malformed_manifests(self):
+        for raw in ('', 'not json at all', '[]', 'null', '"a string"',
+                    json.dumps({'download': 'https://example.com/a.zip'}),
+                    json.dumps({'version': '1.7.0'}),
+                    json.dumps({'version': 'beta', 'download': 'https://e.com/a'})):
+            with self.subTest(raw=raw[:40]):
+                self.assertIsNone(m.parse_update_manifest(raw))
+
+    def test_download_url_must_be_https(self):
+        # the URL is handed straight to `open`, so anything else is refused
+        for url in ('http://downloads.dnsvision.tv/a.zip', 'file:///etc/passwd',
+                    'javascript:alert(1)', 'ftp://example.com/a.zip', '', 42):
+            with self.subTest(url=url):
+                raw = json.dumps({'version': '1.7.0', 'download': url})
+                self.assertIsNone(m.parse_update_manifest(raw))
+
+    def test_live_manifest_url_is_https(self):
+        self.assertTrue(m.UPDATE_MANIFEST_URL.startswith('https://'))
+
+
+class TestContactEmail(unittest.TestCase):
+
+    def test_body_carries_the_details_a_report_needs(self):
+        body = m.build_contact_body('problem',
+                                    {'standard': '1080i50', 'output': 'Kahuna SWS'})
+        self.assertIn(m.VERSION, body)
+        self.assertIn('1080i50', body)
+        self.assertIn('Kahuna SWS', body)
+        self.assertIn('What happened:', body)
+
+    def test_feature_request_asks_a_different_question(self):
+        body = m.build_contact_body('feature')
+        self.assertIn('What I would like MacHuna to do:', body)
+        self.assertNotIn('What happened:', body)
+
+    def test_absent_context_lines_are_left_out(self):
+        body = m.build_contact_body('problem', {'standard': '1080i50'})
+        self.assertNotIn('Source', body)
+        self.assertNotIn('Log', body)
+
+    def test_mailto_is_addressed_and_encoded(self):
+        url = m.build_mailto('problem', {'standard': '1080i50'})
+        self.assertTrue(url.startswith('mailto:%s?' % m.CONTACT_EMAIL))
+        self.assertNotIn(' ', url)          # spaces must be percent-encoded
+        self.assertIn('subject=', url)
+        self.assertIn('body=', url)
+
+    def test_mailto_survives_a_round_trip(self):
+        url = m.build_mailto('feature')
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        self.assertIn(m.VERSION, query['subject'][0])
+        self.assertIn('What I would like MacHuna to do:', query['body'][0])

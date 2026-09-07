@@ -4,6 +4,24 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.7.0 — 2026-09-07
+
+### Added
+- **A Help menu, which MacHuna has never had.** It carries the user manual, the update check and the two ways of getting in touch. The manual is now bundled inside the `.app`, so it opens with no internet and always matches the version actually running rather than whichever PDF happens to be on the machine.
+- **Update notifications.** On launch, a few seconds after the window appears so it never competes with starting up, MacHuna reads a small public JSON file at `dnsvision.tv/machuna/version.json` in the background. If a newer version exists, a strip appears across the top of the window with the version, what changed, a **Download** button and a **Dismiss**. **If you are up to date, or offline, or the check fails for any reason, nothing whatsoever is shown.** MacHuna runs in OB trucks and air-gapped galleries, where a hang or a nag would be unacceptable: the request has a five-second timeout, runs on a background thread, and never delays the window.
+  - **Help ▸ Check for Updates…** runs the same check but always reports: a newer version, "you're on the latest version", or "couldn't check just now". The silent behaviour is only for the automatic check.
+  - The notice is a strip inside the main window rather than a floating panel, which cannot open behind the window, steal focus mid-typing, or be missed.
+  - Dismissing hides it for the session. Asking explicitly from the menu shows it again, because that is a request to be told.
+  - **The check only ever reads that one file. It sends nothing about you or your files, and there is no telemetry of any kind.**
+- **Help ▸ Report a Problem… and Suggest a Feature…** open an email to `machuna@dnsvision.tv` with the version, your macOS, your Mac, and the standard, output and source you had selected already filled in — the things that otherwise cost three emails to establish. A panel shows exactly what is about to be shared first, with **Copy Details** for anyone whose Mac has no mail app set up, and **Show Log in Finder** when a conversion log exists. Nothing is sent until you send it yourself.
+
+### Notes for the record
+- Version comparison is numeric, not string: `1.7.0` correctly beats `1.6.21`, which a string comparison gets wrong. A manifest that will not parse exactly, or that offers anything but an `https://` download address, is ignored rather than guessed at — that address is handed to `open`, so it is validated before use.
+- The fetch shells out to `/usr/bin/curl` rather than using Python's own HTTPS. The bundled app ships Homebrew's libssl, whose compiled-in certificate directory exists on the build machine and on no other Mac, so Python's verification would have failed everywhere except here — silently, meaning nobody would ever have seen an update notice. curl uses the macOS system trust store. Certificate verification is never disabled.
+- `parse_version`, `is_update_available`, `parse_update_manifest`, `build_contact_body` and `build_mailto` are module-level functions rather than buried in the GUI, so the test suite can reach them. 115 tests now pass.
+
+---
+
 ## v1.6.21 — 2026-09-07
 
 ### Fixed

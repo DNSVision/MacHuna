@@ -51,6 +51,8 @@ APP_VERSION = _read_version()
 
 ICON = os.path.join(PROJECT_DIR, 'machuna.icns')
 ICON_PNG = os.path.join(PROJECT_DIR, 'machuna_final_1024.png')
+# Bundled so Help > MacHuna User Manual works offline and always matches the build.
+MANUAL   = os.path.join(PROJECT_DIR, 'MacHuna_User_Manual.pdf')
 MAIN = os.path.join(PROJECT_DIR, 'machuna.py')
 
 
@@ -58,7 +60,7 @@ a = Analysis(
     [MAIN],
     pathex=[],
     binaries=[(FFMPEG, '.'), (FFPROBE, '.')],
-    datas=[(ICON_PNG, '.')],
+    datas=[(ICON_PNG, '.'), (MANUAL, '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

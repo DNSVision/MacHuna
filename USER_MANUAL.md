@@ -1,4 +1,4 @@
-# MacHuna v1.6.21 — User Manual
+# MacHuna v1.7.0 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -18,11 +18,12 @@ DNS Vision Limited — For Vision Mixers, TDs, and Support Engineers
 8. [TGA Sequences](#8-tga-sequences)
 9. [Audio](#9-audio)
 10. [Video Player](#10-video-player)
-11. [Large File Support (>4GB)](#11-large-file-support-4gb)
-12. [SWS Format Reference](#12-sws-format-reference)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Known Limitations](#14-known-limitations)
-15. [Authors](#15-authors)
+11. [Updates and Getting in Touch](#11-updates-and-getting-in-touch)
+12. [Large File Support (>4GB)](#12-large-file-support-4gb)
+13. [SWS Format Reference](#13-sws-format-reference)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Known Limitations](#15-known-limitations)
+16. [Authors](#16-authors)
 
 ---
 
@@ -219,7 +220,7 @@ Because you are choosing the names, MacHuna checks them before writing a single 
 
 1. **Every item needs a valid, in-range value.** Blank, malformed or out-of-range fields stop the batch.
 2. **No two items may share a value.** The second would otherwise overwrite the first.
-3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 11); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
+3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 12); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
 
 **There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe that is already on a desk is not something to offer behind a confirmation dialog.
 
@@ -261,7 +262,7 @@ When outputting to Kahuna SWS, the following options are available:
 | Option | Description |
 |---|---|
 | **Standard** | Target video standard. 1080p/50 is most common for UK/European broadcast. |
-| **Split >4GB** | On by default. Files over 4GB are split into 2GB FAT32-safe chunks. See Section 11. |
+| **Split >4GB** | On by default. Files over 4GB are split into 2GB FAT32-safe chunks. See Section 12. |
 | **Ignore alpha** | No key plane is written. Output is fill-only, matching K-Watch no-alpha behaviour. Use for fill-only content or when the Kahuna output does not use a downstream keyer. |
 | **Auto play** | Sets the Auto Play flag in the SWS header. The Kahuna begins playback when the clip is loaded. |
 | **Loop play** | Sets the Loop Play flag in the SWS header. The Kahuna loops the clip continuously. |
@@ -521,11 +522,56 @@ Click **Open…** and select a file. For TGA sequences, pick any frame from the 
 
 ---
 
-## 11. Large File Support (>4GB)
+## 11. Updates and Getting in Touch
+
+Everything in this section lives in the **Help** menu, which is new in v1.7.0.
+
+### 11.1 The Help Menu
+
+| Item | What it does |
+|---|---|
+| **MacHuna User Manual** | Opens this document. It is bundled inside the app, so it works with no internet and always matches the version you are running |
+| **Check for Updates…** | Checks now, and always tells you the result |
+| **Report a Problem…** | Opens an email with the details already filled in |
+| **Suggest a Feature…** | The same, for things MacHuna does not do yet |
+
+### 11.2 Update Notifications
+
+A few seconds after MacHuna opens, it reads a small file at `dnsvision.tv/machuna/version.json` in the background to see whether a newer version exists. This never delays the window opening.
+
+**If a newer version is available**, a strip appears across the top of the MacHuna window with the version number, a line about what changed, a **Download** button and a **Dismiss** button. Download opens the download page in your browser; MacHuna never installs anything itself.
+
+**If you are up to date, offline, or the check fails for any reason, nothing at all appears.** No error, no delay, no message. This is deliberate. MacHuna is used in OB trucks and galleries with no route to the internet, and an app that hangs on startup or nags about a network it cannot reach would be worse than useless. The request gives up after five seconds and is forgotten.
+
+**Dismiss** hides the strip for that session. Choosing **Check for Updates…** from the menu shows it again, because asking is a request to be told.
+
+> **What is actually sent: nothing about you.** MacHuna reads one small public file and nothing else. It sends no information about you, your machine, your files or your conversions, and there is no usage tracking of any kind. The request is an ordinary web fetch, the same as opening a page in a browser.
+
+**Check for Updates…** does the same check but always reports back: a newer version, "You're on the latest version", or "Couldn't check for updates just now". Only the automatic check on launch is silent.
+
+### 11.3 Reporting a Problem
+
+**Help ▸ Report a Problem…** opens a panel showing exactly what is about to be shared, then hands it to your own mail app as a draft.
+
+The draft arrives already carrying the things that otherwise take three emails to establish: the MacHuna version, your macOS version, your Mac model, and the standard, output format and source files you had selected. You write what happened in your own words in the spaces at the top.
+
+Three buttons:
+
+- **Open Email** — opens the draft in your mail app. **Nothing is sent until you send it.** You can edit or delete any part of it first, and on a truck with no signal it simply waits in your outbox
+- **Copy Details** — copies the same text to the clipboard, for anyone whose Mac has no mail app set up
+- **Show Log in Finder** — appears when a conversion log exists in your destination folder. That log usually answers the question on its own, so attaching it helps
+
+**Suggest a Feature…** is the same panel with different prompts, for a format, a standard or a naming convention your facility needs.
+
+Both go to **machuna@dnsvision.tv**.
+
+---
+
+## 12. Large File Support (>4GB)
 
 Files larger than 4GB are automatically split into 2GB chunks when **Split >4GB** is enabled (on by default). The split format exactly matches K-Watch output and has been confirmed working on a live Kahuna mainframe.
 
-### 11.1 Split File Structure
+### 12.1 Split File Structure
 
 ```
 201.SWS/
@@ -543,11 +589,11 @@ Files larger than 4GB are automatically split into 2GB chunks when **Split >4GB*
 
 ---
 
-## 12. SWS Format Reference
+## 13. SWS Format Reference
 
 This section is for support engineers and developers. It documents the SWS binary format as reverse-engineered from K-Watch reference files and verified against a live Grass Valley Kahuna mainframe.
 
-### 12.1 File Layout
+### 13.1 File Layout
 
 | Range | Content |
 |---|---|
@@ -556,11 +602,11 @@ This section is for support engineers and developers. It documents the SWS binar
 | `N – M` | Key plane: v210 big-endian, same size as fill plane (absent if `play_count == 0`) |
 | `M – EOF` | Audio data: 16-bit LE PCM, 16ch, 48kHz (absent if audio offset == 0) |
 
-### 12.2 Key Header Fields
+### 13.2 Key Header Fields
 
 | Offset | Type | Description |
 |---|---|---|
-| `0x188` | uint32 BE | Video standard code (OR'd with playback flags — see 12.4) |
+| `0x188` | uint32 BE | Video standard code (OR'd with playback flags — see 13.4) |
 | `0x18C` | uint32 BE | Format variant code (unambiguous fps lookup — all nine values are unique) |
 | `0x190` | uint32 BE | Width in pixels |
 | `0x194` | uint32 BE | Height in pixels (fill plane) |
@@ -573,13 +619,13 @@ This section is for support engineers and developers. It documents the SWS binar
 | `0x1E8` | uint32 BE | Audio data offset ÷ 32 (0 if no audio) |
 | `0x1EC` | uint32 BE | Audio format flag: `0x03000000` if audio present |
 
-### 12.3 Audio Detection
+### 13.3 Audio Detection
 
 Reliable method: `aud_offset (0x1E8) > 0` AND `aud_fmt (0x1EC) == 0x03000000`.
 
 Do not rely on the audio frame size field at `0x1C2`. K-Watch writes `0x1680`, but third-party tools may write different values. MacHuna uses the offset and format flag fields for all audio detection.
 
-### 12.4 Playback Flags
+### 13.4 Playback Flags
 
 Bits 2 (`0x04`) and 3 (`0x08`) of the low byte at `0x188` are OR'd into the video standard code:
 
@@ -588,13 +634,13 @@ Bits 2 (`0x04`) and 3 (`0x08`) of the low byte at `0x188` are OR'd into the vide
 | Auto Play | 2 | `0x04` |
 | Loop Play | 3 | `0x08` |
 
-### 12.5 Interlaced Flag
+### 13.5 Interlaced Flag
 
 Bit 15 (`0x8000`) of `0x188` is set for all interlaced standards. The standard code for all interlaced formats is `0xC923`.
 
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### Kahuna showing black key / no key
 
@@ -650,7 +696,7 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 
 ---
 
-## 14. Known Limitations
+## 15. Known Limitations
 
 - **Apple Silicon only** — Intel Mac builds are not supported
 - **Split .SWS files** cannot be previewed in the Video Player
@@ -663,7 +709,7 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 
 ---
 
-## 15. Authors
+## 16. Authors
 
 David Steer / DNS Vision Limited & Claude (Anthropic)
 

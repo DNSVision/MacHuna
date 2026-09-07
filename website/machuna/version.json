@@ -1,8 +1,8 @@
 {
-  "version": "1.6.21",
+  "version": "1.7.0",
   "released": "2026-09-07",
-  "summary": "A finished conversion now clears the selection, so the next one starts from nothing.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.6.21.zip",
+  "summary": "New Help menu: update notifications on launch, and Report a Problem / Suggest a Feature open a pre-filled email.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.7.0.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "12.0"
 }
