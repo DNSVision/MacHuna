@@ -8,3 +8,6 @@ __pycache__/
 
 # Personal Claude Code overrides (permissions etc.) - not shared
 .claude/settings.local.json
+
+# Website publish staging - built by publish.sh, never committed
+publish/
