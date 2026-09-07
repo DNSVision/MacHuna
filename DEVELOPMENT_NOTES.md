@@ -92,8 +92,18 @@ git push
 - **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
 
 **Open code work (no hardware needed):**
-- ~~**Bespoke per-item output IDs on batch convert**~~ - DONE in v1.6.13. Per-item numbers for Kahuna SWS and Kayenne EIF, per-item 4-character names for Sony TGA, validated for blanks, in-batch duplicates and destination collisions before anything is written. Also lifted the Sony TGA one-clip-per-batch cap when bespoke names are in use.
-- **White key (INVESTIGATE ONLY)** - possible Y-value inversion in `_generate_white_key`; do not change without a hex-compare against a real K-Watch reference. Detail in "Outstanding review items" + "White Key Plane". *(This is the only open code item. Fix 9(b) and Fix 10 were resolved in v1.6.12, bespoke IDs in v1.6.13.)*
+- **White key (INVESTIGATE ONLY)** - possible Y-value inversion in `_generate_white_key`; do not change without a hex-compare against a real K-Watch reference. Detail in "Outstanding review items" + "White Key Plane". **This is the only open code item.** Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, and the Help menu / update check / contact in v1.7.0.
+
+**Distribution - DONE 2026-09-07, no longer open work:**
+- Public download page live at `https://dnsvision.tv/machuna` (Cloudflare Pages/Worker `soft-glade-217b`), app served from R2 bucket `machuna` via `downloads.dnsvision.tv` because Pages caps files at 25 MB.
+- Page source tracked in `website/`; `./publish.sh --upload` builds and uploads, enforcing zip-before-site and refusing to run if the version constant, the built `.app`, `version.json` and the page disagree.
+- In-app update notifications and Report a Problem / Suggest a Feature shipped in v1.7.0.
+- The `~/Desktop/Machuna Share` iCloud folder is **retired**, stale at v1.6.20. Nothing publishes to it. David may delete it once everyone has the new link.
+
+**Small things left over from the distribution work (low priority):**
+- Take a Video Player screenshot for the download page, using `~/Desktop/MacHuna Demo Asset/MacHuna_Wipe.mov` - a synthetic 50fps ProRes 4444 wipe with a real key and audio, generated for exactly this so no client material is involved. The player section was cut when David simplified the page down to downloads, release notes and contact, so this would mean reinstating a section. Only worth doing if the page ever becomes promotional again.
+- Apple Developer certificate (GBP 79/yr) so downloads open without the Gatekeeper warning. **Deferred by David to the SwiftUI rewrite** - do not re-pitch before then.
+- Cloudflare publish token expires **2027-09-07**.
 
 **Future / low priority (no demand yet):**
 - Additional output standards (1080p/29.97, 1080p/30, SD 625/50 & 525/59.94, sF variants, 2160p) - need confirmed K-Watch reference files before re-adding to the dropdown.

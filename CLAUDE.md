@@ -46,12 +46,23 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 8. **Refresh David's own copy** — `rm -rf /Applications/MacHuna.app && cp -R dist/MacHuna.app /Applications/MacHuna.app`. His Dock points at `/Applications/MacHuna.app`, so without this step he keeps launching the previous release while `dist/` quietly moves ahead. This is his private copy and is **not** published; do it on every release.
 
-9. **Sync the public share folder** (`~/Desktop/Machuna Share`) — **only when David explicitly asks.** This is deliberately decoupled from step 8: he wants to run a build himself before the public gets it, so a release does not imply a publish. When he does ask, refresh the three published artefacts. Only these three, nothing else:
-   - `dist/MacHuna.app` → `MACHUNA APP/MacHuna.app` — remove the old bundle first (`rm -rf`), then `cp -R` the fresh build.
-   - `MacHuna_User_Manual.pdf` → `USER MANUAL/MacHuna_User_Manual_vX.X.X.pdf` (versioned filename matching the release). **Delete the previous `MacHuna_User_Manual_v*.pdf`** first so only the current version remains.
-   - `DEVELOPMENT_NOTES.md` → `DEV NOTES/DEVELOPMENT_NOTES.md` (replace).
+9. **Publish to dnsvision.tv** — **only when David explicitly asks.** Deliberately decoupled from step 8: he wants to run a build himself before the public gets it, so a release never implies a publish.
 
-   The share is an iCloud-shared Desktop folder; verify the exact subfolder names before copying (`ls "$HOME/Desktop/Machuna Share"`) in case they change. This publishes to a public download link, so only run it for a finished, pushed release **that David has asked to publish**. The share copy may legitimately sit several versions behind `/Applications` — that is the point, not a fault to correct.
+   ```
+   ./publish.sh --upload
+   ```
+
+   That builds `publish/` and uploads it: the versioned zip to the Cloudflare R2 bucket `machuna`, then the site to the Worker `soft-glade-217b`, then verifies the live URLs. **The zip always goes first** — the page and `version.json` both announce a version, so if they led, MacHuna would tell people about a release the download link could not serve. The script enforces the order and refuses to run if `machuna.py`, the built `.app`, `website/machuna/version.json` and the page disagree about the version.
+
+   **Before publishing, update `website/machuna/version.json`** (version, released, summary, download URL) **and the page at `website/machuna/index.html`** (current-release panel, download link, mailto subject, and a new entry at the top of the release list). The script will refuse if you forget the page — that check exists because it was forgotten once.
+
+   Uses `~/.machuna_publish_token`, a Cloudflare API token scoped to Workers R2 Storage:Edit and Workers Scripts:Edit only. It cannot touch DNS, the domain or email. **Expires 2027-09-07** — if Cloudflare rejects it, the script says so and where to make a new one.
+
+   `./publish.sh` with no arguments builds `publish/` and opens it for a manual drag, if the automation is ever unavailable.
+
+   **Deleting the superseded zip from the bucket is not automated** and stays a human decision; it is the only irreversible step.
+
+   *(The old `~/Desktop/Machuna Share` iCloud folder is retired as of 2026-09-07. It is stale at v1.6.20 and nothing publishes to it. Do not sync it; do not treat its contents as current.)*
 
 ## Architecture notes
 
@@ -59,7 +70,11 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 - Version constant: `VERSION` near top of file — title bar reads from it.
 - SWS format constants (`VIDEO_STANDARDS`, `FORMAT_VARIANTS`, `FORMAT_VARIANT_FPS`, `FORMAT_VARIANT_DISPLAY`) are all keyed by standard name string (e.g. `'1080i50'`).
 - All ffmpeg calls go through `_run_ffmpeg()` so Stop/Cancel can kill them.
-- Build output: `dist/MacHuna.app`. Two other copies exist and must not be confused: `/Applications/MacHuna.app` is David's own copy (what his Dock launches — refresh it every release) and `~/Desktop/Machuna Share/MACHUNA APP/MacHuna.app` is the published one (only on request). The spec sets `bundle_identifier='com.dnsvision.machuna'` and stamps `CFBundleShortVersionString` from `VERSION`, so Get Info tells the copies apart; the pre-v1.6.20 published bundle still identifies itself as `MacHuna` at version 0.0.0.
+- **The update check fetches via `/usr/bin/curl`, never Python's `urllib`/`ssl`, and this must not be "tidied up".** The bundled app ships Homebrew's libssl whose compiled-in `OPENSSLDIR` is `/opt/homebrew/etc/openssl@3` — a path that exists on the M5 and on no recipient's Mac, so Python HTTPS would fail on every machine but this one, *silently*. curl uses the macOS system trust store. Never disable certificate verification: the manifest tells people where to download software from.
+- `UPDATE_MANIFEST_URL` is `https://dnsvision.tv/machuna/version.json`. **It is baked into every shipped copy — never move it.**
+- Build output: `dist/MacHuna.app`. `/Applications/MacHuna.app` is David's own copy (what his Dock launches — refresh it every release, step 8). The published copy is now the zip in the Cloudflare R2 bucket, not a folder on disk. The spec sets `bundle_identifier='com.dnsvision.machuna'` and stamps `CFBundleShortVersionString` from `VERSION`, so ⌘I in Finder tells copies apart; anything reporting 0.0.0 predates v1.6.20. The stale `~/Desktop/Machuna Share` copy is retired and should be ignored.
+- `website/` is the source of the public download page; `publish.sh` builds `publish/` from it and uploads. Neither is part of the shipping app. **`website/` and `publish/site/` are easy to confuse** — `website/` is tracked and has no manual PDF in it; `publish/site/` is the built upload. The manual is copied in from the repo root at publish time so there is only ever one to keep current.
+- The manual PDF is a **build input** as of v1.7.0 (`MacHuna.spec` `datas`), because Help ▸ MacHuna User Manual opens the bundled copy. Regenerate it before building, not after.
 - Tests live in `test_machuna.py` and cover the SWS header builder and all four format constant tables. Update them if `build_sws_header`'s signature changes or any header byte offsets/constants change. The format table tests auto-cover new video standards (they iterate the dicts), so adding a standard doesn't require new test cases — just run the suite to confirm consistency.
 
 ## Key constraints

@@ -4,6 +4,8 @@ A macOS application for converting video and still image files to the Grass Vall
 
 ## Overview
 
+**Download: [dnsvision.tv/machuna](https://dnsvision.tv/machuna)** — current release, release notes and the user manual.
+
 MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley Kayenne `.eif` native clip files.
 
 Converted files are placed into a destination folder, ready to be loaded onto a Kahuna mainframe via USB or network transfer.
@@ -46,6 +48,20 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 
 - macOS 12 or later (Apple Silicon)
 - ffmpeg (bundled in the .app -- no separate installation needed when running the app)
+
+## Publishing a release
+
+The public download page lives in `website/` and is deployed to `dnsvision.tv/machuna`
+(Cloudflare Pages + R2). After a release has been built and pushed:
+
+```bash
+./publish.sh --upload      # builds publish/, uploads the zip then the site, verifies
+./publish.sh               # builds publish/ only, for a manual upload
+```
+
+Update `website/machuna/version.json` and `website/machuna/index.html` for the new
+version first; the script refuses to run if anything disagrees about the version
+number. Publishing is deliberately separate from releasing — building never publishes.
 
 ## Building from Source
 

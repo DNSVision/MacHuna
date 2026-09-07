@@ -75,15 +75,19 @@ All nine standards below have been confirmed against K-Watch reference files and
 
 MacHuna is distributed as a self-contained `.app` bundle. ffmpeg is bundled inside — no separate installation required.
 
+**Download it from [dnsvision.tv/machuna](https://dnsvision.tv/machuna).** That page always carries the current release, the release notes and this manual.
+
 ### 2.1 First Launch
 
-1. Copy `MacHuna.app` to your Applications folder, or run it from any location
-2. On first launch, right-click the app and choose **Open** to bypass macOS Gatekeeper
-3. Subsequent launches work by double-clicking normally
+MacHuna is not signed with an Apple Developer certificate, so the first time you open it macOS says it cannot verify the developer and refuses. This is expected. Three steps, once per machine:
 
-> **NOTE** Gatekeeper may warn that the app is from an unidentified developer. This is expected — MacHuna is not signed with an Apple Developer certificate. Right-click → Open bypasses this check.
+1. Move **MacHuna.app** to your **Applications** folder and double-click it. macOS shows a warning and will not open it. Click **Done**
+2. Open **System Settings ▸ Privacy & Security** and scroll down. There is a line about MacHuna being blocked, with an **Open Anyway** button. Click it and confirm with Touch ID or your password
+3. MacHuna opens, and opens normally from then on
 
-**Checking which version you have (v1.6.20).** Select `MacHuna.app` in Finder and press ⌘I: the version is shown in the Get Info panel, and the title bar shows it once running. Before v1.6.20 the bundle reported its version as 0.0.0, so if Get Info says 0.0.0 you are running v1.6.19 or earlier. This matters if you keep more than one copy of the app.
+> **NOTE** Older instructions said to right-click the app and choose **Open**. That no longer works on current versions of macOS, which removed the shortcut: you have to go through System Settings as above.
+
+**Checking which version you have.** MacHuna's title bar shows it, and **Help ▸ Check for Updates…** tells you whether it is the current release. In Finder, select `MacHuna.app` and press ⌘I: the version is shown in the Get Info panel, and the title bar shows it once running. Before v1.6.20 the bundle reported its version as 0.0.0, so if Get Info says 0.0.0 you are running v1.6.19 or earlier. This matters if you keep more than one copy of the app.
 
 ### 2.2 Settings
 
