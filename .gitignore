@@ -11,3 +11,6 @@ __pycache__/
 
 # Website publish staging - built by publish.sh, never committed
 publish/
+
+# Cloudflare publish token lives in ~, never here - belt and braces
+.machuna_publish_token

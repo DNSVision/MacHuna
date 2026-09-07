@@ -1,0 +1,9 @@
+{
+  // Deploys website/ (via publish/site/) to the existing Worker. The project
+  // was auto-named by Cloudflare's dashboard and cannot be renamed, so this
+  // name must stay exactly as it is or a deploy creates a SECOND site and the
+  // custom domains keep pointing at the old one.
+  "name": "soft-glade-217b",
+  "compatibility_date": "2026-09-07",
+  "assets": { "directory": "./publish/site" }
+}
