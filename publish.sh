@@ -120,8 +120,15 @@ esac
 echo
 echo "Publishing MacHuna v$VERSION"
 echo "  1/2  uploading $ZIP (${ZIP_MB} MB) to R2..."
+# Content-Disposition matters: without it the browser is left to guess what to
+# do with the URL and can simply navigate to a blank page instead of saving the
+# file. The usual fix of putting download= on the link does not work here, as
+# the page and the file are on different subdomains and browsers ignore that
+# attribute across origins.
 npx --yes wrangler@latest r2 object put "$BUCKET/MacHuna-$VERSION.zip" \
-    --file "$ZIP" --content-type application/zip --remote >/dev/null
+    --file "$ZIP" --content-type application/zip \
+    --content-disposition "attachment; filename=\"MacHuna-$VERSION.zip\"" \
+    --remote >/dev/null
 echo "       done."
 
 echo "  2/2  deploying the site..."
