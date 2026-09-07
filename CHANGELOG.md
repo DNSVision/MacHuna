@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.6.21 — 2026-09-07
+
+### Fixed
+- **A finished conversion now clears the selection, so the next one starts from nothing.** Previously only a *bespoke* batch tidied up after itself, and even then it blanked the typed numbers without emptying the file list. After any ordinary conversion the batch stayed loaded, so reopening the folder browser found a non-empty selection, offered **Add to List**, and quietly carried the already-converted files into the next batch to be written a second time. Since items can only ever be *added* to a selection, a list left loaded after a convert was a trap rather than a convenience.
+  - The clear-up now runs after every conversion, bespoke or sequential, and empties the whole selection: files, folders, the detected input type and any typed IDs. A log line reports how many items were cleared.
+  - It also runs after a **cancelled** batch. A half-finished list left loaded is the same trap, and predictable behaviour beats a special case.
+  - The auto-incrementing start number is deliberately untouched, so sequential numbering carries on from where it reached rather than resetting to 1.
+
+---
+
 ## v1.6.20 — 2026-09-03
 
 ### Documentation

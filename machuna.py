@@ -38,7 +38,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.6.20"
+VERSION = "1.6.21"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -4101,6 +4101,14 @@ def launch_gui():
         convert_btn.config(state='disabled')
         _update_output_options()
 
+    def _finish_batch():
+        """Clear the selection once a batch has finished, so the next one starts new."""
+        had = len(_selected_items)
+        _clear_selection()
+        if had:
+            log(f"Selection cleared ({had} item{'s' if had != 1 else ''}). "
+                "Open Files\u2026 to start the next conversion.")
+
     def _on_bespoke_toggle():
         if bespoke_var.get():
             # Blank fields on the way in — nothing is carried over from an
@@ -4767,8 +4775,12 @@ def launch_gui():
             finally:
                 root.after(0, lambda: cancel_btn.config(state='disabled'))
                 root.after(0, lambda: convert_btn.config(state='normal'))
-                if bespoke_map:
-                    root.after(0, _bespoke_reset)
+                # Every conversion ends on a clean slate, bespoke or not. Items
+                # can only ever be added to a selection, so a batch left loaded
+                # after a convert is a trap: the next trip through the folder
+                # browser offers "Add to List", and the already-converted files
+                # silently come along and get written a second time.
+                root.after(0, _finish_batch)
 
         threading.Thread(target=worker, daemon=True).start()
 

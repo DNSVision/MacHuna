@@ -1,4 +1,4 @@
-# MacHuna v1.6.20 — User Manual
+# MacHuna v1.6.21 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -162,6 +162,8 @@ One batch has to be one kind of job, so you can only add items of a compatible t
 
 Cancelling the folder browser leaves your current selection untouched.
 
+> **Every conversion starts from an empty list (v1.6.21).** When a conversion finishes, MacHuna clears the selection for you: the files, the folders and any bespoke IDs. The log says how many items were cleared. So **Add to List** only ever appends to a batch you are still building, and files you have just converted can never be carried into the next batch and written a second time. This applies to a cancelled conversion as well. The Start number is not reset, so sequential numbering carries on from where it reached.
+
 ### 4.3 Numbering
 
 For Kahuna SWS output, the **Start Number** field sets the number assigned to the first output file. Subsequent files are numbered sequentially.
@@ -205,11 +207,11 @@ Bespoke IDs are kept while you are building a batch up, and cleared whenever you
 | **Open Files… → Select** (replaces the list) | Cleared — this is a new list |
 | Ticking the checkbox on | Cleared |
 | Unticking the checkbox | Cleared, **and the file list is emptied too** |
-| Finishing a bespoke conversion | Cleared |
+| Finishing **any** conversion | Cleared, **and the file list is emptied too** |
 
 You therefore always begin a batch from a clean panel, and a number you have already written to disk can never be reused by accident.
 
-> **Unticking the checkbox starts over completely.** It clears the selected files as well as the numbers: the summary returns to "No files selected.", Convert greys out, and the log says so. Since items can only be *added* to a selection, this is the one gesture that empties it. If you only want to swap the list for a different one, use **Open Files… → Select** instead.
+> **Unticking the checkbox starts over completely.** It clears the selected files as well as the numbers: the summary returns to "No files selected.", Convert greys out, and the log says so. It is the way to abandon a batch you are part-way through building; a finished conversion clears itself (see 4.2). If you only want to swap the list for a different one, use **Open Files… → Select** instead.
 
 #### Checks before anything is written
 
