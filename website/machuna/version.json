@@ -1,8 +1,8 @@
 {
-  "version": "1.7.0",
-  "released": "2026-09-07",
-  "summary": "New Help menu: update notifications on launch, and Report a Problem / Suggest a Feature open a pre-filled email.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.7.0.zip",
+  "version": "1.7.1",
+  "released": "2026-09-08",
+  "summary": "MacHuna now says in the log when an output has never been tested on the desk it is for, and warns that Kayenne EIF drops audio.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.7.1.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "12.0"
 }

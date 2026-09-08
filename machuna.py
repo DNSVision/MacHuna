@@ -41,7 +41,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2879,6 +2879,52 @@ class SWSPlayer(tk.Toplevel):
 #  verification. Sony TGA parameters are confirmed for Sony MVS.
 # ─────────────────────────────────────────────────────────────
 
+# Outputs that are written to spec but have never been loaded on the desk they
+# are for. The app said nothing about this until v1.7.1: the UNCONFIRMED notes
+# lived in docstrings and the README, where someone converting a clip at 2am
+# will never see them. Stated once per batch, factually, in the log.
+UNVERIFIED_OUTPUT_NOTES = {
+    "Kayenne EIF":  "Kayenne EIF output has not yet been confirmed on a live Kayenne desk. "
+                    "The format is built from analysis of real Kayenne clips and is believed "
+                    "correct, but no file from MacHuna has been loaded on one. Check the result "
+                    "before relying on it.",
+    "Kayenne TGA":  "Kayenne TGA output has not yet been confirmed on a live Kayenne desk. "
+                    "Frame naming and format are assumed from documentation. Check the result "
+                    "before relying on it.",
+    "Kayenne MOV":  "Kayenne MOV output has not yet been confirmed on a live Kayenne desk. "
+                    "Check the result before relying on it.",
+    "Sony TGA":     "Sony MVS TGA output has not yet been confirmed on a live Sony MVS. The "
+                    "4-character clip naming is assumed from documentation, and 25i field order "
+                    "defaults to TFF with a toggle in the UI if motion looks wrong.",
+}
+
+
+# Not "unverified" but "not written yet". Kayenne carries clip audio in a
+# companion .eaf file whose format is entirely unknown - no real .eaf has ever
+# been hex-analysed - so EIF output is silent, always. Worth saying out loud:
+# it is the one limitation David is certain of, as opposed to merely unproven.
+MISSING_FEATURE_NOTES = {
+    "Kayenne EIF": "EIF output carries no audio. Kayenne stores clip audio in a "
+                   "companion .eaf file whose format has not been worked out yet, "
+                   "so any audio on the source is dropped. This is a missing "
+                   "feature, not a fault.",
+}
+
+
+def missing_feature_note(output_name):
+    """Something known not to work for this output, or None."""
+    return MISSING_FEATURE_NOTES.get(output_name)
+
+
+def unverified_output_note(output_name):
+    """The note for an output that has never been hardware-tested, or None.
+
+    Kahuna SWS is deliberately absent: it is confirmed on a live Kahuna mainframe
+    across all seven standards, so warning about it would be false caution.
+    """
+    return UNVERIFIED_OUTPUT_NOTES.get(output_name)
+
+
 HULA_TARGET_KAYENNE_MOV = "Kayenne MOV"
 HULA_TARGET_KAYENNE_TGA = "Kayenne TGA"   # UNCONFIRMED — awaiting hardware verification
 HULA_TARGET_SONY_TGA    = "Sony TGA"
@@ -4917,6 +4963,14 @@ def launch_gui():
 
         def worker():
             batch_cancel_event.clear()
+            gap = missing_feature_note(out)
+            if gap and _has_audio_clips[0]:
+                log(f"NOTE: {gap}")
+            note = unverified_output_note(out)
+            if note:
+                log(f"NOTE: {note}")
+                log("      If you can test it on a desk, please say so: "
+                    f"{CONTACT_EMAIL}")
             root.after(0, lambda: cancel_btn.config(state='normal'))
             root.after(0, lambda: convert_btn.config(state='disabled'))
             try:

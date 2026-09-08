@@ -106,6 +106,27 @@ footer{padding-block:30px;color:var(--silver-faint)}
 .foot{display:flex;flex-wrap:wrap;gap:8px 26px;justify-content:space-between;
       font-family:var(--f-mono);font-size:12px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ---------- verification status ---------- */
+.status-tbl{overflow-x:auto;border:1px solid var(--edge);border-radius:4px;background:var(--panel)}
+.status-tbl table{border-collapse:collapse;width:100%;min-width:560px}
+.status-tbl th,.status-tbl td{text-align:left;padding:13px 16px;border-bottom:1px solid var(--edge);vertical-align:top}
+.status-tbl thead th{font-family:var(--f-label);font-weight:600;font-size:13px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--silver-dim);border-bottom-color:var(--edge-hot);white-space:nowrap}
+.status-tbl tbody th{font-weight:500;color:var(--hot);font-size:15.5px}
+.status-tbl tbody th span{display:block;font-family:var(--f-mono);font-size:12.5px;
+  color:var(--silver-faint);font-weight:400;margin-top:3px}
+.status-tbl td{font-size:14.5px;color:var(--silver-dim);line-height:1.5}
+.status-tbl tbody tr:last-child th,.status-tbl tbody tr:last-child td{border-bottom:none}
+.pill{display:inline-block;font-family:var(--f-label);font-size:12px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;padding:2px 9px;border-radius:2px;white-space:nowrap}
+.pill.ok{border:1px solid var(--edge-hot);color:var(--arc)}
+.pill.untested{border:1px solid rgba(242,169,59,.5);color:var(--amber)}
+.pill.none{border:1px solid #2c3446;color:var(--silver-faint)}
+.pill.no{border:1px solid rgba(242,169,59,.5);color:var(--amber);background:rgba(242,169,59,.08)}
+.legend{display:flex;flex-direction:column;gap:9px;margin-top:16px}
+.legend div{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;
+  font-size:14.5px;color:var(--silver-dim);line-height:1.5}
 </style>
 
 <header>
@@ -124,12 +145,13 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Current release</p>
     <div class="dl">
       <div class="dl-top">
-        <span class="dl-ver">v1.7.0</span>
-        <span class="dl-date">7 September 2026</span>
+        <span class="dl-ver">v1.7.1</span>
+        <span class="dl-date">8 September 2026</span>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.7.0.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
+        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.7.1.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
         <a class="btn btn-ghost" href="MacHuna_User_Manual.pdf">User manual <span class="sz">PDF</span></a>
+        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.7.1">Contact developer</a>
       </div>
       <div class="req">
         <span><b>macOS 12</b> or later</span>
@@ -150,12 +172,83 @@ footer{padding-block:30px;color:var(--silver-faint)}
     </ol>
   </section>
 
+
+  <section>
+    <p class="eyebrow">Verification status</p>
+    <h2>What has been proven on a desk, and what hasn't</h2>
+    <p class="note" style="margin-bottom:18px">MacHuna is built by one person, with access to some desks and not others. Rather than let you find out the hard way, here is exactly where each output stands. Most of this is a statement about what has and has not been loaded onto real hardware, not about whether it works &mdash; with one exception, audio in EIF, which is genuinely not built.</p>
+
+    <div class="status-tbl">
+      <table>
+        <thead>
+          <tr><th scope="col">Output</th><th scope="col">Status</th><th scope="col">What that means</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Kahuna SWS<span>clips, TGA sequences, stills</span></th>
+            <td><span class="pill ok">Confirmed</span></td>
+            <td>Verified on a live Kahuna mainframe. All seven standards checked byte&#8209;for&#8209;byte against reference files, along with fill and key, 16&#8209;channel audio, the auto and loop play flags, and the &gt;4&nbsp;GB split. This is the path that has been in daily use.</td>
+          </tr>
+          <tr>
+            <th scope="row">Kayenne EIF<span>native Kayenne clips</span></th>
+            <td><span class="pill untested">Untested on a desk</span></td>
+            <td>The format was reverse&#8209;engineered from real Kayenne clips and the header verified byte&#8209;for&#8209;byte. Converting between MOV, SWS, TGA and EIF is expected to work &mdash; it just has not been proven on a desk yet. Check the result before relying on it.</td>
+          </tr>
+          <tr>
+            <th scope="row">Audio in Kayenne EIF<span>the one known gap</span></th>
+            <td><span class="pill no">Not built yet</span></td>
+            <td><b>EIF clips are silent.</b> Kayenne keeps clip audio in a companion <span class="mono">.eaf</span> file, and that format has not been worked out &mdash; nobody has yet got hold of a real one to pick apart. Any audio on your source is dropped when converting to EIF, and MacHuna tells you so in the log. This is the one thing on this page known not to work, rather than merely unproven. <b>If you can send a <span class="mono">.eaf</span> file from a Kayenne clip that has audio, that alone would unblock it.</b></td>
+          </tr>
+          <tr>
+            <th scope="row">Kayenne TGA and MOV</th>
+            <td><span class="pill untested">Untested on a desk</span></td>
+            <td>Coded and routing correctly. Frame naming and format are taken from documentation rather than proven. Interlaced source to MOV is a known gap: ProRes carries no field&#8209;order flag, and whether a Kayenne minds is unknown.</td>
+          </tr>
+          <tr>
+            <th scope="row">Sony MVS TGA</th>
+            <td><span class="pill untested">Untested on a desk</span></td>
+            <td>The four&#8209;character clip naming is assumed from documentation. 25i field order defaults to TFF on an engineer's advice, with a toggle in the app if motion looks wrong on your desk.</td>
+          </tr>
+          <tr>
+            <th scope="row">720p<span>1280&times;720</span></th>
+            <td><span class="pill none">Not available</span></td>
+            <td>Pulled in v1.6.8 because it was quietly producing corrupt files &mdash; the encoding maths is wrong for 1280&#8209;wide output. Shipping something broken seemed worse than shipping nothing. <b>I would like this one back</b>: 720p/59.94 is still on air in the States, so it is a real gap rather than a dead format. It needs a reference file and a desk to check against.</td>
+          </tr>
+          <tr>
+            <th scope="row">SD, sF and 2160p</th>
+            <td><span class="pill none">Not available</span></td>
+            <td>Not there yet, but not ruled out either. A standard only goes in the dropdown once it has been checked against a real reference file, because a wrong one produces files a desk will not read. <b>If you need one of these, get in touch</b> &mdash; with a reference file to work from, adding a standard is straightforward.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <div><span class="pill ok">Confirmed</span><span>Loaded onto the real desk and verified. Use it.</span></div>
+      <div><span class="pill untested">Untested on a desk</span><span>Written to spec and believed correct, but never proven on the hardware it is for. It may work perfectly. Check the output before you trust it on air.</span></div>
+      <div><span class="pill no">Not built yet</span><span>Known not to work. Not a bug &mdash; a feature that does not exist.</span></div>
+      <div><span class="pill none">Not available</span><span>Not in this version. Ask if you need it.</span></div>
+    </div>
+
+    <p class="note" style="margin-top:18px"><b>One more caveat on a confirmed path.</b> Progressive&#8209;to&#8209;interlaced conversion assumes top field first, which is standard for 1080i HD, but this has not been checked on a genuine 1080i Kahuna. If you have one and can look, that is a five&#8209;minute job that would settle it.</p>
+
+    <p class="note" style="margin-top:12px"><b>If you have a Kayenne or a Sony MVS</b>, testing one of the rows above and telling me what happened is the single most useful thing anyone could do for MacHuna. It is how the Kahuna row came to say Confirmed.</p>
+  </section>
+
   <section>
     <p class="eyebrow">What changed</p>
     <div class="rel">
 
       <div class="rel-item current">
-        <div class="rel-v">v1.7.0 <span>7 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-v">v1.7.1 <span>8 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-body">
+          <p class="lead">MacHuna now tells you, in the log, when an output has never been tested on the desk it is for.</p>
+          <p>Converting to Kayenne EIF, Kayenne TGA or MOV, or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
+        </div>
+      </div>
+
+      <div class="rel-item">
+        <div class="rel-v">v1.7.0 <span>7 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">A Help menu, with update notifications and a way to get in touch.</p>
           <p>MacHuna now tells you when a newer version exists: a strip appears at the top of the window with what changed and a Download button. If you are up to date, offline, or the check fails for any reason, <b>nothing appears at all</b> &mdash; it is built for galleries and trucks with no route out. <b>Help &rsaquo; Report a Problem</b> and <b>Suggest a Feature</b> open an email with the version, your macOS and your current settings already filled in; nothing is sent until you send it. The user manual is now inside the app, so it opens with no internet.</p>
@@ -210,8 +303,8 @@ footer{padding-block:30px;color:var(--silver-faint)}
   <section>
     <p class="eyebrow">Problems and requests</p>
     <div class="contact">
-      <p class="note" style="color:var(--silver)">MacHuna is written by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
-      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.7.0">machuna@dnsvision.tv</a>
+      <p class="note" style="color:var(--silver)">MacHuna was vibecoded by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
+      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.7.1">machuna@dnsvision.tv</a>
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>

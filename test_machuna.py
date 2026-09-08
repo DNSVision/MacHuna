@@ -868,3 +868,58 @@ class TestContactEmail(unittest.TestCase):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         self.assertIn(m.VERSION, query['subject'][0])
         self.assertIn('What I would like MacHuna to do:', query['body'][0])
+
+
+# ── unverified-output notices (v1.7.1) ────────────────────────────────────────
+
+class TestUnverifiedOutputNotes(unittest.TestCase):
+
+    def test_kahuna_sws_is_never_warned_about(self):
+        # confirmed on a live Kahuna across all seven standards - warning about
+        # it would be false caution, and would undermine the notices that matter
+        self.assertIsNone(m.unverified_output_note('Kahuna SWS'))
+
+    def test_untested_desk_outputs_are_warned_about(self):
+        for out in ('Kayenne EIF', 'Kayenne TGA', 'Kayenne MOV', 'Sony TGA'):
+            with self.subTest(out=out):
+                note = m.unverified_output_note(out)
+                self.assertIsNotNone(note)
+                self.assertIn('has not yet been confirmed', note)
+
+    def test_unknown_output_is_silent(self):
+        self.assertIsNone(m.unverified_output_note('TGA Sequence'))
+        self.assertIsNone(m.unverified_output_note('something else'))
+        self.assertIsNone(m.unverified_output_note(''))
+
+    def test_every_note_names_the_desk_it_is_about(self):
+        for out, note in m.UNVERIFIED_OUTPUT_NOTES.items():
+            with self.subTest(out=out):
+                self.assertTrue('Kayenne' in note or 'Sony' in note)
+
+    def test_notes_cover_exactly_the_documented_unknowns(self):
+        # keep this in step with "Extraction output hardware unknowns" in
+        # DEVELOPMENT_NOTES.md; if a path is hardware-confirmed, remove it here
+        self.assertEqual(set(m.UNVERIFIED_OUTPUT_NOTES),
+                         {'Kayenne EIF', 'Kayenne TGA', 'Kayenne MOV', 'Sony TGA'})
+
+
+class TestMissingFeatureNotes(unittest.TestCase):
+    """EIF audio is not unproven, it is absent. Kept separate from the
+    hardware-unverified notices so the two are never conflated."""
+
+    def test_eif_audio_is_declared_missing(self):
+        note = m.missing_feature_note('Kayenne EIF')
+        self.assertIsNotNone(note)
+        self.assertIn('no audio', note)
+        self.assertIn('.eaf', note)
+
+    def test_outputs_that_do_carry_audio_say_nothing(self):
+        for out in ('Kahuna SWS', 'Kayenne TGA', 'Sony TGA', 'TGA Sequence'):
+            with self.subTest(out=out):
+                self.assertIsNone(m.missing_feature_note(out))
+
+    def test_missing_is_not_the_same_list_as_unverified(self):
+        # EIF is both: untested on a desk AND missing audio. Everything else
+        # untested is only untested.
+        self.assertEqual(set(m.MISSING_FEATURE_NOTES), {'Kayenne EIF'})
+        self.assertIn('Kayenne EIF', m.UNVERIFIED_OUTPUT_NOTES)

@@ -1,4 +1,4 @@
-# MacHuna v1.7.0 — User Manual
+# MacHuna v1.7.1 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -315,6 +315,8 @@ This applies to video clips, SWS→SWS, and TGA outputs. **A loose TGA image seq
 
 ## 6. Kayenne EIF — Native Kayenne Format
 
+> **EIF clips have no audio (v1.7.1).** Kayenne stores clip audio in a companion `.eaf` file, and that format has not been worked out yet — no real `.eaf` has ever been available to analyse. `has_audio` is always false, so **any audio on your source is dropped when converting to EIF**. MacHuna warns you in the log when the selection contains audio. This is a missing feature rather than a fault, and it is the one thing in this manual that is *known* not to work rather than merely untested. If you can supply a `.eaf` file from a Kayenne clip that has audio, that alone would unblock it: **machuna@dnsvision.tv**.
+
 > **IMPORTANT — Hardware Status**
 > EIF write and conversion paths have been verified correct by analysis against real Kayenne-produced reference files, but **none have been tested on a live Kayenne desk**. MacHuna will warn you before converting to or from EIF. Verify the first import carefully.
 
@@ -553,7 +555,21 @@ A few seconds after MacHuna opens, it reads a small file at `dnsvision.tv/machun
 
 **Check for Updates…** does the same check but always reports back: a newer version, "You're on the latest version", or "Couldn't check for updates just now". Only the automatic check on launch is silent.
 
-### 11.3 Reporting a Problem
+### 11.3 Hardware-Status Notices
+
+Some of MacHuna's outputs have been confirmed on the desk they are for, and some have not. From v1.7.1 the log says which, at the head of every batch.
+
+| Output | What the log says |
+|---|---|
+| **Kahuna SWS** | Nothing. It is confirmed on a live Kahuna mainframe across all seven standards, so a warning would be false caution |
+| **Kayenne EIF, Kayenne TGA, Kayenne MOV, Sony MVS TGA** | A note that the output has never been loaded on that desk, and an invitation to get in touch if you can test it |
+| **Kayenne EIF, when the source has audio** | An additional note that the audio is being dropped — see Section 6 |
+
+These are notes, not errors. Nothing is blocked and no dialog appears. The conversion runs exactly as it always did; you are simply told where it stands so you can decide whether to check the result before trusting it on air.
+
+The full status of every output is also published at [dnsvision.tv/machuna](https://dnsvision.tv/machuna).
+
+### 11.4 Reporting a Problem
 
 **Help ▸ Report a Problem…** opens a panel showing exactly what is about to be shared, then hands it to your own mail app as a draft.
 

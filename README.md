@@ -40,6 +40,8 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - **Help menu** (v1.7.0) — user manual (bundled in the .app, works offline), **Check for Updates…**, **Report a Problem…** and **Suggest a Feature…**
 - **Update notifications** (v1.7.0) — on launch MacHuna reads a small public JSON file at `dnsvision.tv/machuna/version.json` in a background thread with a 5s timeout. A newer version shows a dismissible strip at the top of the window; up to date, offline or any failure shows nothing at all. The manual check from the Help menu always reports its result. The check only reads that file: no information about the user or their files is sent, and there is no telemetry
 - **Contact the developer** (v1.7.0) — Report a Problem / Suggest a Feature open a pre-filled email to `machuna@dnsvision.tv` carrying the version, macOS, Mac model and the selected standard/output/source. A panel shows exactly what will be shared before anything opens, with Copy Details and Show Log in Finder
+- **Hardware-status notices in the log** (v1.7.1) — converting to Kayenne EIF, Kayenne TGA, Kayenne MOV or Sony MVS TGA logs a note that the output has never been confirmed on that desk. Kahuna SWS says nothing, being hardware-confirmed
+- **EIF audio gap stated plainly** (v1.7.1) — Kayenne stores clip audio in a companion `.eaf` file whose format is not yet worked out, so EIF output is silent. Converting a source that has audio now warns that it is being dropped. **This is the one known missing feature, as distinct from the untested-on-hardware paths**
 - Conversion log written to the destination folder after each batch
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required

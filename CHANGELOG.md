@@ -4,6 +4,23 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.7.1 — 2026-09-08
+
+### Added
+- **MacHuna now tells you when an output has never been tested on the desk it is for.** Converting to Kayenne EIF, Kayenne TGA, Kayenne MOV or Sony MVS TGA writes a note into the log at the head of the batch saying so, and invites you to get in touch if you can test it. Until now this was recorded in docstrings, the README and the manual — none of which is in front of someone converting a clip at two in the morning. **Kahuna SWS deliberately says nothing:** it is confirmed on a live Kahuna mainframe across all seven standards, and warning about it would be false caution that teaches people to ignore the notices that matter.
+- **Converting a clip that has audio to Kayenne EIF now warns that the audio is dropped.** This is the one thing MacHuna is *known* not to do, as opposed to merely unproven: Kayenne stores clip audio in a companion `.eaf` file whose format has never been worked out, so `has_audio` is always false and EIF output is silent. There was already a warning for SWS→SWS losing audio, but nothing at all for EIF, so a clip with sound converted to a silent EIF without a word. The note only appears when the selection actually contains audio.
+
+### Notes for the record
+- "Never proven on hardware" and "not built yet" are kept as separate lists in the code (`UNVERIFIED_OUTPUT_NOTES` and `MISSING_FEATURE_NOTES`) with a test asserting they do not merge. They are different claims and blurring them would make both less useful.
+- A test asserts the unverified list matches the documented unknowns exactly, so when a path is finally confirmed on a desk the suite will flag the stale notice.
+- 123 tests, passing under both pytest and unittest.
+
+### Documentation
+- The download page gains a **Verification status** section: what is confirmed on hardware, what is written but untested, what is not built, and what is deliberately absent — with the EIF audio gap called out in its own right and an explicit ask for a real `.eaf` file, which is the one thing that would unblock it. The withdrawn 720p and absent SD/sF/2160p standards are now framed as open invitations rather than policy: they need a reference file and someone who needs them.
+- A **Contact developer** button now sits beside Download and User manual, so someone with a problem does not have to go looking.
+
+---
+
 ## v1.7.0 — 2026-09-07
 
 ### Added
