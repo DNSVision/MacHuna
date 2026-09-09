@@ -152,8 +152,14 @@ check() {  # url, expected-substring, label
   FAIL=1
 }
 code() {   # url, label
+  # HEAD, not GET: the app zip is 34 MB and downloading all of it just to learn
+  # the link works timed out and reported a false failure. Also note the code
+  # is captured on its own - a "|| echo 000" fallback concatenates with curl's
+  # own output and produces nonsense like "200000".
+  local c
   for _ in $(seq 1 12); do
-    c=$(curl -sS -m 30 -o /dev/null -w '%{http_code}' -L "$1" 2>/dev/null || echo 000)
+    c=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' -I -L "$1" 2>/dev/null)
+    [ -n "$c" ] || c=000
     if [ "$c" = "200" ]; then echo "  ok    $2"; return; fi
     sleep 5
   done
