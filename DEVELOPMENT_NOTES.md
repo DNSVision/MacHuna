@@ -358,11 +358,15 @@ Worked out from six real files in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`–`000
 | `0x62` | uint16 | Always `1920`. Unknown |
 | `0x64` | uint32 | **Sample count** |
 | `0x6A` | uint32 | **Frame count** — matches the paired `.eif` header exactly |
-| `0x80` | — | Audio begins: `sample_count × 8 channels × 16-bit little-endian`, 48 kHz |
+| `0x80` | — | Audio begins: `sample_count × 8 channels × 16-bit **big**-endian`, 48 kHz |
 
 `samples × 8 × 2 + 128 == file size` holds for all six, and the audio duration equals the video duration exactly in each case (27, 34 and 37 frame clips). Content confirmed as real audio: peak 32749, RMS ~10895, ~98k zero crossings. `~/Desktop/eaf_0003_ch1-2.wav` was extracted as audible proof.
 
-**Still unknown, and the only part needing a desk:** which channels carry programme audio. `0003` uses channels 1, 2, 3, 4, 6 and 8; `0022` only 4, 6 and 8 at round levels, so these are test tones rather than a fixed convention. Needed for *writing*; reading is solved.
+**Corrected 2026-09-09:** the body is **big-endian**, not little-endian. The first analysis said little-endian; David listened to the extracted audio and said it was wrong. Found by measuring sample-to-sample correlation across every plausible layout — real audio correlates at ~0.99, any wrong endianness, offset or channel count collapses to ~0, and only big-endian scores. Consistent with the rest of the format: the `.eif` video planes are big-endian v210 too. Read correctly, David confirms the audio "sounds very much like the sound effect that went with that wipe".
+
+**Channel layout:** programme audio is on **channels 1 and 3** (zero-indexed), correlating at 0.99 and 1.00. Channels 0 and 2 carry near-full-scale spikes with no correlation — not audio, contents unknown. Channels 4-7 are silent. A 32-bit reading was ruled out: the supposed low words are not uniformly distributed, and a 32-bit reconstruction is spectrally identical to the 16-bit read.
+
+**Still unknown, and needing a desk:** which channels a Kayenne *treats* as programme audio when writing, and what channels 0 and 2 are for. Reading is solved.
 
 **Lesson:** a documented blocker is not evidence. Check before repeating one.
 
