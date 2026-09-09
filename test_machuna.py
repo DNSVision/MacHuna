@@ -955,3 +955,108 @@ class TestUsableGeometry(unittest.TestCase):
     def test_the_default_clears_the_minimum(self):
         self.assertGreaterEqual(m.WINDOW_DEFAULT_W, m.WINDOW_MIN_W)
         self.assertGreaterEqual(m.WINDOW_DEFAULT_H, m.WINDOW_MIN_H)
+
+
+# ── structural guards ─────────────────────────────────────────────────────────
+#
+# These read machuna.py's own syntax tree. They exist because of a real bug: the
+# per-row "done" marking was wired into only one of four conversion paths, so
+# three of them converted perfectly and then said nothing. A behavioural test
+# caught it eventually; these would have caught it immediately, and will catch
+# the next path somebody adds.
+#
+# They assert that a call EXISTS, not that it is correct - a weak claim, but the
+# one that the expensive bugs have actually violated.
+
+def _launch_gui_tree():
+    import ast
+    src = Path(__file__).with_name('machuna.py').read_text()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.FunctionDef) and node.name == 'launch_gui':
+            return node
+    raise AssertionError('launch_gui not found in machuna.py')
+
+
+def _nested_functions(tree):
+    import ast
+    return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+
+def _calls_within(node):
+    import ast
+    names = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            f = sub.func
+            if isinstance(f, ast.Name):
+                names.add(f.id)
+            elif isinstance(f, ast.Attribute):
+                names.add(f.attr)
+        # a call passed to root.after as a lambda still counts
+        elif isinstance(sub, ast.Name):
+            names.add(sub.id)
+    return names
+
+
+class TestEveryConversionPathReportsBack(unittest.TestCase):
+    """Every runner must mark its rows, or a conversion succeeds in silence."""
+
+    RUNNERS = ('_run_to_sws', '_run_to_eif', '_run_to_tga_seq', '_run_from_sws')
+
+    def setUp(self):
+        self.fns = _nested_functions(_launch_gui_tree())
+
+    def test_all_four_runners_exist(self):
+        for name in self.RUNNERS:
+            with self.subTest(runner=name):
+                self.assertIn(name, self.fns)
+
+    def test_every_runner_marks_its_rows(self):
+        for name in self.RUNNERS:
+            with self.subTest(runner=name):
+                self.assertIn('_mark_row', _calls_within(self.fns[name]),
+                              f'{name} converts without ever marking a row done - '
+                              f'the conversion works and the list stays blank')
+
+    def test_every_runner_writes_a_batch_log(self):
+        for name in self.RUNNERS:
+            if name == '_run_from_sws':
+                continue          # hands the whole batch to _hula_run_batch
+            with self.subTest(runner=name):
+                self.assertIn('_write_batch_log', _calls_within(self.fns[name]))
+
+    def test_no_runner_still_uses_the_removed_numbering_controls(self):
+        gone = ('start_num_var', 'use_source_num_var', 'eif_slot_var', 'bespoke_var')
+        for name in self.RUNNERS:
+            names = _calls_within(self.fns[name])
+            for dead in gone:
+                with self.subTest(runner=name, name=dead):
+                    self.assertNotIn(dead, names)
+
+
+class TestRemovedCodeStaysRemoved(unittest.TestCase):
+    """Things deleted on purpose, which a well-meaning edit could reintroduce."""
+
+    def setUp(self):
+        self.src = Path(__file__).with_name('machuna.py').read_text()
+
+    def test_parse_filename_is_gone(self):
+        # removed with "Use source file number"; its only consumer
+        self.assertNotIn('def parse_filename', self.src)
+
+    def test_no_source_num_on_scanned_items(self):
+        self.assertNotIn("'source_num'", self.src)
+
+    def test_update_check_does_not_use_pythons_https(self):
+        # the bundled app carries Homebrew's libssl, whose CA path exists on no
+        # other Mac - Python HTTPS would fail everywhere but the build machine,
+        # silently. See fetch_update_manifest().
+        for banned in ('urllib.request', 'urlopen', 'http.client', 'requests.get'):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, self.src)
+
+    def test_certificate_verification_is_never_disabled(self):
+        for banned in ('_create_unverified_context', 'CERT_NONE',
+                       'verify=False', '--insecure', 'check_hostname = False'):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, self.src)

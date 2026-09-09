@@ -42,6 +42,8 @@ Before building, run the test suite and confirm it passes:
 /opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
 ```
 
+It must also pass under plain `unittest` (`python3.12 -m unittest test_machuna`) — the file is `unittest.TestCase` throughout and imports the module as `m`. See **Testing discipline** below before writing new tests; a green suite has twice hidden a feature that did not work.
+
 Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 8. **Refresh David's own copy** — `rm -rf /Applications/MacHuna.app && cp -R dist/MacHuna.app /Applications/MacHuna.app`. His Dock points at `/Applications/MacHuna.app`, so without this step he keeps launching the previous release while `dist/` quietly moves ahead. This is his private copy and is **not** published; do it on every release.
@@ -76,6 +78,26 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 - `website/` is the source of the public download page; `publish.sh` builds `publish/` from it and uploads. Neither is part of the shipping app. **`website/` and `publish/site/` are easy to confuse** — `website/` is tracked and has no manual PDF in it; `publish/site/` is the built upload. The manual is copied in from the repo root at publish time so there is only ever one to keep current.
 - The manual PDF is a **build input** as of v1.7.0 (`MacHuna.spec` `datas`), because Help ▸ MacHuna User Manual opens the bundled copy. Regenerate it before building, not after.
 - Tests live in `test_machuna.py` and cover the SWS header builder and all four format constant tables. Update them if `build_sws_header`'s signature changes or any header byte offsets/constants change. The format table tests auto-cover new video standards (they iterate the dicts), so adding a standard doesn't require new test cases — just run the suite to confirm consistency.
+
+## Testing discipline
+
+Three times on 2026-09-09 a test passed while the feature did not work. Every one had the same shape: **the test asserted on the implementation instead of the observable outcome.** Row statuses were set by hand rather than by converting, and window growth was checked by reading `pack_info()` rather than by resizing and measuring. The features were inert and the suite was green.
+
+Four rules, in order of value:
+
+1. **Make it fail first.** Write the test, run it *before* the fix, and confirm it fails. If it passes before the fix exists, the test is worthless — that is precisely what happened with "the list grows with the window". This costs one extra run and would have caught all three.
+
+2. **Assert on outcomes, never on configuration.** Banned in tests: `pack_info()`, `cget()` on layout options, and setting any state that production code is supposed to set. Instead: measure pixel positions and sizes, read the text a widget actually displays, check files on disk, read back a written header. If the test would still pass with the feature disconnected, it is testing nothing.
+
+3. **Exercise the dispatcher, not one branch.** The per-row "done" marking was wired into one of four conversion paths; three converted fine and said nothing. Where a feature has several code paths, drive the real entry point — or add a structural guard (below).
+
+4. **Structural guards for things that must not silently regress.** `test_machuna.py` parses `machuna.py`'s own syntax tree to assert that every `_run_to_*` marks its rows and writes a batch log, that deleted code stays deleted, and that the update check never reaches for Python's HTTPS or disables certificate verification. They assert a call *exists*, which is a weak claim, but it is the one the expensive bugs have actually violated. **Verify a new guard by deliberately breaking the rule and watching it fail** — an unfalsified guard is decoration.
+
+**Verifying GUI work.** Unit tests cannot reach code inside `launch_gui()`'s closures. Drive the real app instead: patch `tkinter.Tk` to capture the root, walk back up the stack from a patched `Misc.mainloop` to grab `launch_gui`'s locals, schedule a driver with `after()`, then measure real widgets. Three such drivers were written on 2026-09-09 (interaction, pixel alignment, and a real end-to-end conversion) and each found something the unit tests could not. Wrap the driver body in try/except/finally with a guaranteed `destroy()`, or a failure leaves the window open forever. Note macOS screen-recording and accessibility permissions are **not** granted, so `screencapture` and `osascript` UI reads do not work — verify through Tk geometry instead.
+
+**Back up `~/.kwatch_settings.json` before driving the GUI**, and have the driver set the state it depends on rather than inheriting David's saved settings — a driver once failed because he had left a checkbox ticked.
+
+**None of this makes the suite infallible.** The same person writes the code and the test, so they agree with each other perfectly when the misunderstanding is upstream. David found the misaligned scrollbar by looking at the app. That remains the backstop.
 
 ## Key constraints
 
