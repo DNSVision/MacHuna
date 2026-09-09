@@ -41,7 +41,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3965,7 +3965,10 @@ def launch_gui():
 
     # ── Convert section ──
     frm_convert = ttk.LabelFrame(root, text="Convert")
-    frm_convert.pack(fill='x', **pad)
+    # Takes the window's spare height so the item list inside it can grow. The
+    # log below keeps its five lines (fill='x'), so resizing the window makes
+    # the list taller rather than the log.
+    frm_convert.pack(fill='both', expand=True, **pad)
 
     # Top row: Open Files + summary + Output dropdown
     frm_row_open = tk.Frame(frm_convert)
@@ -4049,10 +4052,14 @@ def launch_gui():
     bespoke_canvas.configure(yscrollcommand=bespoke_sb.set)
     bespoke_inner.bind('<Configure>', lambda e: bespoke_canvas.configure(
         scrollregion=bespoke_canvas.bbox('all')))
-    # Canvas is sized to its content in _bespoke_rebuild rather than stretched,
-    # so the scrollbar sits immediately beside the list instead of way out at
-    # the right-hand edge of the window.
-    bespoke_canvas.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=(0, 4))
+    # Canvas is sized to its content width in _bespoke_rebuild rather than
+    # stretched, so the scrollbar sits immediately beside the list instead of
+    # way out at the right-hand edge of the window. It grows *vertically* with
+    # the window: the surrounding frame expands, and fill='y' makes the canvas
+    # take that height. It must NOT expand itself - pack centres a widget in
+    # any extra space it is given unless told to fill it, which is what pushed
+    # the scrollbar out to the window edge in v1.8.0.
+    bespoke_canvas.pack(side='left', fill='y', padx=(8, 0), pady=(0, 4))
     bespoke_sb.pack(side='left', fill='y', padx=(2, 0), pady=(0, 4))
     bespoke_canvas.bind('<Enter>', lambda e: bespoke_canvas.bind_all(
         '<MouseWheel>', lambda ev: bespoke_canvas.yview_scroll(-ev.delta, 'units')))

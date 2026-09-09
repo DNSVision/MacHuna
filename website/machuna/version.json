@@ -1,8 +1,8 @@
 {
-  "version": "1.8.0",
+  "version": "1.8.1",
   "released": "2026-09-09",
-  "summary": "Batch numbering is now a list: every file shows what it will be called before you convert, converted rows lock with a tick, and you can remove rows or renumber on the fly.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.8.0.zip",
+  "summary": "The item list now grows when you make the window taller, and the scrollbar sits beside the list rather than at the window edge.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.8.1.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "12.0"
 }

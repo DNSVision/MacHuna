@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.8.1 — 2026-09-09
+
+### Fixed
+- **The item list now actually grows when you make the window taller.** v1.8.0 claimed this and did not do it: `frm_convert` was packed without vertical expansion, so nothing inside it could take the window's spare height and the list stayed at eight rows however large the window got. The list now goes from roughly 250px to 400px on a taller window while the log keeps its five lines.
+- **The scrollbar sits beside the list again**, rather than out at the right-hand edge of the window. Making the list canvas expand horizontally in v1.8.0 undid a deliberate v1.6.14 fix — pack centres a widget in any extra space unless told to fill it, which left a gap between the list and its own scrollbar. Spotted by David.
+
+### Notes for the record
+- The v1.8.0 test for this inspected pack options rather than measuring anything, so it passed while the feature did not work. It now resizes the window and measures the list, which is how both faults were found.
+
+---
+
 ## v1.8.0 — 2026-09-09
 
 ### Changed — the numbering controls are now a list
