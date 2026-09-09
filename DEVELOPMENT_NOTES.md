@@ -87,7 +87,7 @@ git push
 > **This is the single authoritative list of open work.** `README.md` and `HANDOVER_NOTES.md` point here rather than keeping their own copies. The detailed sections lower down (EIF Roadmap, Outstanding review items, Extraction output hardware unknowns, Future Considerations) hold the specifics; this is the index. Reconcile it against git and the code when resuming - see the Session Anchor in `HANDOVER_NOTES.md`.
 
 **Blocked on hardware (the gate before "feature-complete"):**
-- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. Unblocks: EIF write confirmation, 25fps movi tag, `.eaf` audio, tail length, clip-name/slot rules, interlaced-EIF storage.
+- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. Unblocks: EIF write confirmation, 25fps movi tag, tail length, clip-name/slot rules, interlaced-EIF storage. **`.eaf` audio is no longer on this list** - the format was decoded on 2026-09-09 from David's own test files (see below); only the channel mapping still needs the desk.
 - **Extraction outputs on real desks** - Kayenne TGA/MOV, Sony TGA clip naming, Sony MVS 25i field order, interlaced-SWS to MOV field metadata, MOV to TGA. See "Extraction output hardware unknowns" below.
 - **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
 
@@ -174,14 +174,15 @@ The single most important outstanding work in the project. When a live Kayenne C
 - [ ] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
 - [ ] **Capture a real 25fps `.eif`** produced by the Kayenne itself → hex-compare offset 0x8DC to verify or correct the assumed `b'RIFFRIFF'` movi chunk tag (the 50fps value is already confirmed).
 - [ ] **Capture a real interlaced `.eif`**, or otherwise establish how the desk stores originally-interlaced content (50p progressive, 25p field-pairs, or other). Settles the "1080i in EIF" unknown and tells us which write path's interlaced handling is correct.
-- [ ] **Capture a real `.eaf`** companion file from a clip that has audio → the audio format is entirely unknown; this file is the prerequisite before any EIF-audio code can be written.
+- [x] ~~**Capture a real `.eaf`**~~ - **DONE, and it never needed the desk.** Six real `.eaf` files were already on David's Mac in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`-`0007`, `0022`). Found 2026-09-09 by searching the machine rather than re-reading the note that said they were unobtainable.
+- [ ] **Confirm the `.eaf` channel mapping** - the one part still needing a desk or an operator. `0003.eaf` carries audio on channels 1, 2, 3, 4, 6 and 8; `0022.eaf` only on 4, 6 and 8 at round levels (test tones). Which channels a Kayenne treats as programme audio is unknown, and it is needed before MacHuna can *write* an `.eaf`. Reading is already solved.
 - [ ] **Tail length** — obtain one reference file with frame_count < 36 and one with ≥ 36 → confirm whether the desk cares about the 128 vs 140-byte tail.
 - [ ] **Clip name / slot rules** — try importing with a clip name (0x004) that does not match the filename stem, and with non-contiguous / non-`0001` start slots → learn whether the desk enforces either.
 - [ ] **While a desk is available, verify the other unconfirmed extraction outputs too:** EIF→SWS (lossless), EIF→Kayenne TGA, EIF→Sony TGA, Kayenne MOV/TGA output, interlaced-SWS→MOV field-order metadata, and Sony MVS 25i field order. See the two hardware-unknowns tables above.
 
 #### Priority 2 — code follow-ups, unlocked by the test results (do NOT build speculatively)
 
-- **EIF audio (.eaf)** — once a real `.eaf` is hex-analysed, implement read and write.
+- **EIF audio (.eaf)** — the format is decoded (below). **Reading can be implemented now**; writing needs the channel-mapping answer.
 - **Interlaced EIF reconciliation** — once the desk's interlaced storage is known, fix whichever of `convert_clip_to_eif` (currently passes interlaced through untouched) or `convert_tga_seq_to_eif` (deinterlaces to 50p via yadif) is wrong, so the two paths agree.
 - **25fps movi tag** — correct the 8 bytes at 0x8DC if the hex compare shows the `b'RIFFRIFF'` assumption is wrong.
 - **Tail length** — extend the tail to 140 bytes for all files if the desk turns out to be strict about it.
@@ -345,6 +346,26 @@ This is implemented in `_eif_frame_to_v210be(u0, u1, u2)`. The round-trip is los
 | `_hula_convert_eif_to_tga(...)` | EIF → Kayenne TGA or Sony TGA (progressive) |
 | `_hula_convert_eif_to_tga_interlaced(...)` | EIF → interlaced TGA (field-woven pairs) |
 
+### EAF format (Kayenne clip audio) — decoded 2026-09-09
+
+Worked out from six real files in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`–`0007`, `0022`), verified with exact byte accounting on every one. **The long-standing note that no `.eaf` had ever been obtained was simply wrong** — they had been on the machine all along, and nobody looked.
+
+| Offset | Type | Meaning |
+|---|---|---|
+| `0x00` | uint32 | Always `285,365` across all six files. Purpose unknown |
+| `0x58` | 8 bytes | Looks like a Windows FILETIME |
+| `0x60` | uint16 | Always `1156`. Unknown |
+| `0x62` | uint16 | Always `1920`. Unknown |
+| `0x64` | uint32 | **Sample count** |
+| `0x6A` | uint32 | **Frame count** — matches the paired `.eif` header exactly |
+| `0x80` | — | Audio begins: `sample_count × 8 channels × 16-bit little-endian`, 48 kHz |
+
+`samples × 8 × 2 + 128 == file size` holds for all six, and the audio duration equals the video duration exactly in each case (27, 34 and 37 frame clips). Content confirmed as real audio: peak 32749, RMS ~10895, ~98k zero crossings. `~/Desktop/eaf_0003_ch1-2.wav` was extracted as audible proof.
+
+**Still unknown, and the only part needing a desk:** which channels carry programme audio. `0003` uses channels 1, 2, 3, 4, 6 and 8; `0022` only 4, 6 and 8 at round levels, so these are test tones rather than a fixed convention. Needed for *writing*; reading is solved.
+
+**Lesson:** a documented blocker is not evidence. Check before repeating one.
+
 ### EIF Hardware Unknowns and Roadmap
 
 All EIF write paths are coded and verified against real Kayenne reference files by hex analysis. None have been tested on live Kayenne hardware. The following items need hardware or reference-file access to resolve:
@@ -358,7 +379,7 @@ All EIF write paths are coded and verified against real Kayenne reference files 
 | **EIF→Sony TGA** | UNCONFIRMED | Coded and working by analysis; never imported on a Sony MVS. |
 | **EIF→Kahuna SWS (lossless)** | UNCONFIRMED | Round-trip verified in software (Video Player confirms correct output). Unconfirmed on Kahuna hardware. |
 | **EIF→Kayenne MOV** | NOT IMPLEMENTED | No EIF→MOV path exists. Would require decoding EIF frames and encoding to ProRes 4444 via ffmpeg. |
-| **EIF audio (.eaf companion files)** | NOT IMPLEMENTED | Kayenne companion `.eaf` files are suspected to carry audio. `has_audio` is always False. Audio format entirely unknown. Needs hex analysis of a real `.eaf` file. |
+| **EIF audio (.eaf companion files)** | NOT IMPLEMENTED, but **no longer blocked** | Format decoded 2026-09-09 from six real files. `has_audio` is still always False and EIF output is still silent — the code is simply not written yet. See "EAF format" below. |
 | **1080i content in EIF** | UNKNOWN | EIF is always stored progressively. How a Kayenne desk handles originally-interlaced content (whether it stores as 50fps progressive, 25fps field-pairs, or some other format) is unknown. This affects the interlaced TGA→EIF path (currently uses frame duplication). |
 | **Embedded clip name on Kayenne import** | UNKNOWN | Whether the Kayenne reads or validates the clip name at header offset 0x004 is unconfirmed. MacHuna writes the source filename stem. If Kayenne enforces specific naming, the clip name field may need to match the slot filename stem. |
 | **Slot number range and contiguity** | UNKNOWN | Whether the Kayenne requires EIF clips to be numbered from a specific starting slot (e.g. 0001) or requires contiguous numbers is unconfirmed. MacHuna uses the slot spinbox value as the starting number. |
@@ -368,7 +389,7 @@ All EIF write paths are coded and verified against real Kayenne reference files 
 2. Copy to a USB drive formatted correctly for Kayenne
 3. Import on a live Kayenne ClipStore / Image Store
 4. Verify: file appears, frame count correct, playback correct speed, colours correct, key correct
-5. If clips with audio need testing: source a real `.eaf` file from a Kayenne operator for hex analysis before implementing
+5. `.eaf` files are no longer needed — six are already held. What the desk is needed for is the **channel mapping**: which of the eight channels a Kayenne treats as programme audio
 
 ### Standalone repo (archived)
 
