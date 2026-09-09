@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `5d40505` - 2026-09-09. **v1.8.0 is built, released, published and live.**
+**Understanding baseline:** commit `8d8351c` - 2026-09-09. **v1.8.1 is built, released, published and live.**
+
+**v1.8.1 fixed two faults in the v1.8.0 list.** The scrollbar had moved out to the frame edge (a regression against a deliberate v1.6.14 fix - pack centres a widget in extra space unless told to fill it), and chasing that found the list **never grew with the window at all**: `frm_convert` was packed `fill='x'` with no expansion, so nothing inside it could take spare height. Both v1.8.0 tests for this inspected *pack options* rather than measuring, so they passed while the feature did not work - the same shape of mistake as the row-status test. **Measure the thing, do not inspect the configuration.**
 
 **v1.8.0 replaced the batch numbering controls with an item list.** Numbering used to be invisible: you set a start number, pressed Convert, and found out what each file had been called from the log afterwards. The bespoke panel (v1.6.13) had accidentally solved that, so it is now the permanent view. **Start number, Start slot and "Use source file number" are gone**, along with `parse_filename()` whose only consumer was the last of those. Every item gets a row showing its output name before anything is written, for *every* output - Kayenne TGA and TGA Sequence rows are read-only and say "from source". **"Number sequentially" is off by default** (David's workflow is more often bespoke); ticking it seeds the first row and fills the rest at once. **Numbers never carry between batches** - the old auto-advance only made sense while they were invisible, since wipes rarely stay in the destination.
 
