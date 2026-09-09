@@ -4,6 +4,37 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.8.0 — 2026-09-09
+
+### Changed — the numbering controls are now a list
+Batch numbering used to be invisible. You set a start number, pressed Convert, and found out what each file had been called by reading the log afterwards. The bespoke panel, added in v1.6.13 for typing your own numbers, accidentally solved a problem it was not built for: it showed you the answer before you committed. **That panel is now the permanent view.**
+
+- **Every selected item gets a row**, showing what it will be called before anything is written — `alpha.mov → 42.SWS`. This applies to every output, not just the numbered ones: Kayenne TGA and TGA Sequence rows are read-only and show that they are named from the source, which was previously just as much of a mystery.
+- **"Number sequentially"** replaces the old Start number box. Ticking it puts a number in the first row and fills the rest instantly, so you *see* the first row driving the others rather than being told. Off by default: typing your own numbers is the more common case.
+- **Numbers no longer carry forward between batches.** The old Start number auto-advanced after every conversion and persisted between sessions, which only made sense when the numbers were invisible — wipes rarely stay in the destination folder, so continuing from where the last batch finished was noise. Numbering starts from 1 unless you say otherwise, and the destination collision check still catches the rare case where something is already there.
+- **Converted rows lock and show `✓ done`**, or `✗` and the reason if they failed. The list stays on screen as the record of the session. **Convert only ever runs rows without a status**, so nothing is ever converted twice — the same guarantee v1.6.21 got by emptying the list, kept without throwing the record away.
+- **A ✕ on each row** removes one item. With sequential numbering on, the rows below close the gap; with your own numbers typed, they keep them. Converted rows never renumber — the file they wrote already exists.
+- **Clear All**, below the list, empties everything back to an empty list.
+- **Adding files continues the sequence.** Add three more to a batch numbered 42-44 and they come out 45, 46, 47, counting converted rows too.
+
+### Removed
+- **"Use source file number"** — a hangover from when files arrived pre-numbered for K‑Watch. MacHuna takes any filename, so pre-numbered sources are rare, and the option was a third invisible source of numbering. Its only consumer was `parse_filename()`, which is removed with it.
+- **The Start number and Start slot boxes**, replaced by the list.
+
+### Changed
+- **The log is five lines instead of taking the whole window**, and the list takes that height instead — so the list grows when you resize the window rather than being stuck at a fixed number of rows. The rows now carry the outcome, so the log is for watching progress and reading a failure.
+- **The hardware-status notices are written into the conversion log file**, not just the on-screen log, so the permanent record on disk says when an output has never been tested on a desk.
+- **"Open Files…" becomes "Add Files…"** once the list has something in it.
+- **"already in use" now reads "already in destination"** — the old wording never said where.
+
+### Fixed
+- **The default window was too small to show its own log.** It was `1085x460`, set before the list existed, while the content needs about 695px of height. New default `1120x740`, minimum raised to `820x620`. **A saved window size that is too small is now grown on update** rather than honoured: the settings file outlives an update, so every existing user would otherwise have opened a window too small to use and had to resize it once without knowing why. A window you have deliberately made larger is left alone, and its position on screen is preserved either way.
+
+### Known limitation
+- **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one would apply the tick to both. Not thought to be a real workflow, and the old interface made mixed batches awkward enough that it rarely arose, but the list makes them easy to build. Recorded rather than fixed.
+
+---
+
 ## v1.7.1 — 2026-09-08
 
 ### Added

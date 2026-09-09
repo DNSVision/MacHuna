@@ -1,4 +1,4 @@
-# MacHuna v1.7.1 — User Manual
+# MacHuna v1.8.0 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -108,10 +108,12 @@ The MacHuna window has three rows:
 | Row | Purpose |
 |---|---|
 | **Destination Folder** | Where converted files are written |
-| **Convert** | Open files, choose output format, convert |
-| **Log** | Conversion progress and errors |
+| **Convert** | Add files, choose output format, set what each one is called, convert |
+| **Log** | Conversion progress and errors, five lines |
 
 The Convert row adapts automatically based on what files you open. MacHuna detects the input type and shows only the controls that are relevant.
+
+The **item list** in the middle of the Convert row takes whatever height the window has spare, so making the window taller shows more rows at once. The log stays at five lines: the rows themselves now carry the outcome of a conversion, and the full record is written to the log file in your Destination Folder.
 
 ---
 
@@ -120,11 +122,12 @@ The Convert row adapts automatically based on what files you open. MacHuna detec
 The workflow is the same regardless of what you are converting or what you are converting it to:
 
 1. Set your **Destination Folder**
-2. Click **Open Files…** and select a folder
-3. MacHuna scans the folder, detects the input type, and populates the file list
+2. Click **Open Files…** and select a folder. Once something is loaded the button reads **Add Files…**, since you are usually adding to the list rather than starting again
+3. MacHuna scans the folder, detects the input type, and populates the item list
 4. Choose your **Output** format from the dropdown
-5. Set any options that appear (standard, clip name, field order, etc.)
-6. Click **Convert**
+5. Set any options that appear (standard, field order, etc.)
+6. **Give each row a number or name**, or tick **Number sequentially** — see Section 4.4
+7. Click **Convert**
 
 A conversion log is written to the Destination Folder when the batch completes.
 
@@ -167,93 +170,65 @@ One batch has to be one kind of job, so you can only add items of a compatible t
 
 Cancelling the folder browser leaves your current selection untouched.
 
-> **Every conversion starts from an empty list (v1.6.21).** When a conversion finishes, MacHuna clears the selection for you: the files, the folders and any bespoke IDs. The log says how many items were cleared. So **Add to List** only ever appends to a batch you are still building, and files you have just converted can never be carried into the next batch and written a second time. This applies to a cancelled conversion as well. The Start number is not reset, so sequential numbering carries on from where it reached.
+### 4.3 The Item List
 
-### 4.3 Numbering
+Once files are selected, MacHuna shows **one row per item**, and that row tells you what the item is about to be called:
 
-For Kahuna SWS output, the **Start Number** field sets the number assigned to the first output file. Subsequent files are numbered sequentially.
+```
+  BAY-PSG-50HD.mov        [ 200 ]   → 200.SWS            ✕
+  EPL-ARS-50HD.mov        [ 201 ]   → 201.SWS            ✕
+  TNTS201  (30 frames)    [ 202 ]   → 202.SWS            ✕
+```
 
-**Use source file number** — tick this when re-converting K-Watch named files (e.g. `TNTS201_30_0001.tga`). MacHuna reads the slot number from the filename rather than the Start Number. Useful when a conversion needs to replace a specific existing slot on the Kahuna.
+This replaced the old **Start number** and **Start slot** boxes in v1.8.0. Before that, batch numbering was invisible: you set a starting number, pressed Convert, and found out what each file had been called by reading the log afterwards. Now you can see it, and change it, before anything is written.
 
-For Kayenne EIF output, a **Start slot** spinner sets the first slot number (e.g. `0001`). Output files are named `0001.eif`, `0002.eif`, and so on.
+The list appears for **every** output, not only numbered ones. Kayenne TGA and TGA Sequence name their output from the source filename, so those rows are shown greyed and read‑only — you cannot change them, but you can see what you are getting.
 
-### 4.4 Bespoke Numbering and Names
+### 4.4 Numbering
 
-An auto-incrementing sequence is not always what you want. You may be filling a scattered set of empty slots on the desk, replacing three specific wipes out of a folder of twenty, or converting several Sony clips that each need their own name. **Bespoke mode lets you set every selected item's output identity by hand.**
+**Type a number into each row**, or tick **Number sequentially** and let MacHuna fill them in.
 
-#### Turning it on
-
-Tick the checkbox beside the numbering controls:
-
-| Output | Checkbox | What you type per item | Produces |
-|---|---|---|---|
-| Kahuna SWS | **Use bespoke numbering** | A number, 1-9999 | `12.SWS` |
-| Kayenne EIF | **Use bespoke numbering** | A slot number, 1-9999 | `0012.eif` |
-| Sony TGA | **Use bespoke names** | 4 characters, letters and digits | folder `WIPE/` |
-
-It is not offered for **Kayenne TGA** or **TGA Sequence** output, which name their folders after the source file — there is nothing for you to choose.
-
-Ticking it hides the control it replaces (Start number and "Use source file number" for SWS, Start slot for EIF, the shared Clip name field for Sony TGA) and shows a panel listing every item you have selected, one row each with its own input field.
-
-#### Filling in the panel
-
-**The fields start empty on purpose.** An empty field is how you see at a glance which items you have not given an ID to yet, so MacHuna deliberately does not pre-fill them with the auto-sequence.
-
-The panel is a fixed height and scrolls, showing about five rows at a time. With a longer batch, some rows are below the fold — which is why a blocked conversion takes you straight to the field that needs attention (see below) rather than leaving you to hunt for it.
-
-#### What is kept, and what is cleared
-
-Bespoke IDs are kept while you are building a batch up, and cleared whenever you start afresh:
-
-| Action | Typed IDs |
+| | |
 |---|---|
-| Adding items with **Add to List** | Kept. The new rows get empty fields. |
-| Deselecting an item, bespoke mode still on | Kept for the rows that remain |
-| **Open Files… → Select** (replaces the list) | Cleared — this is a new list |
-| Ticking the checkbox on | Cleared |
-| Unticking the checkbox | Cleared, **and the file list is emptied too** |
-| Finishing **any** conversion | Cleared, **and the file list is emptied too** |
+| **Number sequentially, ticked** | A number appears in the first row and the rest follow from it. Change the first row and everything below re‑numbers. The other rows are locked until the first has a value, so it is clear where to type |
+| **Unticked** | Every row is yours to fill in. This is the default: filling a scattered set of empty slots on the desk is at least as common as numbering a batch straight through |
 
-You therefore always begin a batch from a clean panel, and a number you have already written to disk can never be reused by accident.
+The setting is remembered between sessions. The **numbers are not** — every batch starts from 1 unless you say otherwise.
 
-> **Unticking the checkbox starts over completely.** It clears the selected files as well as the numbers: the summary returns to "No files selected.", Convert greys out, and the log says so. It is the way to abandon a batch you are part-way through building; a finished conversion clears itself (see 4.2). If you only want to swap the list for a different one, use **Open Files… → Select** instead.
+> **Why numbers do not carry over.** Until v1.8.0 the Start number advanced automatically after each batch and persisted between sessions. That only made sense while the numbers were invisible: wipes rarely stay in the destination folder, so carrying on from where the last batch finished was usually noise. Now that every number is on screen before you convert, there is nothing to remember on your behalf.
+
+**Sony MVS TGA** works the same way but takes a **4‑character clip name** per row instead of a number, and has no sequential option — names cannot sensibly be counted upwards.
+
+**Kayenne EIF** takes a slot number per row and writes `0001.eif`, `0002.eif` and so on.
 
 #### Checks before anything is written
 
-Because you are choosing the names, MacHuna checks them before writing a single frame, and **blocks** the batch if it finds a problem:
+Three checks run when you press Convert, and any of them stops the batch:
 
-1. **Every item needs a valid, in-range value.** Blank, malformed or out-of-range fields stop the batch.
-2. **No two items may share a value.** The second would otherwise overwrite the first.
-3. **Nothing may collide with the destination folder.** For SWS that means an existing `12.SWS`, whether it is a file or a split-file folder (see Section 12); for EIF an existing `0012.eif`; for Sony an existing folder of that clip name.
+1. **Nothing may be blank**, or outside 1–9999
+2. **No two rows may share a number or name**
+3. **Nothing may collide with the destination folder** — an existing `12.SWS`, whether a file or a split‑file folder, an existing `0012.eif`, or a Sony clip‑name folder
 
-**There is no overwrite option.** If a value clashes, change it and convert again. This is deliberate: overwriting a wipe that is already on a desk is not something to offer behind a confirmation dialog.
+There is no overwrite option. Every offending row is marked in red with the reason (`duplicate number`, `already in destination`), the list scrolls to the first one and puts the cursor in it, and correcting a duplicate clears its partner's mark too.
 
-#### When a batch is blocked
+### 4.5 After Converting
 
-The dialog lists every problem it found, and the panel then shows you where they are:
+**The list stays on screen.** Converted rows lock and show **✓ done**; anything that failed shows **✗** and the reason.
 
-- the hint beside each offending field turns **red** and names that row's problem: `needs a number`, `duplicate number` or `already in use` (`needs a name` / `duplicate name` for Sony TGA)
-- rows that are fine keep their grey hint, so scrolling the panel shows exactly what is left to do
-- the panel scrolls to the **first** offending row and puts the cursor in its field, ready to type
-- correcting a field re-checks the whole batch, so the red marks left are the work remaining. Fixing one half of a duplicate clears the other half as well; in a three-way clash, the rows still duplicating each other stay marked
-- marks appear only after you press Convert. Typing never turns a field red on its own, because an empty field is the normal starting state
+```
+  BAY-PSG-50HD.mov        [ 200 ]   ✓ done              ✕
+  EPL-ARS-50HD.mov        [ 201 ]   ✓ done              ✕
+  TNTS201  (30 frames)    [ 202 ]   ✗ no video stream   ✕
+```
 
-#### Example
+**Convert only ever runs rows without a status**, so nothing is converted twice. You can add more files to a finished batch and press Convert again: only the new ones run, and if you are numbering sequentially they carry on from the highest number in the list rather than starting again.
 
-Three clips in a folder, to go into Kahuna slots 12, 47 and 48:
+- **✕** removes a single row. With sequential numbering on, the rows below close the gap; with your own numbers typed, they keep them. A converted row never renumbers — the file it wrote already exists
+- **Clear All**, below the list, empties everything and starts again
 
-1. **Open Files…**, choose the folder, **Select** the three clips
-2. Output: **Kahuna SWS**. Tick **Use bespoke numbering**
-3. Type `12`, `47`, `48` into the three rows
-4. **Convert** → `12.SWS`, `47.SWS`, `48.SWS` in the destination folder
+> **Nothing is converted twice.** Before v1.8.0, MacHuna emptied the list after every conversion to guarantee this, because items could only ever be *added* to a selection. Locking converted rows gives the same guarantee while keeping the list as a record of what was done.
 
-If `47.SWS` were already there, the batch would stop before writing anything, that row would show `already in use` in red with the cursor in it, and nothing else in the batch would have been touched.
-
-#### Leaving it off
-
-Unticked, batch convert behaves exactly as it always has: Start number auto-increment, "Use source file number", and the EIF start slot are unchanged.
-
-### 4.5 Cancel
+### 4.6 Cancel
 
 Click **Cancel** during a conversion to stop after the current file. The conversion log is not written if cancelled mid-batch.
 
@@ -340,7 +315,7 @@ Any of the following inputs can be converted to Kayenne EIF:
 
 | Option | Description |
 |---|---|
-| **Start slot** | First slot number for output files. Files are named `0001.eif`, `0002.eif` etc. and increment per item in the batch. |
+| **Slot (per row)** | Each row in the item list carries its own slot number, written as `0001.eif`, `0002.eif` and so on. Tick **Number sequentially** to fill them in from the first row. See Section 4.4. |
 | **TGA source interlaced** | Shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source. MacHuna deinterlaces each frame using yadif (field separation, TFF) to produce 50fps progressive EIF output. |
 
 EIF output is always 1920×1080. Sources of other sizes are scaled. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps), and the video is resampled to that rate so the clip keeps its original duration and plays at the correct speed — for example a 60fps source becomes a 50fps EIF clip of the same length.
@@ -403,9 +378,7 @@ A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA
 
 Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
 
-Because every clip in the batch would share that one name and be written to the same folder, **Sony TGA output converts one clip at a time** when this single field is in use. Selecting more than one is blocked rather than silently overwriting, and the message tells you to switch to bespoke names.
-
-**To convert several Sony clips in one batch,** tick **Use bespoke names** and give each clip its own 4-character name (see Section 4.4). Each name becomes its own output folder, so the clips stay separate and can be converted together.
+**Each clip takes its own 4‑character name from the item list** (see Section 4.4), so each becomes its own output folder and several Sony clips convert together. The shared Clip name field that once forced one clip at a time is gone as of v1.8.0.
 
 ### 7.6 Output Structure
 

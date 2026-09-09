@@ -145,13 +145,13 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Current release</p>
     <div class="dl">
       <div class="dl-top">
-        <span class="dl-ver">v1.7.1</span>
-        <span class="dl-date">8 September 2026</span>
+        <span class="dl-ver">v1.8.0</span>
+        <span class="dl-date">9 September 2026</span>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.7.1.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
+        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.8.0.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
         <a class="btn btn-ghost" href="MacHuna_User_Manual.pdf">User manual <span class="sz">PDF</span></a>
-        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.7.1">Contact developer</a>
+        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.8.0">Contact developer</a>
       </div>
       <div class="req">
         <span><b>macOS 12</b> or later</span>
@@ -240,7 +240,16 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <div class="rel">
 
       <div class="rel-item current">
-        <div class="rel-v">v1.7.1 <span>8 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-v">v1.8.0 <span>9 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-body">
+          <p class="lead">Batch numbering is now a list, so you can see what every file will be called before you convert it.</p>
+          <p>Each selected item gets a row showing its output name &mdash; <span class="mono">alpha.mov &rarr; 42.SWS</span>. Type a number per row, or tick <b>Number sequentially</b> and the first row fills in the rest. Converted rows lock with a tick and never run again, so you can add more files and convert without redoing anything. A <b>&#10005;</b> removes a row, and the numbers below close up or stay put depending on how you are numbering.</p>
+          <p>Previously the numbering happened invisibly and you found out what each file had been called by reading the log afterwards. The Start number, Start slot and &ldquo;Use source file number&rdquo; controls are all gone, replaced by the list.</p>
+        </div>
+      </div>
+
+      <div class="rel-item">
+        <div class="rel-v">v1.7.1 <span>8 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">MacHuna now tells you, in the log, when an output has never been tested on the desk it is for.</p>
           <p>Converting to Kayenne EIF, Kayenne TGA or MOV, or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
@@ -304,7 +313,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Problems and requests</p>
     <div class="contact">
       <p class="note" style="color:var(--silver)">MacHuna was vibecoded by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
-      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.7.1">machuna@dnsvision.tv</a>
+      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.8.0">machuna@dnsvision.tv</a>
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>

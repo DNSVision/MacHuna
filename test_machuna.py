@@ -923,3 +923,35 @@ class TestMissingFeatureNotes(unittest.TestCase):
         # untested is only untested.
         self.assertEqual(set(m.MISSING_FEATURE_NOTES), {'Kayenne EIF'})
         self.assertIn('Kayenne EIF', m.UNVERIFIED_OUTPUT_NOTES)
+
+
+class TestUsableGeometry(unittest.TestCase):
+    """The settings file outlives an update. Every user from before the item
+    list has a geometry saved from when the window was 460px tall, and would
+    otherwise open too small to see the log."""
+
+    def test_too_short_is_grown(self):
+        self.assertEqual(m.usable_geometry('1085x460'), '1085x700')
+
+    def test_position_is_preserved_while_growing(self):
+        self.assertEqual(m.usable_geometry('1085x460+35+113'), '1085x700+35+113')
+        self.assertEqual(m.usable_geometry('900x400-10-20'), '1000x700-10-20')
+
+    def test_a_deliberately_large_window_is_left_alone(self):
+        for g in ('1400x900+10+10', '1600x1000', '1120x740'):
+            with self.subTest(g=g):
+                self.assertEqual(m.usable_geometry(g), g)
+
+    def test_only_the_short_dimension_changes(self):
+        self.assertEqual(m.usable_geometry('1600x400'), '1600x700')
+        self.assertEqual(m.usable_geometry('700x900'), '1000x900')
+
+    def test_missing_or_malformed_falls_back_to_the_default(self):
+        default = f'{m.WINDOW_DEFAULT_W}x{m.WINDOW_DEFAULT_H}'
+        for g in (None, '', '   ', 'rubbish', '1085', 'x460', '10x20x30', 42):
+            with self.subTest(g=g):
+                self.assertEqual(m.usable_geometry(g), default)
+
+    def test_the_default_clears_the_minimum(self):
+        self.assertGreaterEqual(m.WINDOW_DEFAULT_W, m.WINDOW_MIN_W)
+        self.assertGreaterEqual(m.WINDOW_DEFAULT_H, m.WINDOW_MIN_H)

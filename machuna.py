@@ -41,7 +41,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.7.1"
+VERSION = "1.8.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1544,80 +1544,6 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
 # Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  FEDX0000.tga
 _GENERIC_TGA_RE = re.compile(r'^(.+?)(?:[._-]?)(\d+)$')
 GENERIC_TGA_QUIET_SECS = 3.0
-
-def parse_filename(filename: str) -> Optional[dict]:
-    """
-    Parse a K-Watch style filename and return metadata.
-    Returns None if the file doesn't match any known pattern.
-
-    Patterns:
-      Still:    NAME{NUM}[F][K][A].EXT
-                e.g. Still001.TGA  Still001F.BMP  Still001FA.TGA
-      Clip TGA: NAME{NUM}[F][K][A]_{TOTAL}_{SEQ:04d}.TGA
-                e.g. Clip1A_6_0001.TGA  wipe1FA_53_0001.TGA
-      MOV/AVI:  NAME{NUM}.EXT
-                e.g. Newsclip1.MOV  5.AVI
-    """
-    name = Path(filename).stem
-    ext  = Path(filename).suffix.lower()
-
-    # Scan right-to-left for the file number and optional F/K/A flags
-    # TGA sequence: ends in _NNNN (4-digit sequence number)
-    tga_seq_match = re.match(
-        r'^(.*?)(\d+)([FfKkAa]{0,2})_(\d+)_(\d{4})$', name
-    )
-    if tga_seq_match and ext == '.tga':
-        clip_name = tga_seq_match.group(1)
-        file_num  = int(tga_seq_match.group(2))
-        flags     = tga_seq_match.group(3).upper()
-        total     = int(tga_seq_match.group(4))
-        seq       = int(tga_seq_match.group(5))
-        return {
-            'type':      'tga_seq',
-            'clip_name': clip_name,
-            'file_num':  file_num,
-            'flags':     flags,   # combination of F, K, A
-            'total':     total,
-            'seq':       seq,
-            'is_fill':   'K' not in flags,
-            'is_key':    'K' in flags,
-            'has_audio': 'A' in flags,
-        }
-
-    # Still: ends in digits + optional flags, no sequence suffix
-    still_match = re.match(r'^(.*?)(\d+)([FfKkAa]{0,2})$', name)
-    if still_match and ext in ('.tga', '.bmp', '.png', '.jpg', '.jpeg', '.tif', '.tiff'):
-        clip_name = still_match.group(1)
-        file_num  = int(still_match.group(2))
-        flags     = still_match.group(3).upper()
-        return {
-            'type':      'still',
-            'clip_name': clip_name,
-            'file_num':  file_num,
-            'flags':     flags,
-            'is_fill':   'K' not in flags,
-            'is_key':    'K' in flags,
-            'has_audio': 'A' in flags,
-        }
-
-    # MOV/AVI/MP4: just needs a number at the end of the stem
-    clip_match = re.match(r'^(.*?)(\d+)$', name)
-    if clip_match and ext in ('.mov', '.mp4', '.avi', '.mxf', '.m4v', '.mkv',
-                               '.h264', '.h265', '.mts', '.m2ts'):
-        return {
-            'type':      'clip',
-            'clip_name': clip_match.group(1),
-            'file_num':  int(clip_match.group(2)),
-            'flags':     '',
-            'is_fill':   True,
-            'is_key':    False,
-            'has_audio': True,
-        }
-
-    return None
-
-
-
 
 # ─────────────────────────────────────────────────────────────
 #  Video Player
@@ -3462,33 +3388,23 @@ def _scan_folder_unified(folder: str) -> tuple:
                 display = f"{fname:<28}  {h.standard}  {h.frame_count}fr  {tc}"
             except Exception:
                 display = fname
-            sws_items.append({'type': 'sws', 'path': fpath,
-                               'display': display, 'source_num': None})
+            sws_items.append({'type': 'sws', 'path': fpath, 'display': display})
         elif ext == '.eif':
             try:
                 h = EIFHeader(fpath)
                 display = f"{fname:<28}  EIF  {h.frame_count}fr  {h.fps:.0f}fps"
             except Exception:
                 display = fname
-            eif_items.append({'type': 'eif', 'path': fpath,
-                               'display': display, 'source_num': None})
+            eif_items.append({'type': 'eif', 'path': fpath, 'display': display})
         elif ext in video_exts and fpath not in seq_frames:
-            meta = parse_filename(fname)
-            vid_items.append({'type': 'clip', 'path': fpath,
-                               'source_num': meta['file_num'] if meta else None,
-                               'display': fname})
+            vid_items.append({'type': 'clip', 'path': fpath, 'display': fname})
         elif ext in still_exts and fpath not in seq_frames:
-            meta = parse_filename(fname)
-            still_items.append({'type': 'still', 'path': fpath,
-                                 'source_num': meta['file_num'] if meta else None,
-                                 'display': fname})
+            still_items.append({'type': 'still', 'path': fpath, 'display': fname})
 
     seq_items = []
     for base, files in sequences:
-        kw = parse_filename(Path(files[0]).name)
-        source_num = kw['file_num'] if kw and kw['type'] == 'tga_seq' else None
         seq_items.append({
-            'type': 'tga_seq', 'base': base, 'files': files, 'source_num': source_num,
+            'type': 'tga_seq', 'base': base, 'files': files,
             'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
         })
 
@@ -3584,7 +3500,7 @@ BESPOKE_ISSUE_EXISTS    = 'exists'       # the destination already has it
 # Character width reserved for a row's hint/issue text, so a mark can never be
 # clipped by the fixed-width panel. Keep >= the longest string in
 # _BESPOKE_ISSUE_TEXT ("duplicate number", 16).
-_BESPOKE_HINT_WIDTH = 17
+_BESPOKE_HINT_WIDTH = 22   # fits the longest mark, "already in destination"
 
 
 def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
@@ -3710,8 +3626,15 @@ def merge_input_types(current, incoming):
     return 'mixed_eif_sws'
 
 
-def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
-    """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir."""
+def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn,
+                     notes: Optional[list] = None):
+    """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir.
+
+    `notes` carries anything the user was told on screen that is not per-item -
+    chiefly the hardware-status warnings. They belong in the file too: the
+    on-screen log is transient, and a note saying an output has never been
+    tested on a desk is exactly what someone needs months later.
+    """
     date_str = datetime.now().strftime('%d-%m-%Y')
     log_filename = f"MacHuna_Log_{date_str}.txt"
     log_path = os.path.join(dest_dir, log_filename)
@@ -3723,6 +3646,8 @@ def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn):
             f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
             f.write(f"Standard: {standard}\n")
             f.write(f"{'=' * 40}\n\n")
+            for note in (notes or []):
+                f.write(f"NOTE: {note}\n\n")
             for fnum, name, status in results:
                 fnum_str = fnum if isinstance(fnum, str) else f"{fnum:4d}"
                 f.write(f"{fnum_str}  {name:<{max_len}}  [{status}]\n")
@@ -3871,6 +3796,29 @@ def build_mailto(kind: str, context: Optional[dict] = None) -> str:
     return f"mailto:{CONTACT_EMAIL}?{query}"
 
 
+WINDOW_DEFAULT_W, WINDOW_DEFAULT_H = 1120, 740
+WINDOW_MIN_W,     WINDOW_MIN_H     = 820, 620
+
+
+def usable_geometry(saved, min_w: int = 1000, min_h: int = 700) -> str:
+    """Honour a saved window size, but not one too small to use.
+
+    Every user before the item list existed has a geometry saved from when the
+    window was 460 pixels tall, and the settings file outlives an update - so
+    without this they would all open too small to see the log, and would each
+    have to resize once and wonder why. A window the user has deliberately made
+    *larger* is left alone; only an unusably small one is grown, and its
+    position is preserved either way.
+    """
+    if not isinstance(saved, str) or not saved.strip():
+        return f"{WINDOW_DEFAULT_W}x{WINDOW_DEFAULT_H}"
+    found = re.match(r'^(\d+)x(\d+)((?:[+-]\d+){2})?$', saved.strip())
+    if not found:
+        return f"{WINDOW_DEFAULT_W}x{WINDOW_DEFAULT_H}"
+    w, h = int(found.group(1)), int(found.group(2))
+    return f"{max(w, min_w)}x{max(h, min_h)}{found.group(3) or ''}"
+
+
 def launch_gui():
     try:
         import tkinter as tk
@@ -3902,7 +3850,7 @@ def launch_gui():
                     'auto_play':        auto_play_var.get(),
                     'loop_play':        loop_play_var.get(),
                     'source_interlaced': source_interlaced_var.get(),
-                    'start_num':        start_num_var.get(),
+                    'sequential':       seq_var.get(),
                     'clip_name':        clip_name_var.get(),
                     'field_order':      field_order_var.get(),
                     'output_format':    output_var.get(),
@@ -3917,9 +3865,9 @@ def launch_gui():
         root = tk.Tk()
     root.title(f"MacHuna v{VERSION}")
     root.resizable(True, True)
-    root.minsize(620, 380)
+    root.minsize(WINDOW_MIN_W, WINDOW_MIN_H)
     # Restore saved window geometry, or use a sensible default
-    _saved_geo = load_settings().get('window_geometry', '1085x460')
+    _saved_geo = usable_geometry(load_settings().get('window_geometry'))
     root.geometry(_saved_geo)
 
     # ── Style ──
@@ -3980,6 +3928,7 @@ def launch_gui():
     _bespoke_store   = {'num': {}, 'name': {}}
     _bespoke_rows    = []       # [(item, StringVar, hint Label)] in selection order
     _bespoke_mode_of_rows = [None]
+    _row_status_store     = {}   # item key -> 'done' | ('error', reason)
     _bespoke_sig     = [None]
 
     # ── All tk variables (defined before load_settings) ──
@@ -3990,10 +3939,7 @@ def launch_gui():
     auto_play_var         = tk.BooleanVar(value=False)
     loop_play_var         = tk.BooleanVar(value=False)
     source_interlaced_var = tk.BooleanVar(value=False)
-    start_num_var         = tk.IntVar(value=1)
-    use_source_num_var    = tk.BooleanVar(value=False)
-    bespoke_var           = tk.BooleanVar(value=False)
-    eif_slot_var          = tk.StringVar(value='0001')
+    seq_var               = tk.BooleanVar(value=False)
     clip_name_var         = tk.StringVar(value='WIPE')
     field_order_var       = tk.StringVar(value='TFF')
     output_var            = tk.StringVar()
@@ -4008,7 +3954,7 @@ def launch_gui():
     if 'auto_play'         in s:  auto_play_var.set(s['auto_play'])
     if 'loop_play'         in s:  loop_play_var.set(s['loop_play'])
     if 'source_interlaced' in s:  source_interlaced_var.set(s['source_interlaced'])
-    if 'start_num'         in s:  start_num_var.set(s['start_num'])
+    if 'sequential'        in s:  seq_var.set(s['sequential'])
     if 'clip_name'         in s:  clip_name_var.set(s['clip_name'])
     if 'field_order'       in s:  field_order_var.set(s['field_order'])
     # hula_clip / hula_field_order: backwards-compat with pre-v1.5.33 settings
@@ -4045,7 +3991,8 @@ def launch_gui():
     ttk.Checkbutton(frm_row_flags, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
     ttk.Checkbutton(frm_row_flags, text="Ignore alpha/key",   variable=ignore_alpha_var).pack(side='left', **pad)
     ttk.Checkbutton(frm_row_flags, text="Auto play",          variable=auto_play_var).pack(side='left', **pad)
-    ttk.Checkbutton(frm_row_flags, text="Loop play",          variable=loop_play_var).pack(side='left', **pad)
+    chk_loop = ttk.Checkbutton(frm_row_flags, text="Loop play", variable=loop_play_var)
+    chk_loop.pack(side='left', **pad)
 
     frm_row_tga_opts = tk.Frame(frm_convert)
     chk_tga_int = ttk.Checkbutton(frm_row_tga_opts, text="TGA source interlaced",
@@ -4073,26 +4020,27 @@ def launch_gui():
     ttk.Checkbutton(frm_row_hula_mov, text="Include audio",
                     variable=include_audio_var).pack(side='left', **pad)
 
-    frm_row_eif = tk.Frame(frm_convert)
-    ttk.Label(frm_row_eif, text="Start slot:").pack(side='left', padx=(8, 4), pady=4)
-    ttk.Spinbox(frm_row_eif, from_=1, to=9999, textvariable=eif_slot_var,
-                format='%04.0f', width=6).pack(side='left', pady=4)
-    ttk.Label(frm_row_eif, text="(output named 0001.eif, 0002.eif … increments per clip)",
-              foreground='#888888').pack(side='left', padx=(8, 0), pady=4)
-
-    # Bespoke per-item IDs: a checkbox row plus a scrollable, fixed-height panel
-    # with one row per selected item. Offered for Kahuna SWS, Kayenne EIF and
-    # Sony TGA only — Kayenne TGA and TGA Sequence name themselves from the
-    # source stem and already batch cleanly.
+    # The item list. Always shown once something is selected: it is the only
+    # place that says what each file is about to be called, which used to be
+    # invisible until after the conversion had happened.
+    _LIST_ROWS = 8      # visible rows before it scrolls
+    _ROW_PX    = 26     # one row's height, measured from the packed widgets
     frm_row_bespoke = tk.Frame(frm_convert)
-    chk_bespoke = ttk.Checkbutton(frm_row_bespoke, text="Use bespoke numbering",
-                                   variable=bespoke_var)
-    chk_bespoke.pack(side='left', **pad)
+    # The checkbox sits directly over the column it controls rather than out on
+    # the left margin, so it is obvious what it numbers. Measured from the font
+    # rather than guessed: the name column is 46 monospace characters wide plus
+    # its own padding, and the list canvas is inset by 8.
+    import tkinter.font as _tkfont
+    _NAME_COL_PX = _tkfont.Font(family='Menlo', size=10).measure('0' * 46) + 12 + 8
+
+    chk_bespoke = ttk.Checkbutton(frm_row_bespoke, text="Number sequentially",
+                                   variable=seq_var)
+    chk_bespoke.pack(side='top', anchor='w', padx=(_NAME_COL_PX, 0), pady=(14, 0))
     lbl_bespoke_hint = ttk.Label(frm_row_bespoke, text="", foreground='#888888')
-    lbl_bespoke_hint.pack(side='left')
+    lbl_bespoke_hint.pack(side='top', anchor='w', padx=(_NAME_COL_PX, 0), pady=(0, 5))
 
     frm_row_bespoke_list = tk.Frame(frm_convert)
-    bespoke_canvas = tk.Canvas(frm_row_bespoke_list, height=132,
+    bespoke_canvas = tk.Canvas(frm_row_bespoke_list, height=_LIST_ROWS * _ROW_PX,
                                 highlightthickness=0, borderwidth=0)
     bespoke_sb = ttk.Scrollbar(frm_row_bespoke_list, orient='vertical',
                                 command=bespoke_canvas.yview)
@@ -4104,11 +4052,17 @@ def launch_gui():
     # Canvas is sized to its content in _bespoke_rebuild rather than stretched,
     # so the scrollbar sits immediately beside the list instead of way out at
     # the right-hand edge of the window.
-    bespoke_canvas.pack(side='left', padx=(8, 0), pady=(0, 4))
+    bespoke_canvas.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=(0, 4))
     bespoke_sb.pack(side='left', fill='y', padx=(2, 0), pady=(0, 4))
     bespoke_canvas.bind('<Enter>', lambda e: bespoke_canvas.bind_all(
         '<MouseWheel>', lambda ev: bespoke_canvas.yview_scroll(-ev.delta, 'units')))
     bespoke_canvas.bind('<Leave>', lambda e: bespoke_canvas.unbind_all('<MouseWheel>'))
+
+    # Below the list and outside the scrolling area, so it stays put however
+    # long the list gets, sitting under the row-removal column.
+    frm_row_bespoke_foot = tk.Frame(frm_convert)
+    clear_btn = ttk.Button(frm_row_bespoke_foot, text="Clear All", state='disabled')
+    clear_btn.pack(side='left', pady=(8, 2))
     # Blank is a valid keystroke state (fields start empty on purpose); the
     # real check is validate_bespoke_ids() at convert time.
     vcmd_num = root.register(lambda P: P == '' or (P.isdigit() and len(P) <= 4))
@@ -4122,12 +4076,6 @@ def launch_gui():
 
     frm_row_actions = tk.Frame(frm_convert)
     frm_row_actions.pack(fill='x', anchor='w')
-    frm_numbering = tk.Frame(frm_row_actions)
-    ttk.Label(frm_numbering, text="Start number:").pack(side='left', padx=(8, 4), pady=4)
-    ttk.Spinbox(frm_numbering, from_=1, to=9999, textvariable=start_num_var,
-                width=6).pack(side='left', pady=4)
-    ttk.Checkbutton(frm_numbering, text="Use source file number",
-                    variable=use_source_num_var).pack(side='left', padx=(8, 0), pady=4)
     ttk.Button(frm_row_actions, text="Video Player",
                command=lambda: SWSPlayer(root, initial_dir=dest_var.get())
                ).pack(side='right', **pad)
@@ -4154,6 +4102,134 @@ def launch_gui():
         for item, var, _hint in _bespoke_rows:
             bucket[_bespoke_key(item)] = var.get()
 
+    def _row_status(hint):
+        return getattr(hint, 'status', None)
+
+    def _pending_rows():
+        """Rows still to convert. A converted row's file already exists, so it
+        never renumbers and never runs again."""
+        return [r for r in _bespoke_rows if _row_status(r[2]) is None]
+
+    def _preview_name(mode, value):
+        """What this row will be called, or '' if it cannot be worked out yet."""
+        value = (value or '').strip()
+        if not value:
+            return ''
+        try:
+            return '\u2192 ' + bespoke_output_name(
+                normalise_bespoke_value(value, mode), mode)
+        except Exception:
+            return ''
+
+    def _refresh_rows(*_a):
+        """Own every row's right-hand column.
+
+        One column, three jobs: what the file will be called, what is wrong
+        with it, or that it is done. A row can only ever be one of those, so
+        they share the space rather than each needing their own.
+        """
+        mode    = _bespoke_mode()
+        is_sony = (mode == BESPOKE_MODE_SONY)
+        seq     = seq_var.get() and mode in (BESPOKE_MODE_SWS, BESPOKE_MODE_EIF)
+        pending = _pending_rows()
+        lead    = pending[0][2] if pending else None
+        lead_has_value = bool(pending and pending[0][1].get().strip())
+        for item, var, hint in _bespoke_rows:
+            st = _row_status(hint)
+            if st == 'done':
+                hint.config(text='\u2713 done', foreground='#2e7d32')
+                continue
+            if isinstance(st, tuple):                       # ('error', reason)
+                hint.config(text='\u2717 ' + st[1][:_BESPOKE_HINT_WIDTH - 2],
+                            foreground='#cc2200')
+                continue
+            if hint.marked is not None:                     # flagged by a blocked batch
+                continue
+            value = var.get().strip()
+            if mode is None:
+                # Named from the source; there is nothing to type.
+                hint.config(text=hint.neutral, foreground='#999999')
+                continue
+            # Follow-on rows are locked until the first has a number, so the
+            # dependency is visible before anything is typed.
+            if seq and hint is not lead:
+                hint.entry.config(state='normal' if lead_has_value else 'disabled')
+            else:
+                hint.entry.config(state='normal')
+            if value:
+                hint.config(text=_preview_name(mode, value) or hint.neutral,
+                            foreground='#666666')
+            elif seq and hint is lead:
+                hint.config(text='start number \u2190', foreground='#0a58a6')
+            elif seq:
+                hint.config(text='follows on', foreground='#999999')
+            else:
+                hint.config(text=hint.neutral, foreground='#999999')
+
+    def _seq_autofill():
+        """Keep the sequence running as the list changes.
+
+        Seeds the first pending row from the highest number already in the list
+        - so files added to a part-converted batch carry on from where it got
+        to rather than starting again - then fills downwards. Called whenever
+        the list changes, not just when the box is ticked, because a blank row
+        appearing in a numbered list is exactly the mystery this replaced.
+        """
+        if not seq_var.get() or _bespoke_mode() not in (BESPOKE_MODE_SWS,
+                                                        BESPOKE_MODE_EIF):
+            return
+        pending = _pending_rows()
+        if not pending:
+            return
+        if not pending[0][1].get().strip():
+            used = [int(v.get()) for _i, v, _h in _bespoke_rows
+                    if v.get().strip().isdigit()]
+            pending[0][1].set(str(max(used) + 1 if used else 1))
+        _seq_fill()
+
+    def _seq_fill(*_a):
+        """With sequential on, the first pending row drives the rest."""
+        mode = _bespoke_mode()
+        if not seq_var.get() or mode not in (BESPOKE_MODE_SWS, BESPOKE_MODE_EIF):
+            return
+        pending = _pending_rows()
+        if not pending:
+            return
+        first = pending[0][1].get().strip()
+        if not first.isdigit():
+            return
+        n = int(first)
+        for _item, var, _hint in pending[1:]:
+            n += 1
+            if var.get() != str(n):
+                var.set(str(n))
+
+    def _remove_row(item):
+        """Drop one item from the list.
+
+        Removing a pending row closes the gap when numbering sequentially, and
+        leaves typed numbers alone when it is not. Removing a converted row
+        just tidies the view: the file it wrote is already on disk, so nothing
+        below it may renumber onto that number.
+        """
+        was_pending = True
+        for it, _v, h in _bespoke_rows:
+            if _bespoke_key(it) == _bespoke_key(item):
+                was_pending = _row_status(h) is None
+                break
+        _bespoke_harvest()
+        for bucket in _bespoke_store.values():
+            bucket.pop(_bespoke_key(item), None)
+        _row_status_store.pop(_bespoke_key(item), None)
+        _selected_items[:] = [i for i in _selected_items
+                              if _bespoke_key(i) != _bespoke_key(item)]
+        _bespoke_sig[0] = None
+        _bespoke_sync()
+        if was_pending:
+            _seq_fill()
+        _refresh_rows()
+        _update_summary()
+
     def _bespoke_rebuild():
         _bespoke_harvest()
         for w in bespoke_inner.winfo_children():
@@ -4161,38 +4237,52 @@ def launch_gui():
         _bespoke_rows.clear()
         mode = _bespoke_mode()
         _bespoke_mode_of_rows[0] = mode
-        if mode is None:
-            return
         is_sony = (mode == BESPOKE_MODE_SONY)
-        bucket  = _bespoke_bucket(mode)
+        bucket  = _bespoke_bucket(mode) if mode else {}
         for item in _selected_items:
             row = tk.Frame(bespoke_inner)
             row.pack(fill='x', pady=1)
+            ttk.Label(row, text=item['display'][:46], width=46, anchor='w',
+                      font=('Menlo', 10)).pack(side='left', padx=(4, 8))
             # Deliberately blank unless the user already typed something for this
             # item: an empty field is the signal that it still needs an ID.
             var = tk.StringVar(value=bucket.get(_bespoke_key(item), ''))
-            ttk.Label(row, text=item['display'][:46], width=46, anchor='w',
-                      font=('Menlo', 10)).pack(side='left', padx=(4, 8))
-            entry = ttk.Entry(row, textvariable=var, width=6, validate='key',
-                              validatecommand=(vcmd if is_sony else vcmd_num, '%P'))
+            if mode is None:
+                # Kayenne TGA and TGA Sequence name themselves from the source
+                # stem. Shown, but not editable — the point is that you can see
+                # what you are getting, which you could not before.
+                entry = ttk.Entry(row, width=6, state='disabled')
+                neutral = 'from source'
+            else:
+                entry = ttk.Entry(row, textvariable=var, width=6, validate='key',
+                                  validatecommand=(vcmd if is_sony else vcmd_num, '%P'))
+                neutral = "4 chars" if is_sony else "1-9999"
             entry.pack(side='left')
-            neutral = "4 chars" if is_sony else "1-9999"
             # Fixed width, sized for the longest issue text ("duplicate
-            # number"). The panel is measured once at rebuild, when the hints
-            # still read "1-9999"; without a reserved column a mark would need
-            # more room than the canvas was given and get clipped. Reserving it
-            # also means marking never shifts the layout sideways.
+            # number"). The panel is measured once at rebuild, so without a
+            # reserved column a longer mark would be clipped. Reserving it also
+            # means marking never shifts the layout sideways.
             hint = ttk.Label(row, text=neutral, width=_BESPOKE_HINT_WIDTH,
                              anchor='w', foreground='#999999')
             hint.pack(side='left', padx=(6, 0))
             hint.entry = entry
             hint.neutral = neutral
             hint.marked = None
-            # Typing re-checks the whole batch, not just this row: "duplicate"
-            # is a relationship between two rows, so fixing one has to clear
-            # the other's mark too.
-            var.trace_add('write', lambda *_a: _bespoke_recheck())
+            hint.status = _row_status_store.get(_bespoke_key(item))
+            xbtn = ttk.Button(row, text='\u2715', width=2,
+                              command=lambda i=item: _remove_row(i))
+            xbtn.pack(side='left', padx=(4, 0))
+            hint.xbtn = xbtn
+            if mode is not None:
+                # Typing re-checks the whole batch, not just this row:
+                # "duplicate" is a relationship between two rows, so fixing one
+                # has to clear the other's mark too.
+                var.trace_add('write', lambda *_a: (_bespoke_recheck(), _refresh_rows()))
             _bespoke_rows.append((item, var, hint))
+        if _bespoke_rows:
+            _bespoke_rows[0][1].trace_add('write', lambda *_a: _seq_fill())
+        _seq_autofill()
+        _refresh_rows()
         bespoke_inner.update_idletasks()
         bespoke_canvas.configure(scrollregion=bespoke_canvas.bbox('all'),
                                  width=max(320, bespoke_inner.winfo_reqwidth()))
@@ -4208,7 +4298,7 @@ def launch_gui():
     _BESPOKE_ISSUE_TEXT = {
         BESPOKE_ISSUE_INVALID:   ("needs a name",   "needs a number"),
         BESPOKE_ISSUE_DUPLICATE: ("duplicate name", "duplicate number"),
-        BESPOKE_ISSUE_EXISTS:    ("already in use", "already in use"),
+        BESPOKE_ISSUE_EXISTS:    ("already in destination", "already in destination"),
     }
 
     def _bespoke_apply_marks(codes, only_marked=False):
@@ -4280,6 +4370,7 @@ def launch_gui():
         """
         _bespoke_store['num'].clear()
         _bespoke_store['name'].clear()
+        _row_status_store.clear()
         # Destroy the row widgets, not just the list that tracks them. Left
         # behind they are invisible (the panel is unpacked) but still hold the
         # old values and marks until the next rebuild happens to clear them.
@@ -4288,8 +4379,30 @@ def launch_gui():
         _bespoke_rows.clear()
         _bespoke_mode_of_rows[0] = None
         _bespoke_sig[0] = None
-        if bespoke_var.get() and _bespoke_mode():
+        if _bespoke_mode():
             _bespoke_sync()
+
+    def _update_summary():
+        # The button names what it will actually do: with a list loaded you are
+        # nearly always adding to it, not starting again.
+        open_btn.config(text="Add Files\u2026" if _selected_items else "Open Files\u2026")
+        if not _selected_items:
+            summary_var.set("No files selected.")
+            return
+        counts = {}
+        for item in _selected_items:
+            counts[item['type']] = counts.get(item['type'], 0) + 1
+        parts = []
+        for key, singular in (('tga_seq', 'TGA sequence'), ('clip', 'video file'),
+                              ('still', 'still'), ('sws', 'SWS file'), ('eif', 'EIF file')):
+            if key in counts:
+                n = counts[key]
+                parts.append(f"{n} {singular}{'s' if n > 1 else ''}")
+        where = (_selected_folders[0] if len(_selected_folders) == 1
+                 else f"{len(_selected_folders)} folders")
+        done = sum(1 for _i, _v, h in _bespoke_rows if _row_status(h) == 'done')
+        tail = f"  ({done} converted)" if done else ""
+        summary_var.set(f"{where}: " + ', '.join(parts) + tail)
 
     def _clear_selection():
         """Back to a clean slate: no items, no folders, no typed values."""
@@ -4299,57 +4412,92 @@ def launch_gui():
         _has_audio_clips[0] = False
         _has_tga_seq[0]     = False
         _bespoke_reset()
-        summary_var.set("No files selected.")
+        _update_summary()
         convert_btn.config(state='disabled')
+        clear_btn.config(state='disabled')
         _update_output_options()
 
     def _finish_batch():
-        """Clear the selection once a batch has finished, so the next one starts new."""
-        had = len(_selected_items)
-        _clear_selection()
-        if had:
-            log(f"Selection cleared ({had} item{'s' if had != 1 else ''}). "
-                "Open Files\u2026 to start the next conversion.")
+        """Report where the list stands once a batch has finished.
 
-    def _on_bespoke_toggle():
-        if bespoke_var.get():
-            # Blank fields on the way in — nothing is carried over from an
-            # earlier batch.
-            _bespoke_reset()
-            _update_adaptive_controls()
-        else:
-            # Unticking is the way to start over. Since items can only be added
-            # to a selection, clearing the list here is what stops it growing
-            # in one direction forever.
-            _clear_selection()
-            log("Bespoke numbering off — selection cleared. "
-                "Open Files… to start a new list.")
+        The list deliberately stays on screen: it is the record of what was
+        converted to what. Nothing runs twice because converted rows are locked
+        and excluded from the next Convert - which is the same guarantee
+        v1.6.21 got by emptying the list, kept without throwing the record away.
+        """
+        _refresh_rows()
+        _update_summary()
+        done = sum(1 for _i, _v, h in _bespoke_rows if _row_status(h) == 'done')
+        left = len(_pending_rows())
+        if done or left:
+            log(f"{done} converted, {left} still to do. "
+                "Add more files, or press Clear All to start again.")
+
+    def _on_seq_toggle():
+        """Ticking it puts a number in the first box and fills the rest at once.
+
+        Showing the whole column populate teaches the dependency better than an
+        empty panel would, and it means the common case costs one tick rather
+        than a number per file.
+        """
+        _seq_autofill()
+        _refresh_rows()
+
+    def _align_list_controls():
+        """Line the list's two controls up with the columns they belong to.
+
+        Measured from the live widgets rather than computed: the name column is
+        monospace and the entries are not, and the canvas has no meaningful
+        width until it has rows in it - which is why a computed indent left
+        Clear All out on the left margin until files were added.
+        """
+        if not _bespoke_rows:
+            return
+        root.update_idletasks()
+        base = frm_row_bespoke_list.winfo_rootx()
+        # the sequential tick box lines up under Loop play
+        if chk_loop.winfo_ismapped():
+            x = max(0, chk_loop.winfo_rootx() - frm_row_flags.winfo_rootx())
+            chk_bespoke.pack_configure(padx=(x, 0))
+            lbl_bespoke_hint.pack_configure(padx=(x, 0))
+        xbtn = getattr(_bespoke_rows[0][2], 'xbtn', None)
+        if xbtn is not None and xbtn.winfo_ismapped():
+            # line up the right-hand edges: Clear All is wider than the small
+            # square remove button, so matching left edges left it overhanging
+            right = xbtn.winfo_rootx() + xbtn.winfo_width() - base
+            clear_btn.pack_configure(
+                padx=(max(0, right - clear_btn.winfo_reqwidth()), 0))
 
     def _update_adaptive_controls(*_):
         out = output_var.get()
         is_interlaced_std = 'i' in std_var.get()
         for frm in (frm_row_std, frm_row_flags, frm_row_tga_opts,
-                    frm_row_hula_tga, frm_row_hula_mov, frm_numbering, frm_row_eif,
-                    frm_row_bespoke, frm_row_bespoke_list):
+                    frm_row_hula_tga, frm_row_hula_mov,
+                    frm_row_bespoke, frm_row_bespoke_list, frm_row_bespoke_foot):
             frm.pack_forget()
         if not out:
             return
         bf = dict(fill='x', anchor='w', before=frm_row_actions)
-        # Bespoke mode replaces whichever auto-naming control the output uses,
-        # so those controls are hidden while it is on.
-        b_mode    = _bespoke_mode()
-        bespoke_on = bespoke_var.get() and b_mode is not None
+        b_mode = _bespoke_mode()
 
-        def _pack_bespoke():
-            chk_bespoke.config(text="Use bespoke names" if b_mode == BESPOKE_MODE_SONY
-                               else "Use bespoke numbering")
-            lbl_bespoke_hint.config(
-                text="(a 4-character clip name for each item)" if b_mode == BESPOKE_MODE_SONY
-                else "(an output number for each item, 1-9999)")
-            frm_row_bespoke.pack(**bf)
-            if bespoke_on:
-                _bespoke_sync()
-                frm_row_bespoke_list.pack(**bf)
+        def _pack_list():
+            """The list is always shown once something is selected.
+
+            Sequential numbering is only offered where there is a number to
+            sequence: Sony wants a 4-character name per clip, and Kayenne TGA
+            and TGA Sequence name themselves from the source.
+            """
+            if not _selected_items:
+                return
+            if b_mode in (BESPOKE_MODE_SWS, BESPOKE_MODE_EIF):
+                lbl_bespoke_hint.config(
+                    text="(the first row sets the start, the rest follow)")
+                frm_row_bespoke.pack(**bf)
+            _bespoke_sync()
+            frm_row_bespoke_list.pack(fill='both', expand=True, anchor='w',
+                                      before=frm_row_actions)
+            frm_row_bespoke_foot.pack(**bf)
+            _align_list_controls()
         if out != OUTPUT_KAYENNE_MOV:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
@@ -4364,9 +4512,7 @@ def launch_gui():
                 chk_audio_tosws.pack(side='left', **pad)
             if show_tga or show_aud:
                 frm_row_tga_opts.pack(**bf)
-            if not bespoke_on:
-                frm_numbering.pack(side='left')
-            _pack_bespoke()
+            _pack_list()
         elif out == OUTPUT_KAYENNE_MOV:
             if _has_audio_clips[0]:
                 frm_row_hula_mov.pack(**bf)
@@ -4375,29 +4521,26 @@ def launch_gui():
             frm_clip_inner.pack_forget()
             frm_field_inner.pack_forget()
             chk_tga_int.pack_forget()
-            if is_sony and not bespoke_on:
-                frm_clip_inner.pack(side='left', padx=(8, 0), pady=4)
+
             if is_sony or is_interlaced_std:
                 frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
                 frm_row_hula_tga.pack(**bf)
             if is_sony and _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
-            if is_sony:
-                _pack_bespoke()
+            _pack_list()
         elif out == OUTPUT_KAYENNE_EIF:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
-            if not bespoke_on:
-                frm_row_eif.pack(**bf)
-            _pack_bespoke()
+            _pack_list()
         elif out == OUTPUT_TGA_SEQ:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
+            _pack_list()
 
     def _update_output_options():
         itype = _input_type[0]
@@ -4417,21 +4560,30 @@ def launch_gui():
             output_var.set(opts[0] if opts else '')
         _update_adaptive_controls()
 
-    chk_bespoke.config(command=_on_bespoke_toggle)
+    chk_bespoke.config(command=_on_seq_toggle)
+
+    def _on_clear_all():
+        _clear_selection()
+        log("List cleared.")
+
+    clear_btn.config(command=_on_clear_all)
     std_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
     output_cb.bind('<<ComboboxSelected>>', _update_adaptive_controls)
 
     # ── Log area ──
+    # Fixed at a few lines: the rows carry the outcome now, and the batch log on
+    # disk carries the record, so the log is for watching progress and reading a
+    # failure - neither of which needs a third of the window.
     log_frame = ttk.LabelFrame(root, text="Log")
-    log_frame.pack(fill='both', expand=True, **pad)
+    log_frame.pack(fill='x', **pad)
 
     log_toolbar = ttk.Frame(log_frame)
     log_toolbar.pack(fill='x', padx=4, pady=(4, 0))
     ttk.Button(log_toolbar, text="Clear Log",
                command=lambda: log_text.delete('1.0', 'end')).pack(side='right')
 
-    log_text = scrolledtext.ScrolledText(log_frame, height=20, font=('Menlo', 11))
-    log_text.pack(fill='both', expand=True, padx=4, pady=4)
+    log_text = scrolledtext.ScrolledText(log_frame, height=5, font=('Menlo', 11))
+    log_text.pack(fill='x', padx=4, pady=4)
 
     def log(msg):
         ts = datetime.now().strftime('%H:%M:%S')
@@ -4496,20 +4648,6 @@ def launch_gui():
         btn_frame_dlg = ttk.Frame(dlg)
         btn_frame_dlg.pack(fill='x', padx=8, pady=8)
 
-        def _summarise():
-            counts = {}
-            for item in _selected_items:
-                counts[item['type']] = counts.get(item['type'], 0) + 1
-            parts = []
-            for key, singular in (('tga_seq', 'TGA sequence'), ('clip', 'video file'),
-                                  ('still', 'still'), ('sws', 'SWS file'), ('eif', 'EIF file')):
-                if key in counts:
-                    n = counts[key]
-                    parts.append(f"{n} {singular}{'s' if n > 1 else ''}")
-            where = (_selected_folders[0] if len(_selected_folders) == 1
-                     else f"{len(_selected_folders)} folders")
-            summary_var.set(f"{where}: " + ', '.join(parts))
-
         def _finish(append):
             sel = lb.curselection()
             if not sel:
@@ -4557,8 +4695,9 @@ def launch_gui():
                 # are building the list up, not starting again.
                 _bespoke_reset()
 
-            _summarise()
+            _update_summary()
             convert_btn.config(state='normal')
+            clear_btn.config(state='normal')
             dlg.destroy()
             _update_output_options()
 
@@ -4632,70 +4771,76 @@ def launch_gui():
                     "Proceed anyway?"):
                 return
 
-        # Bespoke per-item IDs: validate every row before anything is written.
-        # Nothing here offers an overwrite — a clash has to be corrected.
-        bespoke_mode = _bespoke_mode() if bespoke_var.get() else None
-        bespoke_map  = {}
-        if bespoke_mode:
+        # Every row is validated before anything is written. Nothing here
+        # offers an overwrite - a clash has to be corrected.
+        id_mode = _bespoke_mode()
+        id_map  = {}
+        if id_mode:
             _bespoke_sync()
-            entries = [(item['display'], var.get())
-                       for item, var, _h in _bespoke_rows]
-            codes, problems = _analyse_bespoke_ids(entries, bespoke_mode, d)
-            _bespoke_mark(codes)
+            pending = _pending_rows()
+            if not pending:
+                messagebox.showinfo("Convert",
+                                    "Everything in the list has already been converted.\n\n"
+                                    "Add more files, or press Clear All to start again.",
+                                    parent=root)
+                return
+            entries = [(item['display'], var.get()) for item, var, _h in pending]
+            codes, problems = _analyse_bespoke_ids(entries, id_mode, d)
+            # marks are keyed to pending rows only, so pad the converted ones out
+            full = []
+            it = iter(codes)
+            for _i, _v, h in _bespoke_rows:
+                full.append(next(it) if _row_status(h) is None else None)
+            _bespoke_mark(full)
             if problems:
                 messagebox.showerror(
                     "Convert",
-                    ("Bespoke names cannot be used as they are:\n\n"
-                     if bespoke_mode == BESPOKE_MODE_SONY else
-                     "Bespoke numbering cannot be used as it is:\n\n")
-                    + '\n\n'.join(f"• {prob}" for prob in problems),
+                    ("Clip names cannot be used as they are:\n\n"
+                     if id_mode == BESPOKE_MODE_SONY else
+                     "Numbering cannot be used as it is:\n\n")
+                    + '\n\n'.join(f"\u2022 {prob}" for prob in problems),
                     parent=root)
                 return
-            bespoke_map = {_bespoke_key(item):
-                           normalise_bespoke_value(var.get(), bespoke_mode)
-                           for item, var, _h in _bespoke_rows}
+            id_map = {_bespoke_key(item):
+                      normalise_bespoke_value(var.get(), id_mode)
+                      for item, var, _h in pending}
 
-        if out == OUTPUT_SONY_TGA and bespoke_mode is None:
-            if len(clip_name_var.get().strip()) != 4:
-                messagebox.showerror("Convert",
-                                     "Clip name must be exactly 4 characters for Sony TGA output.",
-                                     parent=root)
-                return
-            # One shared clip name means one output folder, so a second clip
-            # would overwrite the first. Bespoke names give each clip its own
-            # folder, which is why they lift this restriction. Lead with that
-            # rather than with the restriction: the user wants the batch, and
-            # there is a way to have it.
-            if len(_selected_items) > 1:
-                messagebox.showerror("Convert",
-                                     "To batch convert to Sony TGA, tick "
-                                     "\u201cUse bespoke names\u201d.\n\n"
-                                     "Every clip would otherwise share the single Clip name "
-                                     "field, so they would all be written to the same folder "
-                                     "and overwrite each other. That is why the shared name "
-                                     "converts one clip at a time.\n\n"
-                                     "Bespoke names give each clip its own 4-character name, "
-                                     "and so its own folder, and they convert together.",
-                                     parent=root)
-                return
+        # Only rows that have not been converted are run. A converted row's
+        # file already exists; running it again is what v1.6.21 fixed, and the
+        # list keeping its history must not reintroduce it.
+        todo = [i for i, _v, _h in _pending_rows()] if _bespoke_rows else list(_selected_items)
+
+        # Worked out here rather than in worker(), which is a sibling of the
+        # runners and so cannot share a local with them.
+        batch_notes = []
+        _gap = missing_feature_note(out)
+        if _gap and _has_audio_clips[0]:
+            batch_notes.append(_gap)
+        _unv = unverified_output_note(out)
+        if _unv:
+            batch_notes.append(_unv)
+
+        def _mark_row(item, status):
+            key = _bespoke_key(item)
+            _row_status_store[key] = status
+            for it, _v, h in _bespoke_rows:
+                if _bespoke_key(it) == key:
+                    h.status = status
+                    h.marked = None
+                    break
+            _refresh_rows()
+            _update_summary()
 
         def _run_to_sws():
-            start_num  = start_num_var.get()
-            use_src    = use_source_num_var.get()
-            next_slot  = start_num
             results    = []
             cancelled  = False
-            for item in _selected_items:
+            for item in todo:
+                _before = len(results)
                 if batch_cancel_event.is_set():
                     log("Batch cancelled.")
                     cancelled = True
                     break
-                if bespoke_map:
-                    fnum = bespoke_map[_bespoke_key(item)]
-                else:
-                    fnum = item['source_num'] if use_src and item['source_num'] else next_slot
-                    if not (use_src and item['source_num']):
-                        next_slot += 1
+                fnum = id_map[_bespoke_key(item)]
                 try:
                     if item['type'] == 'eif':
                         convert_eif_to_sws(
@@ -4789,10 +4934,16 @@ def launch_gui():
                     name = item.get('base') or Path(item.get('path', '')).name
                     log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
                     results.append((fnum, name, f'ERROR: {e}'))
+                # Reflect the outcome on the row itself. Derived from what
+                # this item actually appended, so a branch that writes nothing
+                # cannot silently mark a row done.
+                if len(results) > _before:
+                    _st = results[-1][2]
+                    root.after(0, lambda i=item, st=('done' if _st == 'OK'
+                               else ('error', str(_st).replace('ERROR: ', '', 1))):
+                               _mark_row(i, st))
             if results and not cancelled:
-                _write_batch_log(results, d, std_var.get(), log)
-                if not use_src and not bespoke_map:
-                    root.after(0, lambda v=next_slot: start_num_var.set(v))
+                _write_batch_log(results, d, std_var.get(), log, batch_notes)
 
         def _run_from_sws():
             target_map = {
@@ -4800,28 +4951,31 @@ def launch_gui():
                 OUTPUT_SONY_TGA:    HULA_TARGET_SONY_TGA,
             }
             hula_target = target_map.get(out, HULA_TARGET_KAYENNE_TGA)
-            paths = [item['path'] for item in _selected_items]
-            names = ([bespoke_map[_bespoke_key(item)] for item in _selected_items]
-                     if bespoke_map else None)
+            paths = [item['path'] for item in todo]
+            names = ([id_map[_bespoke_key(item)] for item in todo]
+                     if id_map else None)
             _hula_run_batch(paths, d, hula_target,
                             standard=std_var.get(),
                             clip_name=clip_name_var.get().strip().upper(),
                             field_order=field_order_var.get(),
                             clip_names=names,
                             log=log)
+            # This path converts the batch in one call rather than per item, so
+            # the rows are marked together once it returns.
+            for it in todo:
+                root.after(0, lambda i=it: _mark_row(i, 'done'))
 
         def _run_to_eif():
             fps       = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(std_var.get(), 0x08), 25.0)
-            next_slot = int(eif_slot_var.get() or 1)
             results   = []
             cancelled = False
-            for item in _selected_items:
+            for item in todo:
+                _before = len(results)
                 if batch_cancel_event.is_set():
                     log("Batch cancelled.")
                     cancelled = True
                     break
-                out_name = (f"{bespoke_map[_bespoke_key(item)]:04d}" if bespoke_map
-                            else f"{next_slot:04d}")
+                out_name = f"{id_map[_bespoke_key(item)]:04d}"
                 name = item.get('base', '').rstrip('._- ') or Path(item.get('path', '')).stem
                 try:
                     if item['type'] == 'tga_seq':
@@ -4842,15 +4996,20 @@ def launch_gui():
                             log=log, cancel_event=batch_cancel_event,
                             out_name=out_name)
                     results.append((out_name, name, 'OK'))
-                    next_slot += 1
                 except Exception as e:
                     import traceback
                     log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
                     results.append((out_name, name, f'ERROR: {e}'))
+                # Reflect the outcome on the row itself. Derived from what
+                # this item actually appended, so a branch that writes nothing
+                # cannot silently mark a row done.
+                if len(results) > _before:
+                    _st = results[-1][2]
+                    root.after(0, lambda i=item, st=('done' if _st == 'OK'
+                               else ('error', str(_st).replace('ERROR: ', '', 1))):
+                               _mark_row(i, st))
             if results and not cancelled:
-                _write_batch_log(results, d, std_var.get(), log)
-            if not bespoke_map:
-                root.after(0, lambda v=next_slot: eif_slot_var.set(f"{v:04d}"))
+                _write_batch_log(results, d, std_var.get(), log, batch_notes)
 
         def _run_to_tga_seq():
             ffmpeg = _get_ffmpeg_path('ffmpeg')
@@ -4868,14 +5027,15 @@ def launch_gui():
             parity = 'bff' if fo == 'BFF' else 'tff'
             results = []
             cancelled = False
-            for item in _selected_items:
+            for item in todo:
+                _before = len(results)
                 if batch_cancel_event.is_set():
                     log("Batch cancelled.")
                     cancelled = True
                     break
                 # Bespoke names give each Sony clip its own output folder;
                 # without them every clip shares the single clip-name field.
-                cn_i = bespoke_map[_bespoke_key(item)] if (is_sony and bespoke_map) else cn
+                cn_i = id_map[_bespoke_key(item)] if (is_sony and id_map) else cn
                 try:
                     if item['type'] == 'tga_seq':
                         base = item['base'].rstrip('._- ') or 'CLIP'
@@ -4958,17 +5118,22 @@ def launch_gui():
                     name = item.get('base') or Path(item.get('path', '')).name
                     log(f"  ERROR: {name}: {e}\n{traceback.format_exc()}")
                     results.append((name, name, f'ERROR: {e}'))
+                # Reflect the outcome on the row itself. Derived from what
+                # this item actually appended, so a branch that writes nothing
+                # cannot silently mark a row done.
+                if len(results) > _before:
+                    _st = results[-1][2]
+                    root.after(0, lambda i=item, st=('done' if _st == 'OK'
+                               else ('error', str(_st).replace('ERROR: ', '', 1))):
+                               _mark_row(i, st))
             if results and not cancelled:
-                _write_batch_log(results, d, std_var.get(), log)
+                _write_batch_log(results, d, std_var.get(), log, batch_notes)
 
         def worker():
             batch_cancel_event.clear()
-            gap = missing_feature_note(out)
-            if gap and _has_audio_clips[0]:
-                log(f"NOTE: {gap}")
-            note = unverified_output_note(out)
-            if note:
-                log(f"NOTE: {note}")
+            for _n in batch_notes:
+                log(f"NOTE: {_n}")
+            if unverified_output_note(out):
                 log("      If you can test it on a desk, please say so: "
                     f"{CONTACT_EMAIL}")
             root.after(0, lambda: cancel_btn.config(state='normal'))
