@@ -1,8 +1,8 @@
 {
-  "version": "1.9.0",
+  "version": "1.9.1",
   "released": "2026-09-10",
-  "summary": "The Video Player now opens split files - clips over 4GB stored as a folder of parts - and loads long clips without running out of memory.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.9.0.zip",
+  "summary": "Fixes some SWS files being read half a line out, which made the picture look split down the middle. Affected conversions as well as playback.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.9.1.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "12.0"
 }

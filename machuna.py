@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -52,6 +52,25 @@ SWS_MAGIC       = b'S&W Kahuna Still'   # confirmed - used for both stills AND c
 SWS_VERSION     = b'9.6 Release 1'
 SWS_COPYRIGHT   = b'Copyright (c) : Grass Valley 2021'
 SWS_HEADER_SIZE = 512
+OFF_DATA_START  = 0x19C   # where the video planes begin; not always 512
+
+
+def sws_data_offset(raw: bytes) -> int:
+    """Where the video planes start, read from the header rather than assumed.
+
+    MacHuna writes SWS_HEADER_SIZE here and most files say 512, so this was
+    never read back - but some K-Watch files carry a 3072-byte header. Reading
+    those from 512 starts every frame 2560 bytes early, which is exactly half a
+    v210 line, and the picture appears split down the middle with the halves
+    swapped. Falls back to 512 for anything implausible.
+    """
+    try:
+        off = struct.unpack_from('>I', raw, OFF_DATA_START)[0]
+    except Exception:
+        return SWS_HEADER_SIZE
+    if SWS_HEADER_SIZE <= off <= (1 << 20) and off % 4 == 0:
+        return off
+    return SWS_HEADER_SIZE
 
 # Video standard codes (offset 0x188 in header)
 # Video standard codes confirmed by hex analysis of K-Watch reference files (2026-05-09).
@@ -1400,8 +1419,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
         log(f"  Scaling {h.width}×{h.height} → 1920×1080")
 
     header   = _build_eif_header(stem[:31].upper(), h.frame_count, fps)
-    fill_off = SWS_HEADER_SIZE
-    key_off  = SWS_HEADER_SIZE + h.plane_size * h.frame_count
+    fill_off = h.data_offset
+    key_off  = h.data_offset + h.plane_size * h.frame_count
 
     with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
         out.write(header)
@@ -1742,6 +1761,7 @@ class SWSHeader:
         if magic != SWS_MAGIC:
             raise ValueError(f"Not a valid SWS file (bad magic: {magic!r})")
 
+        self.data_offset = sws_data_offset(raw)
         self.std_code    = struct.unpack_from('>I', raw, OFF_STD_CODE)[0]
         self.width       = struct.unpack_from('>I', raw, OFF_WIDTH)[0]
         self.height      = struct.unpack_from('>I', raw, OFF_HEIGHT)[0]
@@ -1751,7 +1771,7 @@ class SWSHeader:
         # Split files zero 0x1A8, so play_count cannot answer this for them.
         # The total size can: header + fill, or header + fill + key.
         if self.parts:
-            planes = (self.total_size - SWS_HEADER_SIZE) // max(1, self.plane_size)
+            planes = (self.total_size - self.data_offset) // max(1, self.plane_size)
             self.has_key = planes > self.frame_count
         else:
             self.has_key = (self.play_count > 0)
@@ -2052,11 +2072,11 @@ class PlayerFrameCache:
             done = 0
             while done < h.frame_count and not self.cancelled:
                 n = min(_LOAD_BATCH_FRAMES, h.frame_count - done)
-                f.seek(SWS_HEADER_SIZE + done * h.plane_size)
+                f.seek(h.data_offset + done * h.plane_size)
                 fill_imgs = _player_decode_rgb(f.read(h.plane_size * n),
                                                h.width, h.height, n)
                 if h.has_key:
-                    f.seek(SWS_HEADER_SIZE + fill_plane_bytes + done * h.plane_size)
+                    f.seek(h.data_offset + fill_plane_bytes + done * h.plane_size)
                     key_arrays = _player_decode_gray(f.read(h.plane_size * n),
                                                      h.width, h.height, n)
                     # Composites are built in the same pass rather than a second
@@ -3063,6 +3083,7 @@ class HulaSWSHeader:
             raise ValueError("File too small to be a valid SWS file.")
         if raw[0:16] != SWS_MAGIC:
             raise ValueError(f"Not a valid SWS file (bad magic: {raw[0:16]!r})")
+        self.data_offset = sws_data_offset(raw)
         self.width       = struct.unpack_from('>I', raw, _HULA_OFF_WIDTH)[0]
         self.height      = struct.unpack_from('>I', raw, _HULA_OFF_HEIGHT)[0]
         self.plane_size  = struct.unpack_from('>I', raw, _HULA_OFF_PLANE_SZ)[0]
@@ -3147,8 +3168,8 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
     log(f"  {header}")
-    fill_off = SWS_HEADER_SIZE
-    key_off  = SWS_HEADER_SIZE + header.plane_size * header.frame_count
+    fill_off = header.data_offset
+    key_off  = header.data_offset + header.plane_size * header.frame_count
     log(f"  Decoding {header.frame_count} frame(s)...")
     with open(sws_path, 'rb') as f:
         for i in range(header.frame_count):
@@ -3281,8 +3302,8 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     out_count = n // 2
     if n % 2:
         log(f"  Warning: odd frame count ({n}) — last source frame skipped")
-    fill_off = SWS_HEADER_SIZE
-    key_off  = SWS_HEADER_SIZE + header.plane_size * n
+    fill_off = header.data_offset
+    key_off  = header.data_offset + header.plane_size * n
     log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
     cn = clip_name.upper()[:4].ljust(4)
     with open(sws_path, 'rb') as f:
@@ -3404,8 +3425,8 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha."""
     header   = HulaSWSHeader(sws_path)
     log(f"  {header}")
-    fill_off = SWS_HEADER_SIZE
-    key_off  = SWS_HEADER_SIZE + header.plane_size * header.frame_count
+    fill_off = header.data_offset
+    key_off  = header.data_offset + header.plane_size * header.frame_count
     out_path = os.path.join(dest_parent, f"{mov_number:04d}.mov")
     with tempfile.TemporaryDirectory() as tmp:
         raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')

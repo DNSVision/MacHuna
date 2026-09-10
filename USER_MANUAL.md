@@ -1,4 +1,4 @@
-# MacHuna v1.9.0 — User Manual
+# MacHuna v1.9.1 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -475,6 +475,8 @@ The built-in Video Player lets you check a file without needing a Kahuna or Kaye
 | `.MOV`, `.MP4`, `.MXF`, `.MKV`, `.AVI` | Yes (alpha preserved for ProRes 4444 etc.) | Yes |
 
 Click **Open…** and select a file. For TGA sequences, pick any frame from the sequence — MacHuna loads the whole sequence.
+
+> **If a clip looks split down the middle (v1.9.1).** Some K-Watch files place the video after a larger header than usual, and MacHuna used to assume a fixed position — reading every frame half a line early, which made the picture appear cut in half with the sides swapped. It now reads the position from the file. If you have converted any file that displayed this way, convert it again: the same fault affected Kayenne EIF, Kayenne TGA, Sony TGA and TGA sequence output, not just the player.
 
 **Split files (v1.9.0).** A clip over 4GB is stored as a *folder* named `<n>.SWS` containing `01_OF_03._XX`, `02_OF_03._XX` and so on. **Select the folder if your file dialog lets you, or open it and pick any one of the parts** — either loads the entire clip, not just the part you clicked. The info strip confirms it with `Split: 3 parts`. Before v1.9.0 these could not be opened at all: the dialog treats the folder as somewhere to navigate into, so you reached a single chunk, and only the first chunk carries a header. When opening a TGA sequence, you will be prompted for the frame rate (25fps default). For EIF files, the frame rate is detected automatically from the header.
 

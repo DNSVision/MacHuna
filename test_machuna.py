@@ -1163,3 +1163,48 @@ class TestSplitReader(unittest.TestCase):
         self.r.seek(len(self.data) - 10)
         self.assertEqual(self.r.read(500), self.data[-10:])
         self.assertEqual(self.r.read(10), b'')
+
+
+class TestDataOffset(unittest.TestCase):
+    """Where the video planes start is written at 0x19C, and is not always 512.
+
+    Some K-Watch files carry a 3072-byte header. Reading those from 512 starts
+    every frame 2560 bytes early - exactly half a v210 line - and the picture
+    appears split down the middle with the halves swapped. Found by David on a
+    1440-frame UCL clip once split files could be opened at all.
+    """
+
+    def _hdr(self, value):
+        raw = bytearray(machuna_header_stub())
+        struct.pack_into('>I', raw, m.OFF_DATA_START, value)
+        return bytes(raw)
+
+    def test_the_declared_offset_is_used(self):
+        self.assertEqual(m.sws_data_offset(self._hdr(3072)), 3072)
+        self.assertEqual(m.sws_data_offset(self._hdr(512)), 512)
+
+    def test_implausible_values_fall_back_to_512(self):
+        for bad in (0, 4, 511, 513, 1 << 24, 0xFFFFFFFF):
+            with self.subTest(bad=bad):
+                self.assertEqual(m.sws_data_offset(self._hdr(bad)), m.SWS_HEADER_SIZE)
+
+    def test_a_short_or_empty_header_falls_back(self):
+        self.assertEqual(m.sws_data_offset(b''), m.SWS_HEADER_SIZE)
+        self.assertEqual(m.sws_data_offset(b'\x00' * 16), m.SWS_HEADER_SIZE)
+
+    def test_machuna_writes_its_own_header_size_there(self):
+        # the field has always been written; it was simply never read back
+        hdr = m.build_sws_header('x.mov', 'clip', 1920, 1080, 5529600, 10, '1080p50')
+        self.assertEqual(struct.unpack_from('>I', hdr, m.OFF_DATA_START)[0],
+                         m.SWS_HEADER_SIZE)
+        self.assertEqual(m.sws_data_offset(hdr), m.SWS_HEADER_SIZE)
+
+    def test_half_a_v210_line_is_the_shear_that_was_seen(self):
+        # 1920-pixel v210 line is 5120 bytes; 3072 - 512 is half of it, which is
+        # why the picture looked split down the middle rather than scrambled
+        line = (1920 // 6) * 16
+        self.assertEqual(3072 - m.SWS_HEADER_SIZE, line // 2)
+
+
+def machuna_header_stub():
+    return m.build_sws_header('x.mov', 'clip', 1920, 1080, 5529600, 10, '1080p50')

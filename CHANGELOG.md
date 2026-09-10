@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.9.1 — 2026-09-10
+
+### Fixed
+- **Some SWS files were read half a line out, so the picture appeared split down the middle with the halves swapped.** The video planes do not always start at byte 512: the header says where they start, at `0x19C`, and some K-Watch files declare **3072**. MacHuna has always *written* that field but never read it back, so those files were read 2560 bytes early — which is exactly half a 1920-pixel v210 line, hence the split appearance rather than obvious corruption. The offset is now taken from the header, with a fallback to 512 for anything implausible.
+  - **This was not only the player. Four extraction paths made the same assumption**, so converting one of these files to Kayenne EIF, Kayenne TGA, Sony TGA or a TGA sequence produced the same sheared frames, silently. All fixed.
+  - It had been invisible because the affected files were large enough to be split, and split files could not be opened at all until v1.9.0. Fixing one bug exposed the other.
+  - Spotted by David on a 1440-frame UEFA clip. His first guess was the key plane, which turned out to be innocent — the shear hit fill, key and composite equally.
+
+### Notes for the record
+- Verified across all seven chunk joins of an 8-part clip, in both the fill and key planes: every straddling frame reads complete and is continuous with its neighbour. Nothing in the split reader or the offset fix is tied to a particular number of parts or clip length.
+- A test pins the arithmetic that explains the symptom: `3072 - 512` is exactly half a 1920-pixel v210 line, which is why the picture looked split rather than scrambled.
+
+---
+
 ## v1.9.0 — 2026-09-10
 
 ### Added
