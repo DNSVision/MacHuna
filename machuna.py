@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -41,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.8.1"
+VERSION = "1.9.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1604,12 +1605,137 @@ def _fmt_timecode(frame_count: int, fps: float) -> str:
     return f"{ss:.2f}s"
 
 
+# ─────────────────────────────────────────────────────────────
+#  Split SWS files
+#
+#  A clip over 4GB is written as a FOLDER named <n>.SWS containing
+#  01_OF_03._XX, 02_OF_03._XX ... Each chunk is exactly 2GB except the last.
+#  Concatenated they are one ordinary SWS stream: header | fill | key.
+#
+#  The player could not open these at all: the macOS file dialog treats the
+#  folder as somewhere to navigate into, so the user ended up selecting a single
+#  chunk - and only the first has a header.
+# ─────────────────────────────────────────────────────────────
+
+_SPLIT_PART_RE = re.compile(r'^(\d+)_OF_(\d+)\._XX$', re.I)
+
+
+def split_parts(folder: str) -> list:
+    """Ordered chunk paths for a split-SWS folder, or [] if it is not one.
+
+    Ordered by the number in the filename rather than by sort order, and only
+    returned if the set is complete - a missing chunk means a truncated clip,
+    and silently playing the parts that survived would be worse than refusing.
+    """
+    if not os.path.isdir(folder):
+        return []
+    found = {}
+    expected = None
+    for name in os.listdir(folder):
+        hit = _SPLIT_PART_RE.match(name)
+        if not hit:
+            continue
+        idx, total = int(hit.group(1)), int(hit.group(2))
+        if expected is None:
+            expected = total
+        elif expected != total:
+            return []                      # chunks disagree about the total
+        found[idx] = os.path.join(folder, name)
+    if not found or expected is None:
+        return []
+    if sorted(found) != list(range(1, expected + 1)):
+        return []                          # incomplete set
+    return [found[i] for i in range(1, expected + 1)]
+
+
+def resolve_split(path: str) -> list:
+    """Chunks for `path`, whether it names the folder or any part inside it.
+
+    Accepts either because the file dialog cannot select a folder with an
+    extension - it navigates into it - so the user reaches a chunk, not the
+    clip. Returns [] for anything that is not part of a split.
+    """
+    if os.path.isdir(path):
+        return split_parts(path)
+    if os.path.isfile(path) and _SPLIT_PART_RE.match(os.path.basename(path)):
+        return split_parts(os.path.dirname(path))
+    return []
+
+
+class SplitReader:
+    """Read a split SWS as though the chunks were one file.
+
+    Only seek/read/close are implemented, which is all the loader uses.
+    """
+
+    def __init__(self, paths: list):
+        self.paths = list(paths)
+        self.sizes = [os.path.getsize(p) for p in self.paths]
+        self.total = sum(self.sizes)
+        self._pos  = 0
+        self._fh   = None
+        self._open = -1
+
+    def _use(self, i):
+        if self._open != i:
+            if self._fh:
+                self._fh.close()
+            self._fh   = open(self.paths[i], 'rb')
+            self._open = i
+        return self._fh
+
+    def seek(self, pos, whence=0):
+        self._pos = pos if whence == 0 else (
+            self._pos + pos if whence == 1 else self.total + pos)
+        return self._pos
+
+    def tell(self):
+        return self._pos
+
+    def read(self, n=-1):
+        if n < 0:
+            n = self.total - self._pos
+        out  = bytearray()
+        left = n
+        while left > 0 and self._pos < self.total:
+            off, i = self._pos, 0
+            while off >= self.sizes[i]:
+                off -= self.sizes[i]
+                i += 1
+            take = min(left, self.sizes[i] - off)
+            f = self._use(i)
+            f.seek(off)
+            got = f.read(take)
+            if not got:
+                break
+            out += got
+            self._pos += len(got)
+            left      -= len(got)
+        return bytes(out)
+
+    def close(self):
+        if self._fh:
+            self._fh.close()
+            self._fh = None
+            self._open = -1
+
+    def __enter__(self):  return self
+    def __exit__(self, *a):  self.close()
+
+
 class SWSHeader:
     """Parsed SWS file header (player read side)."""
 
     def __init__(self, path: str):
-        with open(path, 'rb') as f:
-            raw = f.read(SWS_HEADER_SIZE)
+        self.parts = resolve_split(path)
+        if self.parts:
+            reader = SplitReader(self.parts)
+            raw, self.total_size = reader.read(SWS_HEADER_SIZE), reader.total
+            reader.close()
+        else:
+            with open(path, 'rb') as f:
+                raw = f.read(SWS_HEADER_SIZE)
+            self.total_size = os.path.getsize(path)
         if len(raw) < SWS_HEADER_SIZE:
             raise ValueError("File too small to be a valid SWS file.")
         magic = raw[OFF_MAGIC:OFF_MAGIC + 16]
@@ -1622,7 +1748,13 @@ class SWSHeader:
         self.plane_size  = struct.unpack_from('>I', raw, OFF_PLANE_SZ)[0]
         self.frame_count = struct.unpack_from('>I', raw, OFF_FRAMES)[0]
         self.play_count  = struct.unpack_from('>I', raw, OFF_PLAY_CNT)[0]
-        self.has_key     = (self.play_count > 0)
+        # Split files zero 0x1A8, so play_count cannot answer this for them.
+        # The total size can: header + fill, or header + fill + key.
+        if self.parts:
+            planes = (self.total_size - SWS_HEADER_SIZE) // max(1, self.plane_size)
+            self.has_key = planes > self.frame_count
+        else:
+            self.has_key = (self.play_count > 0)
 
         aud_frame_size   = struct.unpack_from('>H', raw, OFF_AUD_FSZ)[0]
         aud_offset_div32 = struct.unpack_from('>I', raw, OFF_AUD_OFF)[0]
@@ -1888,6 +2020,9 @@ class _PlayerHeader:
         self.standard    = standard
 
 
+_LOAD_BATCH_FRAMES = 20     # frames decoded per pass; caps peak memory
+
+
 class PlayerFrameCache:
     """Loads and decodes all frames from an SWS file into memory."""
 
@@ -1900,55 +2035,55 @@ class PlayerFrameCache:
         self._load(progress_cb)
 
     def _load(self, progress_cb):
+        """Decode the clip a batch of frames at a time.
+
+        This used to read the whole fill plane in one call and decode it in one
+        go. That is fine for a 50-frame wipe and impossible for a long one: a
+        1000-frame 1080p clip is a 5.5 GB single read before any decoding starts,
+        which is why large split files could not be opened at all. The finished
+        cache is identical either way - the frames are stored at panel size, so
+        the *result* was never the problem, only the peak.
+        """
         h = self.header
-        file_size = os.path.getsize(self.path)
-
-        with open(self.path, 'rb') as f:
-            if progress_cb:
-                progress_cb(5, "Reading fill plane...")
-            f.seek(SWS_HEADER_SIZE)
-            fill_plane_bytes = h.plane_size * h.frame_count
-            fill_raw = f.read(fill_plane_bytes)
-
-            if progress_cb:
-                progress_cb(15, "Decoding fill plane...")
-            fill_images = _player_decode_rgb(fill_raw, h.width, h.height, h.frame_count)
-            del fill_raw
-
-            self.frames = [[img, None, None] for img in fill_images]
-
-            if h.has_key and not self.cancelled:
+        fill_plane_bytes = h.plane_size * h.frame_count
+        f = SplitReader(h.parts) if h.parts else open(self.path, 'rb')
+        try:
+            self.frames = []
+            done = 0
+            while done < h.frame_count and not self.cancelled:
+                n = min(_LOAD_BATCH_FRAMES, h.frame_count - done)
+                f.seek(SWS_HEADER_SIZE + done * h.plane_size)
+                fill_imgs = _player_decode_rgb(f.read(h.plane_size * n),
+                                               h.width, h.height, n)
+                if h.has_key:
+                    f.seek(SWS_HEADER_SIZE + fill_plane_bytes + done * h.plane_size)
+                    key_arrays = _player_decode_gray(f.read(h.plane_size * n),
+                                                     h.width, h.height, n)
+                    # Composites are built in the same pass rather than a second
+                    # one, so the decoded planes are never both held whole.
+                    for img, key_gray in zip(fill_imgs, key_arrays):
+                        self.frames.append([
+                            img,
+                            Image.fromarray(key_gray, 'L'),
+                            Image.fromarray(_make_composite(np.array(img), key_gray), 'RGB'),
+                        ])
+                else:
+                    self.frames.extend([[img, None, None] for img in fill_imgs])
+                done += n
                 if progress_cb:
-                    progress_cb(50, "Reading key plane...")
-                f.seek(SWS_HEADER_SIZE + fill_plane_bytes)
-                key_raw = f.read(fill_plane_bytes)
-
-                if progress_cb:
-                    progress_cb(60, "Decoding key plane...")
-                key_arrays = _player_decode_gray(key_raw, h.width, h.height, h.frame_count)
-                del key_raw
-
-                if progress_cb:
-                    progress_cb(75, "Building composites...")
-                for i, (frame_data, key_gray) in enumerate(zip(self.frames, key_arrays)):
-                    if self.cancelled:
-                        break
-                    key_img  = Image.fromarray(key_gray, 'L')
-                    comp_rgb = _make_composite(np.array(frame_data[0]), key_gray)
-                    comp_img = Image.fromarray(comp_rgb, 'RGB')
-                    frame_data[1] = key_img
-                    frame_data[2] = comp_img
-            else:
-                for frame_data in self.frames:
-                    frame_data[2] = frame_data[0]
+                    progress_cb(int(done / max(1, h.frame_count) * 90),
+                                f"Decoding frame {done} of {h.frame_count}...")
 
             if h.has_audio and not self.cancelled:
                 if progress_cb:
-                    progress_cb(90, "Loading audio...")
-                audio_len = file_size - h.audio_offset
+                    progress_cb(95, "Loading audio...")
+                # total_size, not getsize: a split clip's path is a folder.
+                audio_len = h.total_size - h.audio_offset
                 if audio_len > 0:
                     f.seek(h.audio_offset)
                     self.audio_pcm = f.read(audio_len)
+        finally:
+            f.close()
 
         if progress_cb:
             progress_cb(100, "Ready.")
@@ -2350,6 +2485,13 @@ class SWSPlayer(tk.Toplevel):
             return
         self._initial_dir = str(Path(path).parent)
 
+        # A split clip is a folder, and the macOS dialog navigates into folders
+        # rather than selecting them - so the user arrives at a chunk, not the
+        # clip. Accept either.
+        if resolve_split(path):
+            self._load_sws(path)
+            return
+
         ext = Path(path).suffix.lower()
         if ext == '.sws':
             self._load_sws(path)
@@ -2362,6 +2504,11 @@ class SWSPlayer(tk.Toplevel):
 
     def _reset_display(self):
         self._on_stop()
+        # Release the previous clip's images from the permanent generation
+        # before dropping them. gc.freeze() after a load stops them being
+        # scanned during playback; without this pairing they would never be
+        # collected at all and every clip opened would leak.
+        gc.unfreeze()
         self._photo_fill = []
         self._photo_key  = []
         self._photo_comp = []
@@ -2388,11 +2535,14 @@ class SWSPlayer(tk.Toplevel):
         flags_str = f"  [{', '.join(flags)}]" if flags else ""
         std = header.standard.replace('/', '')
         tc  = _fmt_timecode(header.frame_count, header.fps)
+        # Say when a clip is split, so it is clear the whole thing is loaded
+        # rather than one part of it.
+        split_str = f"  Split: {len(header.parts)} parts" if header.parts else ""
         self._info_var.set(
             f"SWS  {std}  {header.frame_count}frms  {tc}  "
             f"Key: {'Yes' if header.has_key else 'No'}  "
             f"Audio: {'Yes' if header.has_audio else 'No'}"
-            f"{flags_str}"
+            f"{flags_str}{split_str}"
         )
         self._status_var.set("Loading frames...")
         self._progress['value'] = 0
@@ -2573,6 +2723,34 @@ class SWSPlayer(tk.Toplevel):
             self._photo_fill.append(ImageTk.PhotoImage(fill_img))
             self._photo_key.append(ImageTk.PhotoImage(key_img) if key_img else None)
             self._photo_comp.append(ImageTk.PhotoImage(comp_img) if comp_img else None)
+
+        # Two measures against the first-play stutter. Both are cheap and both
+        # are UNPROVEN: the stutter is reduced or not, we cannot tell, and it is
+        # certainly not eliminated. Kept because the cost was measured at
+        # effectively nothing (0.35s on a 1000-frame clip, 0.04s on a short one,
+        # against a 24-second load) and there is no evidence they do not help.
+        # Do not treat them as load-bearing, and do not remove them assuming
+        # they are useless - neither is established.
+        #
+        #  1. Draw every frame once now, while the status bar already says the
+        #     player is busy, so whatever macOS does lazily on an image's first
+        #     appearance is paid for here instead of mid-playback.
+        #  2. Move the several thousand image objects out of the garbage
+        #     collector's reach. Nothing here is ever collected while the clip
+        #     is loaded, so scanning them can only cost time.
+        #
+        # The likely real cause is in _playback_loop: it schedules each frame
+        # and then sleeps a fixed interval without ever checking the previous
+        # frame was drawn. With no back-pressure, drawing that runs over budget
+        # queues callbacks and they arrive in bunches. Fixing that means pacing
+        # against display completion rather than a fixed sleep - real work, on a
+        # player whose job is a confidence check, so deliberately not attempted.
+        self._status_var.set("Preparing playback...")
+        self.update_idletasks()
+        for photo in self._photo_fill:
+            self._fill_canvas.itemconfigure(self._fill_item, image=photo)
+        self._fill_canvas.update_idletasks()
+        gc.freeze()
 
         # Update info bar for TGA/video (SWS info already set before load thread)
         if isinstance(header, _PlayerHeader):

@@ -1,4 +1,4 @@
-# MacHuna v1.8.1 — User Manual
+# MacHuna v1.9.0 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -469,11 +469,14 @@ The built-in Video Player lets you check a file without needing a Kahuna or Kaye
 | Input | Fill / Key / Composite | Audio |
 |---|---|---|
 | `.SWS` | Yes | Yes (if present in file) |
+| `.SWS` **split files** (a folder of `01_OF_03._XX` parts) | Yes | Split files carry no audio |
 | `.EIF` (Kayenne native) | Yes — fill, key, and composite all populated | No |
 | `.TGA` sequence (pick any frame) | Yes (if TGAs have alpha) | No |
 | `.MOV`, `.MP4`, `.MXF`, `.MKV`, `.AVI` | Yes (alpha preserved for ProRes 4444 etc.) | Yes |
 
-Click **Open…** and select a file. For TGA sequences, pick any frame from the sequence — MacHuna loads the whole sequence. When opening a TGA sequence, you will be prompted for the frame rate (25fps default). For EIF files, the frame rate is detected automatically from the header.
+Click **Open…** and select a file. For TGA sequences, pick any frame from the sequence — MacHuna loads the whole sequence.
+
+**Split files (v1.9.0).** A clip over 4GB is stored as a *folder* named `<n>.SWS` containing `01_OF_03._XX`, `02_OF_03._XX` and so on. **Select the folder if your file dialog lets you, or open it and pick any one of the parts** — either loads the entire clip, not just the part you clicked. The info strip confirms it with `Split: 3 parts`. Before v1.9.0 these could not be opened at all: the dialog treats the folder as somewhere to navigate into, so you reached a single chunk, and only the first chunk carries a header. When opening a TGA sequence, you will be prompted for the frame rate (25fps default). For EIF files, the frame rate is detected automatically from the header.
 
 ### 10.2 Display Layout
 
@@ -493,7 +496,13 @@ Click **Open…** and select a file. For TGA sequences, pick any frame from the 
 | Pause | Pause at the current frame |
 | Stop | Stop and return to the first frame |
 
-### 10.4 Notes
+### 10.4 Playback Stutter
+
+**Playback can stutter for the first few plays of a clip, then settles.** This is a limitation of the player, not a fault in your file — if a clip stutters on the first pass and plays cleanly on the second, the clip is fine.
+
+The player exists as a confidence check: to see that a clip is what you expected before it goes to a desk. It is not a broadcast playout tool, and smooth first-pass playback would need it rebuilt around a proper media view. That is a job for the native rewrite rather than something to patch here.
+
+### 10.5 Notes
 
 - Multiple player windows can be open simultaneously
 - Split `.SWS` files (>4GB, multi-chunk) cannot currently be previewed

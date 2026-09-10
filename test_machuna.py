@@ -1060,3 +1060,106 @@ class TestRemovedCodeStaysRemoved(unittest.TestCase):
                        'verify=False', '--insecure', 'check_hostname = False'):
             with self.subTest(banned=banned):
                 self.assertNotIn(banned, self.src)
+
+
+# ── split SWS files ───────────────────────────────────────────────────────────
+
+class TestSplitDetection(unittest.TestCase):
+    """A clip over 4GB is a FOLDER of 2GB chunks. The player could not open one
+    at all: the file dialog navigates into the folder, so the user reached a
+    chunk, and only the first chunk has a header."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def _make(self, name, parts):
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d, exist_ok=True)
+        for p, data in parts.items():
+            with open(os.path.join(d, p), 'wb') as f:
+                f.write(data)
+        return d
+
+    def test_a_complete_set_is_found_in_order(self):
+        d = self._make('1.SWS', {'02_OF_03._XX': b'b', '01_OF_03._XX': b'a',
+                                 '03_OF_03._XX': b'c'})
+        self.assertEqual([os.path.basename(p) for p in m.split_parts(d)],
+                         ['01_OF_03._XX', '02_OF_03._XX', '03_OF_03._XX'])
+
+    def test_ordering_is_numeric_not_alphabetical(self):
+        parts = {f'{i:02d}_OF_12._XX': b'x' for i in range(1, 13)}
+        d = self._make('2.SWS', parts)
+        got = [os.path.basename(p) for p in m.split_parts(d)]
+        self.assertEqual(got[0], '01_OF_12._XX')
+        self.assertEqual(got[-1], '12_OF_12._XX')
+
+    def test_an_incomplete_set_is_refused(self):
+        # a missing chunk means a truncated clip; playing what survived would
+        # be worse than refusing
+        d = self._make('3.SWS', {'01_OF_03._XX': b'a', '03_OF_03._XX': b'c'})
+        self.assertEqual(m.split_parts(d), [])
+
+    def test_chunks_disagreeing_about_the_total_are_refused(self):
+        d = self._make('4.SWS', {'01_OF_03._XX': b'a', '02_OF_04._XX': b'b'})
+        self.assertEqual(m.split_parts(d), [])
+
+    def test_an_ordinary_folder_is_not_a_split(self):
+        d = self._make('5.SWS', {'notes.txt': b'x'})
+        self.assertEqual(m.split_parts(d), [])
+        self.assertEqual(m.resolve_split(d), [])
+
+    def test_selecting_any_part_resolves_the_whole_clip(self):
+        d = self._make('6.SWS', {'01_OF_02._XX': b'a', '02_OF_02._XX': b'b'})
+        for part in ('01_OF_02._XX', '02_OF_02._XX'):
+            with self.subTest(part=part):
+                self.assertEqual(len(m.resolve_split(os.path.join(d, part))), 2)
+
+    def test_a_plain_file_is_not_a_split(self):
+        f = os.path.join(self.tmp, 'plain.SWS')
+        open(f, 'wb').write(b'x')
+        self.assertEqual(m.resolve_split(f), [])
+        self.assertEqual(m.resolve_split(os.path.join(self.tmp, 'nope')), [])
+
+
+class TestSplitReader(unittest.TestCase):
+    """Reads across the chunk joins as though they were one file."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        d = os.path.join(self.tmp, '1.SWS')
+        os.makedirs(d)
+        self.data = bytes(range(256)) * 40          # 10240 bytes
+        for i, start in enumerate(range(0, len(self.data), 4096), start=1):
+            with open(os.path.join(d, f'{i:02d}_OF_03._XX'), 'wb') as f:
+                f.write(self.data[start:start + 4096])
+        self.r = m.SplitReader(m.split_parts(d))
+
+    def tearDown(self):
+        self.r.close()
+
+    def test_total_size_spans_every_chunk(self):
+        self.assertEqual(self.r.total, len(self.data))
+
+    def test_reading_the_whole_thing_matches(self):
+        self.r.seek(0)
+        self.assertEqual(self.r.read(), self.data)
+
+    def test_a_read_spanning_a_join_is_correct(self):
+        # the case that matters: a frame straddling two chunks
+        self.r.seek(4000)
+        self.assertEqual(self.r.read(200), self.data[4000:4200])
+
+    def test_a_read_spanning_two_joins_is_correct(self):
+        self.r.seek(4090)
+        self.assertEqual(self.r.read(4100), self.data[4090:8190])
+
+    def test_seek_and_tell_agree(self):
+        self.r.seek(1234)
+        self.assertEqual(self.r.tell(), 1234)
+        self.r.read(10)
+        self.assertEqual(self.r.tell(), 1244)
+
+    def test_reading_past_the_end_returns_what_exists(self):
+        self.r.seek(len(self.data) - 10)
+        self.assertEqual(self.r.read(500), self.data[-10:])
+        self.assertEqual(self.r.read(10), b'')

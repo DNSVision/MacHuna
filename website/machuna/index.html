@@ -145,13 +145,13 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Current release</p>
     <div class="dl">
       <div class="dl-top">
-        <span class="dl-ver">v1.8.1</span>
-        <span class="dl-date">9 September 2026</span>
+        <span class="dl-ver">v1.9.0</span>
+        <span class="dl-date">10 September 2026</span>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.8.1.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
+        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.9.0.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
         <a class="btn btn-ghost" href="MacHuna_User_Manual.pdf">User manual <span class="sz">PDF</span></a>
-        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.8.1">Contact developer</a>
+        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.9.0">Contact developer</a>
       </div>
       <div class="req">
         <span><b>macOS 12</b> or later</span>
@@ -240,7 +240,16 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <div class="rel">
 
       <div class="rel-item current">
-        <div class="rel-v">v1.8.1 <span>9 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-v">v1.9.0 <span>10 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-body">
+          <p class="lead">The Video Player now opens split files.</p>
+          <p>A clip over 4&nbsp;GB is stored as a folder of 2&nbsp;GB parts, and the player could not open one at all &mdash; the file dialog treats the folder as somewhere to go into, so you ended up picking a single part. <b>Select the folder, or any part inside it, and the whole clip loads.</b> The info strip confirms it with <span class="mono">Split: 3 parts</span>.</p>
+          <p>Long clips also load without running out of memory: the player now decodes a batch of frames at a time instead of reading the entire video plane in one go, so a 1000&#8209;frame clip peaks at 1.4&nbsp;GB rather than needing 5.5&nbsp;GB in one lump. That was never really a split&#8209;file limit &mdash; a single large file would have failed the same way.</p>
+        </div>
+      </div>
+
+      <div class="rel-item">
+        <div class="rel-v">v1.8.1 <span>9 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">Two fixes to the new item list.</p>
           <p>The list now genuinely grows when you make the window taller &mdash; v1.8.0 claimed that and did not do it &mdash; and the scrollbar sits beside the list again rather than out at the edge of the window.</p>
@@ -321,7 +330,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Problems and requests</p>
     <div class="contact">
       <p class="note" style="color:var(--silver)">MacHuna was vibecoded by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
-      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.8.1">machuna@dnsvision.tv</a>
+      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.9.0">machuna@dnsvision.tv</a>
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>

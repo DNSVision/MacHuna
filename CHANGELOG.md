@@ -4,6 +4,27 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.9.0 — 2026-09-10
+
+### Added
+- **The Video Player opens split files.** A clip over 4GB is written as a folder of 2GB chunks, and the player could not open one at all — the macOS file dialog treats the folder as somewhere to navigate into, so you ended up selecting a single chunk, and only the first chunk carries a header. Reported by a user trying to check a 20-second, 1000-frame graphic bed.
+  - **Select the folder, or any chunk inside it** — either loads the whole clip. Both are accepted because the dialog will not let you pick the folder.
+  - The info strip says **`Split: 3 parts`**, so it is clear the whole clip is loaded rather than one piece of it.
+  - Concatenated, the chunks are one ordinary SWS stream, so nothing else about playback changes. Frames that straddle a 2GB join were checked specifically.
+
+### Changed
+- **The player loads a clip a batch of frames at a time** instead of reading the whole video plane in one call. That single read was the real blocker: a 1000-frame 1080p clip needed **5.5 GB in one object** before any decoding began. Peak memory is now **1.37 GB** for the same clip, and the finished cache is pixel-identical — verified frame by frame across fill, key and composite against the old path. Short clips are unaffected and load no slower.
+  - This was never really a split-file limit. A single 4GB SWS would have failed the same way.
+
+### Fixed
+- **A split file with a key plane would have played back as keyless.** `has_key` was read from byte `0x1A8`, which split files deliberately zero. It is now derived from the total size across the chunks, which cannot be fooled.
+- Audio length is taken from the concatenated total rather than `getsize()`, which would fail on a split clip's folder. Split files carry no audio today, so this was a trap rather than a bug.
+
+### Known limitation
+- **Playback still stutters for the first few plays of a clip**, then settles. It is not decoding — playback does none, the frames are already decoded and converted. The likely cause is in the playback loop: it schedules each frame and then sleeps a fixed interval without checking the previous frame was drawn, so with no back-pressure any drawing that runs over budget queues up and arrives in bunches. Two cheap counter-measures are in place (drawing every frame once at load, and keeping the image objects out of the garbage collector's reach); their cost is measured at effectively nothing but **their benefit is unproven**. Fixing it properly means pacing playback against display completion, which is real video-player engineering on a feature whose job is a confidence check — deliberately not attempted.
+
+---
+
 ## v1.8.1 — 2026-09-09
 
 ### Fixed
