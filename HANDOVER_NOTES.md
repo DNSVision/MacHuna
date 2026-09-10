@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `1c4b146` - 2026-09-10. **v1.9.0 is built, released, published and live.**
+**Understanding baseline:** commit `fdb6bd2` - 2026-09-10. **v1.9.1 is built, released, published and live.**
+
+**v1.9.1 - the data offset is read from the header, not assumed.** Some SWS files put the video planes after a **3072-byte header**, not 512. `0x19C` has always said so (MacHuna writes its own header size there) and nothing ever read it back, so those files were read **2560 bytes early = exactly half a 1920-pixel v210 line**, and the picture looked split down the middle with the halves swapped. **Four extraction paths had the same hardcoded 512**, so converting such a file to EIF/Kayenne TGA/Sony TGA/TGA-sequence sheared it silently. Invisible until v1.9.0 because the affected files were big enough to be split and splits could not be opened at all - fixing one bug exposed the other. Use `sws_data_offset()`; never hardcode 512 for where data starts. Verified across all seven joins of an 8-part clip in both planes.
 
 **v1.9.0 - the Video Player opens split files, and loads long clips at all.** A user could not check a 20-second graphic bed. A clip over 4GB is a *folder* of 2GB chunks, and the macOS file dialog navigates into folders rather than selecting them - so they reached a single chunk, and only the first carries a header. The folder **or any chunk inside it** now loads the whole clip; the info strip says `Split: 3 parts`.
 
