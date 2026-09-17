@@ -168,12 +168,14 @@ Fix 14 (clip→EIF speed, v1.6.11) cleared the last item that could be done with
 
 The single most important outstanding work in the project. When a live K-Frame ClipStore / Image Store is available, run the "Priority hardware test steps" above and, in the same visit, capture what's needed to close the other unknowns. Get through as much of this checklist as the desk time allows:
 
+- [ ] **THE KNOCKOUT_WIPE ROUND TRIP — do this first.** David's plan, and the highest-value test on the list: load one known MOV into the K-Frame, let the desk convert it natively, then analyse what the desk produced against the source. It answers several questions at once and needs no MacHuna output to be correct first. Full baseline below.
+
 - [ ] **EIF write, 50fps (core go/no-go)** — Convert a known short 50fps TGA sequence to `0001.eif`, import, verify: file appears, frame count correct, plays at correct speed, colours correct, key correct.
 - [ ] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
 - [ ] **Capture a real 25fps `.eif`** produced by the K-Frame itself → hex-compare offset 0x8DC to verify or correct the assumed `b'RIFFRIFF'` movi chunk tag (the 50fps value is already confirmed).
 - [ ] **Capture a real interlaced `.eif`**, or otherwise establish how the desk stores originally-interlaced content (50p progressive, 25p field-pairs, or other). Settles the "1080i in EIF" unknown and tells us which write path's interlaced handling is correct.
 - [x] ~~**Capture a real `.eaf`**~~ - **DONE, and it never needed the desk.** Six real `.eaf` files were already on David's Mac in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`-`0007`, `0022`). Found 2026-09-09 by searching the machine rather than re-reading the note that said they were unobtainable.
-- [ ] **Confirm the `.eaf` channel mapping** - the one part still needing a desk or an operator. `0003.eaf` carries audio on channels 1, 2, 3, 4, 6 and 8; `0022.eaf` only on 4, 6 and 8 at round levels (test tones). Which channels a K-Frame treats as programme audio is unknown, and it is needed before MacHuna can *write* an `.eaf`. Reading is already solved.
+- [ ] **Confirm the `.eaf` channel mapping** - the one part still needing a desk. Programme audio sits on channels **1 and 3 (zero-indexed)** in all six reference files; channels 0 and 2 carry loud non-audio spikes and 4-7 are silent. Reading is solved and confirmed by ear (2026-09-17). What is still unknown is which channels a K-Frame *expects* when reading, which is needed before MacHuna can *write* an `.eaf`. **The KNOCKOUT_WIPE round trip below should answer this outright.**
 - [ ] **Tail length** — obtain one reference file with frame_count < 36 and one with ≥ 36 → confirm whether the desk cares about the 128 vs 140-byte tail.
 - [ ] **Clip name / slot rules** — try importing with a clip name (0x004) that does not match the filename stem, and with non-contiguous / non-`0001` start slots → learn whether the desk enforces either.
 - [ ] **While a desk is available, verify the other unconfirmed extraction outputs too:** EIF→SWS (lossless), EIF→K-Frame TGA, EIF→Sony TGA, K-Frame TGA output, and Sony MVS 25i field order. **QuickTime MOV is deliberately not on this list** - it is an ordinary ProRes file, verified by opening it, with no desk behaviour to confirm. See the two hardware-unknowns tables above.
@@ -188,6 +190,43 @@ The single most important outstanding work in the project. When a live K-Frame C
 #### Priority 3 — pure code, no hardware needed (lowest priority — no demand yet)
 
 - ~~**EIF→MOV**~~ — DONE in v1.10.0 as part of QuickTime MOV output, with `.eaf` audio.
+
+### KNOCKOUT_WIPE round-trip baseline (measured 2026-09-17, before the desk visit)
+
+**The plan.** Load one real broadcaster MOV into the K-Frame, let the desk convert it to its own `.eif` + `.eaf`, and bring those files back for analysis against the source. Because we know exactly what went in, whatever comes out is self-decoding. **This is a better test than checking MacHuna's output, because it needs nothing of ours to be right first.**
+
+**Source:** `~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov` (80,201,668 bytes, created 2026-03-31). Do not re-encode or rename it; the whole value is in knowing precisely what went in.
+
+| Property | Measured value |
+|---|---|
+| Video | ProRes 4444, `yuva444p12le`, 1920x1080 |
+| Frame rate / count | 50fps, **85 frames**, 1.700s |
+| Key | Real and moving: transparent at frame 0, wipes in over 10-30, fully opaque 50-60, wipes out at 70, transparent at 84 |
+| Audio | PCM `s16le`, 48kHz, **stereo (2ch)**, 81,600 samples, 1.700s |
+| Samples per video frame | **960** (48000 / 50) |
+| Left channel | peak 9650, rms 1802.7, 1442 zero-crossings, md5 `975a2d1cdc5f0461` |
+| Right channel | peak 10381, rms 1809.7, 1703 zero-crossings, md5 `05c89ba59573bbe9` |
+| L vs R | **Genuinely different** — correlation 0.40, different checksums |
+
+**Why L and R differing matters.** It means the desk's output tells us not just *which* channels carry audio but *which is which*. Had the source been mono-as-stereo we could never have separated left from right.
+
+**Falsifiable predictions for the desk's `.eaf`.** Each one either confirms the format or tells us something specific:
+
+| Offset | Prediction | What it settles if wrong |
+|---|---|---|
+| file size | **1,305,728** bytes (81,600 x 8ch x 2 bytes + 128) | The channel count or header size is not fixed |
+| `0x64` | **81600** (sample count) | The field is not a sample count |
+| `0x6A` | **85** (frame count) | The field is not a frame count |
+| `0x62` | **960** | We read this as samples-per-frame from 25fps files where it is 1920. If a 50fps file also says 1920, it means something else entirely |
+| `0x00` | **285365** | Not the constant we assumed |
+| channels | L on **1**, R on **3** (zero-indexed) | **The channel mapping question, answered outright** |
+| channels 0, 2 | Whatever they are, they are not this audio | Identifies what those spikes actually carry |
+
+**Predictions for the desk's `.eif`:** frame count at `0x06C` = **85**; frame duration at `0x0FC` = **20000** us (50fps); audio flag at `0x60` = **`0x07`**, since this clip genuinely has a companion. A key that varies frame to frame, matching the alpha profile above.
+
+**What this does NOT settle:** whether a desk *accepts* a MacHuna-written `.eif`/`.eaf`. That still needs our output loaded. But it gives us a correct reference to build against first, which is the right order.
+
+**On the day, capture:** both output files, the slot number used, and anything the desk says about the import. Note whether the desk re-levelled the audio — if the `.eaf` samples match the source md5s exactly it did not, and we can write bit-exact audio.
 
 ### Future Considerations
 - HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
