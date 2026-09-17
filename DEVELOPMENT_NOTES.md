@@ -87,7 +87,7 @@ git push
 > **This is the single authoritative list of open work.** `README.md` and `HANDOVER_NOTES.md` point here rather than keeping their own copies. The detailed sections lower down (EIF Roadmap, Outstanding review items, Extraction output hardware unknowns, Future Considerations) hold the specifics; this is the index. Reconcile it against git and the code when resuming - see the Session Anchor in `HANDOVER_NOTES.md`.
 
 **Blocked on hardware (the gate before "feature-complete"):**
-- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. Unblocks: EIF write confirmation, 25fps movi tag, tail length, clip-name/slot rules, interlaced-EIF storage. **`.eaf` audio is no longer on this list** - the format was decoded on 2026-09-09 from David's own test files (see below), and **reading it shipped in v1.10.0**. Only *writing* an `.eaf` still needs the desk, because which channels a K-Frame expects is unknown - as is the `0x60` bit 2 audio flag, which is agenda item one.
+- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. **Top two items: the `0x60` audio-flag test and the KNOCKOUT_WIPE round trip.** Unblocks: EIF write confirmation, 25fps movi tag, tail length, clip-name/slot rules, interlaced-EIF storage. **`.eaf` audio is no longer on this list** - the format was decoded on 2026-09-09 from David's own test files (see below), and **reading it shipped in v1.10.0**. Only *writing* an `.eaf` still needs the desk, because which channels a K-Frame expects is unknown - as is the `0x60` bit 2 audio flag, which is agenda item one.
 - **Extraction outputs on real desks** - K-Frame TGA, Sony TGA clip naming, Sony MVS 25i field order, MOV to TGA. See "Extraction output hardware unknowns" below. **QuickTime MOV is not on this list**: since v1.10.0 it is an ordinary ProRes 4444 file for an edit suite, verified by opening it, not a desk format.
 - **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
 
@@ -183,6 +183,21 @@ Fix 14 (clip→EIF speed, v1.6.11) cleared the last item that could be done with
 #### Priority 1 — the EIF hardware test session (unblocks almost everything below)
 
 The single most important outstanding work in the project. When a live K-Frame ClipStore / Image Store is available, run the "Priority hardware test steps" above and, in the same visit, capture what's needed to close the other unknowns. Get through as much of this checklist as the desk time allows:
+
+- [ ] **THE `0x60` AUDIO-FLAG TEST — the highest-value question on the list.** *(Kept out of these docs until 2026-09-17 so an unproven finding was not recorded as fact. David asked for it written down; it is a question to answer, not an established conclusion.)*
+
+  **The finding, unproven.** Across all 28 real K-Frame files, `.eif` header byte `0x60` bit 2 (`0x04`) predicts the presence of a companion `.eaf` with no exceptions: `0x07` on every clip that has one, `0x03` on every clip and still that does not. Of 18,260 header bytes, exactly one was constant across the six audio clips and different in the audio-less one, against 10,818 bytes that differ between two clips that *both* have audio. That is not noise.
+
+  **The problem.** `_build_eif_header` writes `0x07` unconditionally, so **every `.eif` MacHuna has ever produced announces an audio companion that does not exist.** Colleagues report the files load fine, so the desk is probably tolerant — but "probably" is what the visit is for.
+
+  **The test, two loads.** Import one MacHuna `.eif` as-is (`0x07`, no companion) and one with that byte patched to `0x03`. Does the desk behave differently: refuse it, hang, mute, log anything?
+
+  | Outcome | What to do |
+  |---|---|
+  | No difference | Leave it alone. It is a cosmetic lie and not worth the risk of changing |
+  | Desk objects to `0x07` without a companion | Set the bit from whether audio is actually being written. **Only then** |
+
+  **Do not "fix" this byte beforehand** (David, 2026-09-09, restated 2026-09-17): people are happy with what they have and it is not worth risking on a hypothesis.
 
 - [ ] **THE KNOCKOUT_WIPE ROUND TRIP — do this first.** David's plan, and the highest-value test on the list: load one known MOV into the K-Frame, let the desk convert it natively, then analyse what the desk produced against the source. It answers several questions at once and needs no MacHuna output to be correct first. Full baseline below.
 

@@ -4,7 +4,7 @@ MacHuna is a single-file Python app (`machuna.py`) that translates broadcast med
 
 ## Dev environment
 
-- Machine: MacBook (Apple Silicon M5)
+- Machine: MacBook (Apple Silicon M5), **macOS 27.0 "Golden Gate"** (build 26A428, upgraded ~2026-09-17). The upgrade reset Terminal/Python TCC grants, so directory listing of `~/Desktop` may fail with "operation not permitted" while a known file path still reads. Ask David for exact paths rather than browsing. **Do not change macOS permissions.**
 - Python: `/opt/homebrew/bin/python3.12`
 - Build: `python3.12 -m PyInstaller MacHuna.spec -y`
 - Run for testing: `/opt/homebrew/bin/python3.12 machuna.py --gui`
@@ -98,6 +98,17 @@ Four rules, in order of value:
 **Back up `~/.kwatch_settings.json` before driving the GUI**, and have the driver set the state it depends on rather than inheriting David's saved settings — a driver once failed because he had left a checkbox ticked.
 
 **None of this makes the suite infallible.** The same person writes the code and the test, so they agree with each other perfectly when the misunderstanding is upstream. David found the misaligned scrollbar by looking at the app. That remains the backstop.
+
+## The Kayenne/K-Frame desk session (booked)
+
+When this session happens, work from the checklist in `DEVELOPMENT_NOTES.md` under "EIF Roadmap - hardware verification first". David will have the laptop beside the desk with Claude in the loop, so **run from source (`python3.12 machuna.py --gui`), not from `dist/`** - a PyInstaller build is 90 seconds and iteration speed is the whole point.
+
+**The two items at the top of that list, in order:**
+
+1. **The `.eif` `0x60` bit 2 audio-flag test.** MacHuna sets that bit on every file it writes, announcing an `.eaf` companion it never creates. Across 28 real K-Frame files the bit predicts a companion perfectly. Load one file as-is and one patched to `0x03`; see if the desk cares. **Do NOT change that byte beforehand** - David's standing instruction, restated 2026-09-17.
+2. **The KNOCKOUT_WIPE round trip.** Load `~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov` into the desk, let it convert natively, and analyse what comes back against the source. Full baseline with falsifiable predictions is in `DEVELOPMENT_NOTES.md` under "KNOCKOUT_WIPE round-trip baseline". This needs none of MacHuna's output to be correct first, which is why it is worth doing early.
+
+Also on the list: whether a keyless source should get a key plane at all, `.eaf` channel mapping, tail length, clip-name/slot rules, and the untested extraction outputs.
 
 ## Key constraints
 
