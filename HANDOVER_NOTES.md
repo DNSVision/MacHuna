@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `5ce7cd4` - 2026-09-17. **v1.9.2 is built and released. NOT published** - the live site still serves v1.9.1, and publishing stays opt-in until David asks.
+**Understanding baseline:** commit `2fef920` - 2026-09-17. **v1.9.3 is built and released. NOT published** - the live site still serves v1.9.1, and publishing stays opt-in until David asks. v1.9.2 and v1.9.3 both went out the same day; neither reached the public.
+
+**v1.9.3 - the public material stops knocking K-Watch.** The manual, README and About box all opened by positioning MacHuna against K-Watch ("a Mac-native alternative to the Windows-only K-Watch application..."), against David's own standing rule. Now positive framing: "It runs natively on macOS", "1.3 Highlights" instead of "Key Differences from K-Watch", About box reads "Broadcast graphics conversion for macOS". **Neutral technical K-Watch references are kept on purpose** (David's call, 2026-09-17): the split-format match, `0x1680`, TGA naming examples. Those say "your existing files interoperate", which sells MacHuna rather than knocking anything, and removing them would cost the Technical Reference precision. Same principle as the Kayenne provenance lines.
 
 **v1.9.2 - the Kayenne formats are called K-Frame.** Kayenne is a control *panel*; the Image Store holding `.eif`/`.eaf` lives in the **K-Frame**, which Karrera and GV Korona drive too. So the old name was both wrong and needlessly narrow. Dropdown labels and their constants are now `K-Frame EIF/TGA/MOV`. **Those labels double as keys into `UNVERIFIED_OUTPUT_NOTES` and `MISSING_FEATURE_NOTES`** - a mismatch would swallow the hardware warnings silently, so it was verified by driving the real GUI, not by the suite (the constants live inside `launch_gui()` where unit tests cannot reach them). No settings migration was needed: `output_format` is written to `~/.kwatch_settings.json` and never read back.
 
