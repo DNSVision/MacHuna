@@ -1385,8 +1385,22 @@ class TestEafAudio(unittest.TestCase):
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
-@unittest.skipUnless(REFERENCE_EIF_DIR.is_dir(),
-                     'reference K-Frame files not on this machine')
+def _reference_files_readable():
+    """Existing is not the same as listable.
+
+    macOS 27 reset the TCC grants, so this directory reports as present while
+    listing it raises PermissionError. Checking is_dir() alone let the test
+    run against nothing and fail for a reason that has nothing to do with the
+    code under test.
+    """
+    try:
+        return any(REFERENCE_EIF_DIR.glob('*.eif'))
+    except OSError:
+        return False
+
+
+@unittest.skipUnless(_reference_files_readable(),
+                     'reference K-Frame files not readable on this machine')
 class TestEafAgainstRealFiles(unittest.TestCase):
     """The six real .eaf files. Their audio must line up with their video."""
 
