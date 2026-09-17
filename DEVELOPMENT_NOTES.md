@@ -363,7 +363,11 @@ Worked out from six real files in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`–`000
 
 **Channel layout:** programme audio is on **channels 1 and 3** (zero-indexed), correlating at 0.99 and 1.00. Channels 0 and 2 carry near-full-scale spikes with no correlation — not audio, contents unknown. Channels 4-7 are silent. A 32-bit reading was ruled out: the supposed low words are not uniformly distributed, and a 32-bit reconstruction is spectrally identical to the 16-bit read.
 
-**Still unknown, and needing a desk:** which channels a K-Frame *treats* as programme audio when writing, and what channels 0 and 2 are for. Reading is solved.
+**CONFIRMED BY EAR, 2026-09-17.** David converted `0003.eif` to QuickTime MOV in v1.10.1 and listened: correct audio, correct pitch, correct speed. That single check confirms three things at once - 48kHz is right (a wrong rate shifts pitch and speed together), big-endian is right (wrong gives noise), and channels 1/3 are the programme pair (wrong gives silence or the spike channels). The MOV's audio was also compared sample-for-sample against the `.eaf` and is bit-identical: 103,680 samples, nothing resampled or re-levelled.
+
+**What that does NOT settle.** All six reference files are 50i/25fps and short (27-37 frames); there is no 50P `.eaf` at all, so the format is confirmed for one case, not all. And reading is not writing.
+
+**Still unknown, and needing a desk:** which channels a K-Frame *expects* when it reads an `.eaf`, and what channels 0 and 2 are for. Reading is solved and now verified.
 
 **Lesson:** a documented blocker is not evidence. Check before repeating one.
 
