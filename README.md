@@ -6,14 +6,14 @@ A macOS application for converting video and still image files to the Grass Vall
 
 **Download: [dnsvision.tv/machuna](https://dnsvision.tv/machuna)** — current release, release notes and the user manual.
 
-MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
+MacHuna is a macOS application for broadcast graphics conversion. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 
 Converted files are placed into a destination folder, ready to be loaded onto a Kahuna mainframe via USB or network transfer.
 
 ## Features
 
-- Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS` (K-Watch supports MOV and AVI only)
-- Converts TGA sequences to `.SWS` clips — any naming convention (K-Watch, After Effects, custom renders); K-Watch naming is not required
+- Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS`
+- Converts TGA sequences to `.SWS` clips — any naming convention works (K-Watch, After Effects, custom renders); no particular naming is required
 - Converts still images (PNG, TGA, BMP, JPG etc.) to `.SWS` stills
 - **Reads and writes Grass Valley K-Frame `.eif` native clips** *(UNCONFIRMED on hardware — awaiting live K-Frame desk test)*
   - Converts MOV, TGA sequences, and SWS files to `.eif` (slot naming 0001.eif, 0002.eif…)

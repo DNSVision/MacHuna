@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.9.2"
+VERSION = "1.9.3"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -5490,7 +5490,7 @@ def launch_gui():
 
         tk.Label(win, text=f"MacHuna v{VERSION}",
                  font=('Helvetica', 16, 'bold'), justify='center').pack()
-        tk.Label(win, text="Mac alternative for Grass Valley K-Watch",
+        tk.Label(win, text="Broadcast graphics conversion for macOS",
                  font=('Helvetica', 12), justify='center').pack(pady=(8, 0))
         tk.Label(win, text="Authors: David Steer & Claude (Anthropic)",
                  font=('Helvetica', 12), justify='center').pack(pady=(4, 0))

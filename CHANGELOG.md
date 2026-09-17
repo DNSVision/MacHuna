@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.9.3 — 2026-09-17
+
+### Changed
+- **The manual, the README and the About box no longer position MacHuna against K-Watch.** MacHuna stands on what it does, not on what another application does not do. The overview now simply says it runs natively on macOS; "Key Differences from K-Watch" becomes "Highlights" and lists what MacHuna accepts rather than what anything else refuses; the About box reads "Broadcast graphics conversion for macOS"; and the note about scope states what MacHuna does and does not do without naming another product's features.
+- **Neutral technical references to K-Watch are kept deliberately.** Lines like "the split format exactly matches K-Watch output", "K-Watch writes `0x1680`" and "(K-Watch naming)" tell an engineer their existing files will interoperate. That is a reason to choose MacHuna, not a dig, and removing it would cost the Technical Reference real precision.
+
+*(Released as a version bump rather than folded into v1.9.2, which changed app strings too: two different builds claiming one version number is exactly the confusion that has cost a session before.)*
+
+---
+
 ## v1.9.2 — 2026-09-17
 
 ### Changed

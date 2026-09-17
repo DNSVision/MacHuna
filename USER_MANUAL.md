@@ -1,4 +1,4 @@
-# MacHuna v1.9.2 — User Manual
+# MacHuna v1.9.3 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -31,7 +31,7 @@ DNS Vision Limited — For Vision Mixers, TDs, and Support Engineers
 
 MacHuna is a macOS application for translating broadcast media assets between formats. It converts video clips, TGA sequences, and still images to Grass Valley Kahuna `.SWS` format, reads and writes Grass Valley K-Frame `.EIF` native clips, and extracts `.SWS` files back to standard formats for use on K-Frame and Sony MVS desks.
 
-It is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro.
+It runs natively on macOS.
 
 ### 1.1 What MacHuna Does
 
@@ -59,15 +59,15 @@ All nine standards below have been confirmed against K-Watch reference files and
 | 1080p/59.94 | 59.94 | USA / Japan |
 | 1080p/60 | 60 | — |
 
-### 1.3 Key Differences from K-Watch
+### 1.3 Highlights
 
-- Runs natively on macOS — no Windows, no Parallels
-- Accepts a wider range of input formats (K-Watch supports MOV and AVI only)
+- Runs natively on macOS
+- Accepts MOV, MP4, MXF, MKV and AVI clips, TGA sequences, and PNG, BMP and JPG stills
 - Converts between Kahuna SWS, K-Frame EIF, and Sony MVS formats in one app
 - Reads and writes K-Frame `.EIF` native clips — format reverse-engineered from real Kayenne hardware
 - Built-in Video Player for checking `.SWS` and `.EIF` files without a Kahuna or K-Frame desk
 
-> **NOTE** MacHuna replicates K-Watch's conversion functionality. It does not replicate K-Manager Pro's network upload to mainframe or project synchronisation features.
+> **NOTE** MacHuna converts and extracts files on your Mac. It does not upload to a mainframe over the network and it does not synchronise projects — getting the finished files onto the desk is done however you do it now.
 
 ---
 
