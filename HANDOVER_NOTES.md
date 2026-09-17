@@ -369,7 +369,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.10.0
+- **MacHuna:** v1.10.1
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

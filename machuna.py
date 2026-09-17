@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.10.0"
+VERSION = "1.10.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3542,7 +3542,8 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
 
 
 def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
-                             include_audio: bool = True, log=print) -> str:
+                             include_audio: bool = True, out_name: str = None,
+                             log=print) -> str:
     """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
 
     The output is an ordinary QuickTime file: picture, key as a real alpha
@@ -3551,7 +3552,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
     """
     h    = EIFHeader(eif_path)
     stem = Path(eif_path).stem
-    out_path = os.path.join(dest_parent, f"{stem}.mov")
+    out_path = os.path.join(dest_parent, f"{out_name or stem}.mov")
     log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
     with tempfile.TemporaryDirectory() as tmp:
         raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
@@ -3615,7 +3616,8 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
 
 
 def _hula_convert_mov(sws_path: str, dest_parent: str,
-                      include_audio: bool = True, log=print) -> str:
+                      include_audio: bool = True, out_name: str = None,
+                      log=print) -> str:
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
 
     Named after the source file rather than a slot number: this is an ordinary
@@ -3625,7 +3627,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
     log(f"  {header}")
     fill_off = header.data_offset
     key_off  = header.data_offset + header.plane_size * header.frame_count
-    out_path = os.path.join(dest_parent, f"{Path(sws_path).stem}.mov")
+    out_path = os.path.join(dest_parent, f"{out_name or Path(sws_path).stem}.mov")
     with tempfile.TemporaryDirectory() as tmp:
         raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
         log(f"  Decoding {header.frame_count} frame(s) to RGBA...")
@@ -3673,7 +3675,9 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
             ext = Path(path).suffix.lower()
             if ext == '.eif' and target == HULA_TARGET_QUICKTIME_MOV:
                 _hula_convert_eif_to_mov(path, dest_dir,
-                                         include_audio=include_audio, log=log)
+                                         include_audio=include_audio,
+                                         out_name=(cn or None) if clip_names else None,
+                                         log=log)
             elif ext == '.eif':
                 if interlaced:
                     _hula_convert_eif_to_tga_interlaced(
@@ -3693,7 +3697,9 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                          field_order=field_order, log=log)
             elif target == HULA_TARGET_QUICKTIME_MOV:
                 _hula_convert_mov(path, dest_dir,
-                                  include_audio=include_audio, log=log)
+                                  include_audio=include_audio,
+                                  out_name=(cn or None) if clip_names else None,
+                                  log=log)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:
@@ -3850,6 +3856,8 @@ def _scan_folder_unified(folder: str) -> tuple:
 BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
 BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.eif
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
+BESPOKE_MODE_MOV  = 'mov'    # QuickTime MOV — free filename, writes <name>.mov;
+                             # blank is allowed and means "use the source name"
 
 
 def normalise_bespoke_value(raw, mode: str):
@@ -3858,6 +3866,22 @@ def normalise_bespoke_value(raw, mode: str):
     Numbers come back as ints (1-9999), Sony clip names as 4-char uppercase.
     """
     v = (raw or '').strip()
+    if mode == BESPOKE_MODE_MOV:
+        # A MOV is a file for an edit suite, so it gets a real filename rather
+        # than a slot number. Blank is VALID and means "name it after the
+        # source", which is what every other extraction output already does -
+        # the field is an override, not a chore.
+        if not v:
+            return ''
+        if len(v) > 64:
+            return None
+        if any(c in v for c in '/\\:*?"<>|'):
+            return None
+        if v.startswith('.') or v.lower().endswith('.mov') and len(v) == 4:
+            return None
+        if v.lower().endswith('.mov'):
+            v = v[:-4]
+        return v or None
     if mode == BESPOKE_MODE_SONY:
         if len(v) != 4 or not v.isalnum():
             return None
@@ -3876,6 +3900,8 @@ def bespoke_output_name(value, mode: str) -> str:
         return f"{value}.SWS"
     if mode == BESPOKE_MODE_EIF:
         return f"{value:04d}.eif"
+    if mode == BESPOKE_MODE_MOV:
+        return f"{value}.mov"
     return str(value)
 
 
@@ -3909,10 +3935,14 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
         if value is None:
             codes[i] = BESPOKE_ISSUE_INVALID
             invalid.append(label)
-        else:
+        elif value != '':
             values[i] = value
+        # A blank MOV row is deliberate: it takes the source name. It is left
+        # out of `values` so it cannot duplicate or collide with anything.
     if invalid:
         what = ("a 4-character clip name (letters and digits only)" if is_sony
+                else "a filename without / \\ : * ? \" < > |, up to 64 characters"
+                if mode == BESPOKE_MODE_MOV
                 else "a number from 1 to 9999")
         problems.append(
             f"These items still need {what}:\n    "
@@ -3926,7 +3956,8 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
         by_value.setdefault(value, []).append(i)
     for value, idxs in by_value.items():
         if len(idxs) > 1:
-            noun = "Clip name" if is_sony else "Number"
+            noun = ("Clip name" if is_sony
+                    else "Name" if mode == BESPOKE_MODE_MOV else "Number")
             for i in idxs:
                 codes[i] = BESPOKE_ISSUE_DUPLICATE
             problems.append(
@@ -4312,7 +4343,7 @@ def launch_gui():
     # does not lose work already done; numbers and Sony names are kept apart
     # because they are not interchangeable.
     _selected_folders = []      # folder names feeding the current selection
-    _bespoke_store   = {'num': {}, 'name': {}}
+    _bespoke_store   = {'num': {}, 'name': {}, 'movname': {}}
     _bespoke_rows    = []       # [(item, StringVar, hint Label)] in selection order
     _bespoke_mode_of_rows = [None]
     _row_status_store     = {}   # item key -> 'done' | ('error', reason)
@@ -4464,6 +4495,10 @@ def launch_gui():
     # Blank is a valid keystroke state (fields start empty on purpose); the
     # real check is validate_bespoke_ids() at convert time.
     vcmd_num = root.register(lambda P: P == '' or (P.isdigit() and len(P) <= 4))
+    # Block only what cannot be in a filename; everything else is the
+    # user's business. Full validation happens in normalise_bespoke_value.
+    vcmd_mov = root.register(
+        lambda P: len(P) <= 64 and not any(c in P for c in '/\\:*?"<>|'))
 
     # Action row
     batch_cancel_event = threading.Event()
@@ -4484,11 +4519,16 @@ def launch_gui():
 
     def _bespoke_mode():
         """Which bespoke flavour the current output wants, or None."""
-        return {OUTPUT_KAHUNA_SWS:  BESPOKE_MODE_SWS,
-                OUTPUT_KFRAME_EIF: BESPOKE_MODE_EIF,
-                OUTPUT_SONY_TGA:    BESPOKE_MODE_SONY}.get(output_var.get())
+        return {OUTPUT_KAHUNA_SWS:    BESPOKE_MODE_SWS,
+                OUTPUT_KFRAME_EIF:   BESPOKE_MODE_EIF,
+                OUTPUT_SONY_TGA:     BESPOKE_MODE_SONY,
+                OUTPUT_QUICKTIME_MOV: BESPOKE_MODE_MOV}.get(output_var.get())
 
     def _bespoke_bucket(mode):
+        # MOV names are free text and Sony names are 4 characters, so they
+        # cannot share a bucket without one corrupting the other.
+        if mode == BESPOKE_MODE_MOV:
+            return _bespoke_store['movname']
         return _bespoke_store['name' if mode == BESPOKE_MODE_SONY else 'num']
 
     def _bespoke_harvest():
@@ -4650,6 +4690,11 @@ def launch_gui():
                 # stem. Shown, but not editable — the point is that you can see
                 # what you are getting, which you could not before.
                 entry = ttk.Entry(row, width=6, state='disabled')
+                neutral = 'from source'
+            elif mode == BESPOKE_MODE_MOV:
+                # Wider than the number fields: this is a filename, not a slot.
+                entry = ttk.Entry(row, textvariable=var, width=18, validate='key',
+                                  validatecommand=(vcmd_mov, '%P'))
                 neutral = 'from source'
             else:
                 entry = ttk.Entry(row, textvariable=var, width=6, validate='key',
@@ -5481,9 +5526,11 @@ def launch_gui():
                             vf = None
                             log(f"  TGA→{'MOV' if is_mov else 'TGA'}: {base} — passthrough ({out_std})")
                         if is_mov:
-                            convert_tga_seq_to_mov(tga_files, d, base, tgt_fps,
+                            mov_name = (id_map.get(_bespoke_key(item)) or base
+                                        if id_map else base)
+                            convert_tga_seq_to_mov(tga_files, d, mov_name, tgt_fps,
                                                    vf=vf, log=log)
-                            results.append((base, base, 'OK'))
+                            results.append((base, mov_name, 'OK'))
                         else:
                             out_dir = os.path.join(d, cn_i if is_sony else base)
                             os.makedirs(out_dir, exist_ok=True)

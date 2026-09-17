@@ -1,8 +1,8 @@
 {
-  "version": "1.10.0",
+  "version": "1.10.1",
   "released": "2026-09-17",
-  "summary": "Adds QuickTime MOV output: turn an SWS, an EIF or a TGA sequence back into an editable ProRes 4444 file with the key as alpha and the sound intact.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.10.0.zip",
+  "summary": "Adds QuickTime MOV output: turn an SWS, an EIF or a TGA sequence back into an editable ProRes 4444 file with the key as alpha and the sound intact. You can name the file.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.10.1.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "12.0"
 }

@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.10.1 — 2026-09-17
+
+### Added
+- **You can name a QuickTime MOV.** Reported by David within minutes of first using v1.10.0: converting a TGA sequence gave no way to say what the file should be called, while every other output in the app lets you name or number what it writes. Each item in the list now has a name field.
+  - **Blank means "use the source name"**, which is what v1.10.0 did, so nothing changes unless you want it to. The field is an override rather than another thing to fill in.
+  - Names take spaces and ordinary punctuation, up to 64 characters. Anything a filesystem would reject is blocked as you type, duplicates within a batch are refused, and a name already present in the destination is refused rather than overwritten — the same protections the numbered outputs have had since v1.6.13. A typed `.mov` is not doubled.
+  - Works for all three sources: an SWS, an EIF or a TGA sequence.
+
+### Notes for the record
+- Verified by driving the real GUI rather than by unit test alone: a name typed into the item list produced exactly that file on disk, and ffprobe confirmed it was a genuine ProRes of the right length. The unit tests cover the rules; only the driver proves the field is actually connected to the conversion.
+
+---
+
 ## v1.10.0 — 2026-09-17
 
 ### Added

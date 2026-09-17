@@ -1,4 +1,4 @@
-# MacHuna v1.10.0 — User Manual
+# MacHuna v1.10.1 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -377,6 +377,10 @@ This is the way to get a graphic out of a desk format and into an edit suite, gr
 | TGA sequence | None — a sequence of images has no audio to carry |
 
 Untick **Include audio** to produce a silent MOV from a source that has sound.
+
+**Naming the file.** Each item in the list has a name field. Leave it blank and the MOV is named after its source, which is usually what you want: `1.SWS` becomes `1.mov`, a sequence called `MYSEQ` becomes `MYSEQ.mov`. Type a name and it uses that instead, so a TGA render can come out as `Barcelona Wipe.mov` rather than inheriting whatever the render was called.
+
+Names may contain spaces, letters, digits and ordinary punctuation, up to 64 characters. Anything a filesystem would refuse is blocked as you type. Two items cannot be given the same name, and a name that already exists in the destination is refused rather than overwritten — the same protection the numbered outputs have. Typing `.mov` on the end is harmless; it will not be doubled.
 
 **Frame rate.** An `.SWS` and an `.EIF` both declare their rate in the header, so MacHuna uses it and the **Standard** dropdown is hidden. A TGA sequence declares nothing, so for TGA input the Standard dropdown appears and sets the rate.
 

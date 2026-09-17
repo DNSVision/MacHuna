@@ -1409,3 +1409,64 @@ class TestEafAgainstRealFiles(unittest.TestCase):
             if not Path(m.eaf_path_for(str(eif))).exists():
                 with self.subTest(clip=eif.name):
                     self.assertIsNone(m.read_eaf_stereo(m.eaf_path_for(str(eif))))
+
+
+class TestMovNaming(unittest.TestCase):
+    """QuickTime MOV names.
+
+    Unlike a slot number, a blank field here is VALID and means "name it after
+    the source" - that was the behaviour before naming existed and it stays
+    the default. So the interesting cases are that blank passes validation,
+    and that several blanks do not accuse each other of being duplicates.
+    """
+
+    MODE = 'mov'
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_blank_is_valid_and_means_source_name(self):
+        self.assertEqual(m.normalise_bespoke_value('', self.MODE), '')
+        self.assertEqual(m.normalise_bespoke_value('   ', self.MODE), '')
+
+    def test_a_typed_name_becomes_that_file(self):
+        v = m.normalise_bespoke_value('Wipe 01', self.MODE)
+        self.assertEqual(v, 'Wipe 01')
+        self.assertEqual(m.bespoke_output_name(v, self.MODE), 'Wipe 01.mov')
+
+    def test_a_typed_extension_is_not_doubled(self):
+        v = m.normalise_bespoke_value('promo.mov', self.MODE)
+        self.assertEqual(m.bespoke_output_name(v, self.MODE), 'promo.mov')
+
+    def test_names_that_would_not_survive_a_filesystem_are_refused(self):
+        for bad in ('a/b', 'a:b', 'a*b', 'a?b', '.hidden', 'x' * 65):
+            with self.subTest(bad=bad):
+                self.assertIsNone(m.normalise_bespoke_value(bad, self.MODE))
+
+    def test_several_blank_rows_are_not_duplicates_of_each_other(self):
+        entries = [('one', ''), ('two', ''), ('three', '')]
+        codes, problems = m._analyse_bespoke_ids(entries, self.MODE, self.tmp)
+        self.assertEqual(codes, [None, None, None], problems)
+        self.assertEqual(problems, [])
+
+    def test_two_rows_with_the_same_typed_name_are_blocked(self):
+        entries = [('one', 'same'), ('two', 'same'), ('three', '')]
+        codes, problems = m._analyse_bespoke_ids(entries, self.MODE, self.tmp)
+        self.assertIsNotNone(codes[0])
+        self.assertIsNotNone(codes[1])
+        self.assertIsNone(codes[2], 'the blank row should be untouched')
+        self.assertTrue(problems)
+
+    def test_a_name_that_already_exists_in_the_destination_is_blocked(self):
+        Path(self.tmp, 'taken.mov').write_bytes(b'x')
+        codes, problems = m._analyse_bespoke_ids([('one', 'taken')], self.MODE, self.tmp)
+        self.assertIsNotNone(codes[0])
+        self.assertTrue(any('taken.mov' in p for p in problems), problems)
+
+    def test_a_blank_row_cannot_collide_with_the_destination(self):
+        # Nothing is typed, so there is no value to clash with anything.
+        Path(self.tmp, 'taken.mov').write_bytes(b'x')
+        codes, problems = m._analyse_bespoke_ids([('one', '')], self.MODE, self.tmp)
+        self.assertEqual(codes, [None])
+        self.assertEqual(problems, [])
