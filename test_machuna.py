@@ -7,6 +7,7 @@ Run with:  /opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
 
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
@@ -880,7 +881,7 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
         self.assertIsNone(m.unverified_output_note('Kahuna SWS'))
 
     def test_untested_desk_outputs_are_warned_about(self):
-        for out in ('K-Frame EIF', 'K-Frame TGA', 'K-Frame MOV', 'Sony TGA'):
+        for out in ('K-Frame EIF', 'K-Frame TGA', 'Sony TGA'):
             with self.subTest(out=out):
                 note = m.unverified_output_note(out)
                 self.assertIsNotNone(note)
@@ -900,7 +901,14 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
         # keep this in step with "Extraction output hardware unknowns" in
         # DEVELOPMENT_NOTES.md; if a path is hardware-confirmed, remove it here
         self.assertEqual(set(m.UNVERIFIED_OUTPUT_NOTES),
-                         {'K-Frame EIF', 'K-Frame TGA', 'K-Frame MOV', 'Sony TGA'})
+                         {'K-Frame EIF', 'K-Frame TGA', 'Sony TGA'})
+
+    def test_quicktime_mov_is_not_a_desk_output(self):
+        # A ProRes 4444 file is an ordinary video file. There is no desk to
+        # confirm it against, so warning about it would be false caution -
+        # the same reasoning that keeps Kahuna SWS silent.
+        self.assertIsNone(m.unverified_output_note('QuickTime MOV'))
+        self.assertIsNone(m.missing_feature_note('QuickTime MOV'))
 
 
 class TestMissingFeatureNotes(unittest.TestCase):
@@ -914,7 +922,8 @@ class TestMissingFeatureNotes(unittest.TestCase):
         self.assertIn('.eaf', note)
 
     def test_outputs_that_do_carry_audio_say_nothing(self):
-        for out in ('Kahuna SWS', 'K-Frame TGA', 'Sony TGA', 'TGA Sequence'):
+        for out in ('Kahuna SWS', 'K-Frame TGA', 'Sony TGA', 'TGA Sequence',
+                    'QuickTime MOV'):
             with self.subTest(out=out):
                 self.assertIsNone(m.missing_feature_note(out))
 
@@ -1208,3 +1217,195 @@ class TestDataOffset(unittest.TestCase):
 
 def machuna_header_stub():
     return m.build_sws_header('x.mov', 'clip', 1920, 1080, 5529600, 10, '1080p50')
+
+
+class TestVersionOrderingAcrossTheTensBoundary(unittest.TestCase):
+    """1.10.0 must sort above 1.9.x.
+
+    Compared as strings, "1.10.0" < "1.9.3", so every user on 1.9.x would be
+    told they were up to date forever. The comparison is numeric and this
+    keeps it that way.
+    """
+
+    def test_ten_is_newer_than_nine(self):
+        self.assertTrue(m.is_update_available('1.10.0', '1.9.3'))
+        self.assertTrue(m.is_update_available('1.10.1', '1.10.0'))
+        self.assertTrue(m.is_update_available('2.0.0', '1.99.99'))
+
+    def test_nine_is_not_newer_than_ten(self):
+        self.assertFalse(m.is_update_available('1.9.3', '1.10.0'))
+        self.assertFalse(m.is_update_available('1.10.0', '1.10.0'))
+
+
+class TestOutputLabelsMatchTheirNotes(unittest.TestCase):
+    """The dropdown labels double as keys into the warning dictionaries.
+
+    They live inside launch_gui() where no unit test can reach them, so if a
+    rename touches one side and not the other, every hardware warning silently
+    stops appearing and the suite stays green. That nearly happened during the
+    Kayenne-to-K-Frame rename: the labels and the keys are the same strings by
+    convention and nothing enforced it. This does.
+    """
+
+    def _output_constants(self):
+        import ast
+        consts = {}
+        for node in ast.walk(_launch_gui_tree()):
+            if not isinstance(node, ast.Assign):
+                continue
+            for t in node.targets:
+                if (isinstance(t, ast.Name) and t.id.startswith('OUTPUT_')
+                        and isinstance(node.value, ast.Constant)
+                        and isinstance(node.value.value, str)):
+                    consts[t.id] = node.value.value
+        return consts
+
+    def test_the_constants_are_found_at_all(self):
+        # If this breaks, the guard below is silently testing nothing.
+        consts = self._output_constants()
+        self.assertGreaterEqual(len(consts), 5, consts)
+        self.assertIn('Kahuna SWS', consts.values())
+
+    def test_every_warned_output_is_a_real_dropdown_label(self):
+        labels = set(self._output_constants().values())
+        for key in m.UNVERIFIED_OUTPUT_NOTES:
+            with self.subTest(key=key):
+                self.assertIn(
+                    key, labels,
+                    f"{key!r} has a hardware warning but is not a dropdown "
+                    f"label, so the warning can never be shown. Labels: {sorted(labels)}")
+
+    def test_every_missing_feature_note_is_a_real_dropdown_label(self):
+        labels = set(self._output_constants().values())
+        for key in m.MISSING_FEATURE_NOTES:
+            with self.subTest(key=key):
+                self.assertIn(key, labels, f"{key!r} is not a dropdown label")
+
+
+class TestEafAudio(unittest.TestCase):
+    """The .eaf reader, tested on files whose correct answer is known.
+
+    Endianness here was got wrong once and only caught by David listening to
+    the result, so these assert on the decoded samples themselves rather than
+    on the fact that something was returned.
+    """
+
+    @staticmethod
+    def _build_eaf(path, channel_data, samples):
+        """Write a syntactically real .eaf carrying the given channels."""
+        import numpy as np
+        head = bytearray(m.EAF_HEADER_BYTES)
+        struct.pack_into('<I', head, m.EAF_OFF_SAMPLES, samples)
+        struct.pack_into('<I', head, m.EAF_OFF_FRAMES, samples // 1920)
+        body = np.zeros((samples, m.EAF_CHANNELS), dtype='>i2')
+        for ch, data in channel_data.items():
+            body[:, ch] = data
+        Path(path).write_bytes(bytes(head) + body.tobytes())
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _tone(self, n, period=64, amp=8000):
+        import numpy as np
+        return (amp * np.sin(np.arange(n) * 2 * np.pi / period)).astype('>i2')
+
+    def test_reads_programme_channels_sample_for_sample(self):
+        import numpy as np
+        n = 1920 * 3
+        left, right = self._tone(n, 64), self._tone(n, 96)
+        p = os.path.join(self.tmp, 'a.eaf')
+        self._build_eaf(p, {1: left, 3: right}, n)
+        pcm = m.read_eaf_stereo(p, log=lambda *a: None)
+        self.assertIsNotNone(pcm)
+        got = np.frombuffer(pcm, dtype='<i2').reshape(-1, 2)
+        # Exact equality: a byte-order slip would still "work" but be wrong.
+        self.assertTrue(np.array_equal(got[:, 0], left.astype('<i2')))
+        self.assertTrue(np.array_equal(got[:, 1], right.astype('<i2')))
+
+    def test_big_endian_is_not_negotiable(self):
+        # Reading the same body as little-endian gives different samples. If
+        # this ever passes, the reader has silently swapped byte order.
+        import numpy as np
+        n = 1920
+        left = self._tone(n, 64)
+        p = os.path.join(self.tmp, 'b.eaf')
+        self._build_eaf(p, {1: left, 3: left}, n)
+        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
+                            dtype='<i2').reshape(-1, 2)
+        self.assertFalse(np.array_equal(got[:, 0], left.view('<i2')),
+                         "reader produced the little-endian reading")
+
+    def test_loud_non_audio_channels_are_never_chosen(self):
+        """Channels 0 and 2 carry near-full-scale spikes that are not audio.
+
+        Picking "the loudest" channels would put that garbage in the file.
+        This is the exact flaw the first implementation had.
+        """
+        import numpy as np
+        n = 1920 * 2
+        spikes = np.zeros(n, dtype='>i2')
+        spikes[::7] = 32000                      # loud, but uncorrelated
+        p = os.path.join(self.tmp, 'c.eaf')
+        self._build_eaf(p, {0: spikes, 2: spikes, 1: self._tone(n), 3: self._tone(n)}, n)
+        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
+                            dtype='<i2').reshape(-1, 2)
+        self.assertLess(int(np.abs(got).max()), 30000,
+                        "the spike channels were selected as programme audio")
+
+    def test_a_silent_eaf_stays_silent(self):
+        """0022 in the reference set is effectively silent (peak 16).
+
+        The reader must return that silence, not go hunting for signal in the
+        non-audio channels.
+        """
+        import numpy as np
+        n = 1920 * 2
+        spikes = np.zeros(n, dtype='>i2')
+        spikes[::7] = 32000
+        quiet = np.full(n, 12, dtype='>i2')
+        p = os.path.join(self.tmp, 'd.eaf')
+        self._build_eaf(p, {0: spikes, 2: spikes, 1: quiet, 3: quiet}, n)
+        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
+                            dtype='<i2').reshape(-1, 2)
+        self.assertLessEqual(int(np.abs(got).max()), 12)
+
+    def test_truncated_and_missing_files_return_none(self):
+        self.assertIsNone(m.read_eaf_stereo(os.path.join(self.tmp, 'nope.eaf')))
+        short = os.path.join(self.tmp, 'short.eaf')
+        head = bytearray(m.EAF_HEADER_BYTES)
+        struct.pack_into('<I', head, m.EAF_OFF_SAMPLES, 99999)
+        Path(short).write_bytes(bytes(head) + b'\x00' * 100)
+        self.assertIsNone(m.read_eaf_stereo(short, log=lambda *a: None))
+
+    def test_companion_path_swaps_the_extension(self):
+        self.assertTrue(m.eaf_path_for('/x/0003.eif').endswith('0003.eaf'))
+
+
+REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
+
+
+@unittest.skipUnless(REFERENCE_EIF_DIR.is_dir(),
+                     'reference K-Frame files not on this machine')
+class TestEafAgainstRealFiles(unittest.TestCase):
+    """The six real .eaf files. Their audio must line up with their video."""
+
+    def test_audio_duration_equals_video_duration(self):
+        checked = 0
+        for eif in sorted(REFERENCE_EIF_DIR.glob('*.eif')):
+            pcm = m.read_eaf_stereo(m.eaf_path_for(str(eif)), log=lambda *a: None)
+            if pcm is None:
+                continue
+            h = m.EIFHeader(str(eif))
+            audio_s = (len(pcm) // 4) / float(m.EAF_SAMPLE_RATE)
+            video_s = h.frame_count / h.fps
+            with self.subTest(clip=eif.name):
+                self.assertAlmostEqual(audio_s, video_s, places=2)
+            checked += 1
+        self.assertGreater(checked, 0, 'no .eaf companions found to check')
+
+    def test_clips_without_a_companion_read_as_no_audio(self):
+        for eif in sorted(REFERENCE_EIF_DIR.glob('*.eif')):
+            if not Path(m.eaf_path_for(str(eif))).exists():
+                with self.subTest(clip=eif.name):
+                    self.assertIsNone(m.read_eaf_stereo(m.eaf_path_for(str(eif))))

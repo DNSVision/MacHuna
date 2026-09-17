@@ -353,7 +353,7 @@ Claude Code CLI has direct file system access and edits machuna.py directly usin
 
 **MacHuna** (`DNSVision/MacHuna`) is a macOS application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It is a Mac-native alternative to the Windows-only K-Watch application. Built by David Steer (DNS Vision Limited) and Claude (Anthropic) using AI-assisted development with no prior coding background on David's part.
 
-MacHuna also extracts `.SWS` files back to standard media formats for K-Frame and Sony MVS desks (SWS → K-Frame MOV, K-Frame TGA, Sony TGA). This extraction engine was originally built as a standalone app (`DNSVision/Hula`), integrated into MacHuna v1.5.0, and unified into the main Convert interface in v1.5.33. The standalone repo is **archived and no longer maintained**.
+MacHuna also extracts `.SWS` files back to standard media formats for K-Frame and Sony MVS desks (SWS → K-Frame TGA, Sony TGA, and QuickTime MOV). This extraction engine was originally built as a standalone app (`DNSVision/Hula`), integrated into MacHuna v1.5.0, and unified into the main Convert interface in v1.5.33. The standalone repo is **archived and no longer maintained**.
 
 MacHuna repo is currently **private**.
 
@@ -361,7 +361,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.9.3
+- **MacHuna:** v1.10.0
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -451,7 +451,7 @@ git push
 - Auto play / Loop play flags
 - Large file support: >4GB split into 2GB FAT32-safe chunks
 - Built-in Video Player (fill, key, composite, audio meters) -- supports SWS, TGA sequences, MOV/MP4/MXF/AVI, and K-Frame EIF
-- Built-in extraction engine (SWS → K-Frame MOV, K-Frame TGA, Sony TGA)
+- Built-in extraction engine (SWS/EIF → K-Frame TGA, Sony TGA, QuickTime MOV)
 - **K-Frame EIF read** -- Video Player opens .eif files with fill, key, and composite panels; frame rate auto-detected from header
 - **K-Frame EIF write** (UNCONFIRMED on hardware) -- converts MOV, TGA sequences, and SWS to .eif with slot-numbered output (0001.eif, 0002.eif...)
 - **K-Frame EIF conversion** (UNCONFIRMED on hardware) -- EIF → Kahuna SWS (lossless YCbCr repack), EIF → K-Frame TGA, EIF → Sony TGA
@@ -463,7 +463,7 @@ git push
 ## Extraction Output Summary
 
 - Converts .SWS to three output targets:
-  - K-Frame MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present
+  - QuickTime MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present (from the SWS, or an EIF's companion .eaf). Not a desk format - nothing to confirm
   - K-Frame TGA: 32-bit RGBA, frames 0001.tga onwards, subfolder per SWS
   - Sony TGA: 32-bit RGBA, frames XXXX0000.tga (4-char clip name prefix), subfolder named after clip
 - Progressive or interlaced output via Standard dropdown (TGA targets)

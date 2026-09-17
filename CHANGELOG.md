@@ -4,6 +4,29 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.10.0 — 2026-09-17
+
+### Added
+- **QuickTime MOV output: get your material back out as an editable video file.** A Kahuna `.SWS`, a K-Frame `.EIF` or a TGA sequence converts to a **ProRes 4444 QuickTime** with the key carried as a real alpha channel and sound where the source has any. Named after the source, so `51.SWS` becomes `51.mov`.
+  - **This is not a desk format**, which is the point of it. Unlike K-Frame TGA or Sony MVS TGA there is no hardware warning on it and nothing waiting to be confirmed on a visit: if it opens in your NLE, it is right. MOV has accordingly been removed from the hardware-unknowns tables and from the desk-session checklist, where it had been quietly booking time to test an output nobody could select.
+  - Audio comes from the `.SWS` itself, or for an EIF from its companion `.eaf`. A TGA sequence has none to carry.
+  - Stills are refused, as everywhere else: a single frame is not a clip.
+  - Frame rate is taken from the header for SWS and EIF, which both declare one. A TGA sequence does not, so the Standard dropdown appears for TGA input only.
+- **MacHuna reads `.eaf` audio.** The companion file that holds a K-Frame clip's sound, decoded on 2026-09-09 from six real files, is now read rather than merely understood. Programme audio is identified by sample-to-sample correlation rather than loudness, because two of the eight channels carry loud spikes that are not audio and picking "the loudest" would have put that in your file.
+
+### Fixed
+- **MOV output had been unreachable since v1.6.5** while the manual, README, website, developer notes and hardware-unknowns list all continued to describe it as a working feature, including a README section documenting settings that no longer appeared. All reconciled.
+- **The "Include audio" checkbox for MOV was displayed but ignored** — the conversion always embedded audio regardless. Now honoured. Same class of fault as the Sony field-order toggle fixed in v1.6.12.
+- **Your last-used output format was never remembered.** It has been written to the settings file on every quit since the setting existed, and never read back. It is now restored on startup.
+- MOV output was named by slot number (`0001.mov`). It is named after the source file now, which is what a video file wants.
+
+### Notes for the record
+- Verified end to end, not just by unit test: an SWS, an EIF with a `.eaf`, an EIF without one, and a TGA sequence were each converted and the results probed. All four are ProRes 4444 at the right rate and duration; the alpha was compared against a direct decode of the source and matches; the EIF clip's audio is 48kHz stereo of exactly the same length as its video. The GUI was driven to confirm the output appears for SWS, EIF and TGA input, is absent for clip input, and that the Standard dropdown appears only where the source declares no frame rate.
+- **A new structural guard ties the dropdown labels to the warning dictionaries.** Those labels double as dictionary keys and live inside `launch_gui()` where unit tests cannot reach them, so a rename touching one side could silently disable every hardware warning while the suite stayed green. Verified by deliberately breaking it.
+- A test pins that `1.10.0` sorts above `1.9.3`. Compared as strings it does not, which would have left every user told they were up to date forever.
+
+---
+
 ## v1.9.3 — 2026-09-17
 
 ### Changed

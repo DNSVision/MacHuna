@@ -145,13 +145,13 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Current release</p>
     <div class="dl">
       <div class="dl-top">
-        <span class="dl-ver">v1.9.1</span>
+        <span class="dl-ver">v1.10.0</span>
         <span class="dl-date">10 September 2026</span>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.9.1.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
+        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.10.0.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
         <a class="btn btn-ghost" href="MacHuna_User_Manual.pdf">User manual <span class="sz">PDF</span></a>
-        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.9.1">Contact developer</a>
+        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.10.0">Contact developer</a>
       </div>
       <div class="req">
         <span><b>macOS 12</b> or later</span>
@@ -197,12 +197,17 @@ footer{padding-block:30px;color:var(--silver-faint)}
           <tr>
             <th scope="row">Audio in K-Frame EIF<span>the one known gap</span></th>
             <td><span class="pill no">Not built yet</span></td>
-            <td><b>EIF clips are silent.</b> K-Frame keeps clip audio in a companion <span class="mono">.eaf</span> file. That format has now been worked out, but the code to read and write it is not written yet, so any audio on your source is dropped when converting to EIF &mdash; MacHuna tells you so in the log. This is the one thing on this page known not to work, rather than merely unproven, and it is next on the list. <b>One question is still open: which of the eight audio channels a K-Frame treats as programme audio.</b> If you know, or can find out on a desk, that is the last piece.</td>
+            <td><b>EIF clips you create are silent.</b> K-Frame keeps clip audio in a companion <span class="mono">.eaf</span> file. MacHuna can now <b>read</b> one &mdash; converting an EIF to QuickTime MOV brings its sound with it &mdash; but it cannot yet <b>write</b> one, so audio is still dropped when converting <i>to</i> EIF, and MacHuna tells you so in the log. <b>The open question is which of the eight channels a K-Frame expects when reading.</b> If you know, or can find out on a desk, that is the last piece.</td>
           </tr>
           <tr>
-            <th scope="row">K-Frame TGA and MOV</th>
+            <th scope="row">K-Frame TGA</th>
             <td><span class="pill untested">Untested on a desk</span></td>
-            <td>Coded and routing correctly. Frame naming and format are taken from documentation rather than proven. Interlaced source to MOV is a known gap: ProRes carries no field&#8209;order flag, and whether a K-Frame minds is unknown.</td>
+            <td>Coded and routing correctly. Frame naming and format are taken from documentation rather than proven.</td>
+          </tr>
+          <tr>
+            <th scope="row">QuickTime MOV<span>SWS, EIF or TGA out to ProRes</span></th>
+            <td><span class="pill ok">Nothing to confirm</span></td>
+            <td>A ProRes&nbsp;4444 file with the key as a real alpha channel, and sound where the source has any. It is an ordinary video file rather than a desk format, so there is no hardware question hanging over it &mdash; if it opens in your NLE, it is right. One caveat: ProRes carries no field&#8209;order flag, so an interlaced source may need the field order setting by hand in your NLE.</td>
           </tr>
           <tr>
             <th scope="row">Sony MVS TGA</th>
@@ -240,7 +245,16 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <div class="rel">
 
       <div class="rel-item current">
-        <div class="rel-v">v1.9.1 <span>10 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-v">v1.10.0 <span>17 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-body">
+          <p class="lead">Adds QuickTime MOV output: turn an SWS, an EIF or a TGA sequence back into an editable ProRes&nbsp;4444 file, with the key as a real alpha channel and the sound intact.</p>
+          <p>Until now, material could go onto a desk but only came back off as a folder of TGA frames. A QuickTime is what an edit suite, a grade or an archive actually wants. Sound comes from the SWS itself, or for a K-Frame clip from its companion <span class="mono">.eaf</span> file, which MacHuna can now read. It is an ordinary video file rather than a desk format, so there is nothing about it waiting to be proven on hardware.</p>
+          <p>Also in this release: the Kayenne formats are now called <b>K-Frame</b>, which is what they are &mdash; Kayenne is one of three control panels that drive a K-Frame, alongside Karrera and GV&nbsp;Korona, and the clip store lives in the frame. The MOV "Include audio" tickbox now does something, and your last-used output format is remembered again.</p>
+        </div>
+      </div>
+
+      <div class="rel-item">
+        <div class="rel-v">v1.9.1 <span>10 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">Fixes some files being read half a line out, which made the picture look split down the middle with the sides swapped.</p>
           <p>The video does not always start at the same place in an SWS file &mdash; the header says where, and some files put it later. MacHuna had always assumed. <b>This affected conversions as well as playback</b>, so if you have ever converted a file that displayed this way, convert it again.</p>
@@ -277,7 +291,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
         <div class="rel-v">v1.7.1 <span>8 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">MacHuna now tells you, in the log, when an output has never been tested on the desk it is for.</p>
-          <p>Converting to K-Frame EIF, K-Frame TGA or MOV, or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
+          <p>Converting to K-Frame EIF, K-Frame TGA or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
         </div>
       </div>
 
@@ -338,7 +352,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Problems and requests</p>
     <div class="contact">
       <p class="note" style="color:var(--silver)">MacHuna was vibecoded by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
-      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.9.1">machuna@dnsvision.tv</a>
+      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.10.0">machuna@dnsvision.tv</a>
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>

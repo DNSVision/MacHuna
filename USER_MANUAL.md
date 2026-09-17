@@ -1,4 +1,4 @@
-# MacHuna v1.9.3 — User Manual
+# MacHuna v1.10.0 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -44,6 +44,7 @@ It runs natively on macOS.
 | K-Frame TGA | `.SWS`, `.EIF` | 32-bit RGBA TGA sequence *(UNCONFIRMED on hardware)* |
 | Sony TGA | `.SWS`, `.EIF`, TGA sequences | 32-bit RGBA TGA sequence (Sony MVS naming) |
 | TGA Sequence | TGA sequences, video clips | 32-bit RGBA TGA sequence (i↔p standards conversion) |
+| QuickTime MOV | `.SWS`, `.EIF`, TGA sequences | ProRes 4444 `.mov` with alpha, and audio where the source has it |
 
 ### 1.2 Supported Standards
 
@@ -65,6 +66,7 @@ All nine standards below have been confirmed against K-Watch reference files and
 - Accepts MOV, MP4, MXF, MKV and AVI clips, TGA sequences, and PNG, BMP and JPG stills
 - Converts between Kahuna SWS, K-Frame EIF, and Sony MVS formats in one app
 - Reads and writes K-Frame `.EIF` native clips — format reverse-engineered from real Kayenne hardware
+- Converts SWS, EIF and TGA sequences back to an editable ProRes 4444 QuickTime, with key and audio
 - Built-in Video Player for checking `.SWS` and `.EIF` files without a Kahuna or K-Frame desk
 
 > **NOTE** MacHuna converts and extracts files on your Mac. It does not upload to a mainframe over the network and it does not synchronise projects — getting the finished files onto the desk is done however you do it now.
@@ -343,7 +345,7 @@ The built-in Video Player opens `.EIF` files directly. Frame rate is detected au
 > **IMPORTANT — Hardware Status**
 > The extraction output paths have been confirmed correct by code analysis. However, K-Frame TGA output has **never been loaded on a live K-Frame desk**, and Sony TGA clip naming has **never been verified on a live Sony MVS**. MacHuna will warn you before converting to these targets. Use with that caveat in mind and verify the first import on your desk carefully.
 >
-> *(The former K-Frame MOV output was withdrawn in v1.6.5 — it was never confirmed on hardware and could not be offered consistently across input types.)*
+> *(MOV output returned in v1.10.0 as **QuickTime MOV**, and is listed separately below. It is not a desk format, so nothing about it is awaiting hardware confirmation.)*
 
 ### 7.1 Output Targets
 
@@ -351,6 +353,7 @@ The built-in Video Player opens `.EIF` files directly. Frame rate is detected au
 |---|---|---|
 | **K-Frame TGA** | 32-bit RGBA TGA sequence. Frames numbered `0001.tga` onwards. One subfolder per SWS. | Grass Valley K-Frame Image Store |
 | **Sony TGA** | 32-bit RGBA TGA sequence. Frames numbered `XXXX0000.tga` (4-character clip name + frame number). One subfolder per SWS. | Sony MVS Image Store |
+| **QuickTime MOV** | ProRes 4444 `.mov`, key carried as a real alpha channel, audio included where the source has it. Named after the source file. | None — an ordinary video file for an edit suite |
 
 ### 7.2 Workflow
 
@@ -359,7 +362,29 @@ The built-in Video Player opens `.EIF` files directly. Frame rate is detected au
 3. Set any options shown (Standard, Clip name, Field order, Include audio)
 4. Click **Convert**
 
-### 7.3 Standard (TGA outputs)
+### 7.3 QuickTime MOV — getting material back out
+
+Added in v1.10.0. Converts a Kahuna `.SWS`, a K-Frame `.EIF` or a TGA sequence into a **ProRes 4444 QuickTime**: the fill as picture, the key as a real alpha channel, and sound where the source has any. The file is named after its source, so `51.SWS` becomes `51.mov`.
+
+This is the way to get a graphic out of a desk format and into an edit suite, grade or archive. It is **not** a desk format, so unlike K-Frame TGA or Sony TGA there is no hardware warning on it and nothing awaiting confirmation — if it opens in QuickTime or your NLE, it is right.
+
+**Where the audio comes from:**
+
+| Source | Audio |
+|---|---|
+| `.SWS` | Read from the file itself, which carries audio inline |
+| `.EIF` | Read from the clip's companion `.eaf` file, if it has one. A K-Frame keeps clip audio in a separate file of the same name |
+| TGA sequence | None — a sequence of images has no audio to carry |
+
+Untick **Include audio** to produce a silent MOV from a source that has sound.
+
+**Frame rate.** An `.SWS` and an `.EIF` both declare their rate in the header, so MacHuna uses it and the **Standard** dropdown is hidden. A TGA sequence declares nothing, so for TGA input the Standard dropdown appears and sets the rate.
+
+**Stills are not accepted**, in line with the rest of MacHuna: a single frame is not a clip. Stills convert to Kahuna SWS only.
+
+> **Interlaced sources.** ProRes carries no field-order flag, so an interlaced source produces a MOV with correctly decoded interlaced frames that a downstream NLE may not automatically identify as interlaced. Set the field order in your NLE if it matters.
+
+### 7.4 Standard (TGA outputs)
 
 For K-Frame TGA and Sony TGA, select the **Standard** matching your target desk's video standard. This determines whether MacHuna applies field-weaving (for interlaced output standards) or extracts frames as-is (for progressive standards).
 
@@ -368,19 +393,19 @@ For K-Frame TGA and Sony TGA, select the **Standard** matching your target desk'
 
 MacHuna logs a note describing what it did for each file.
 
-### 7.4 Field Order (TGA outputs)
+### 7.5 Field Order (TGA outputs)
 
 A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA. **TFF (Top Field First) is the default** — it is the SMPTE standard for HD (including 1080i) and is correct for all known 1080i HD workflows (default since v1.6.3). If you see motion artefacts or comb effects on the desk after import, switch to BFF and reconvert.
 
 > **Fixed in v1.6.12.** For Sony TGA output from a TGA sequence or a video clip, this toggle was displayed but had no effect — the conversion was hardcoded to TFF, so switching to BFF changed nothing in the output. It now works in both conversion directions, and the conversion log states which field order was applied, so you can confirm what was used. If you tested Sony TGA output before v1.6.12 and concluded BFF did not help, that test was not valid and is worth repeating.
 
-### 7.5 Sony TGA — Clip Name
+### 7.6 Sony TGA — Clip Name
 
 Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
 
 **Each clip takes its own 4‑character name from the item list** (see Section 4.4), so each becomes its own output folder and several Sony clips convert together. The shared Clip name field that once forced one clip at a time is gone as of v1.8.0.
 
-### 7.6 Output Structure
+### 7.7 Output Structure
 
 | Output | File naming |
 |---|---|
@@ -546,7 +571,7 @@ Some of MacHuna's outputs have been confirmed on the desk they are for, and some
 | Output | What the log says |
 |---|---|
 | **Kahuna SWS** | Nothing. It is confirmed on a live Kahuna mainframe across all seven standards, so a warning would be false caution |
-| **K-Frame EIF, K-Frame TGA, K-Frame MOV, Sony MVS TGA** | A note that the output has never been loaded on that desk, and an invitation to get in touch if you can test it |
+| **K-Frame EIF, K-Frame TGA, Sony MVS TGA** | A note that the output has never been loaded on that desk, and an invitation to get in touch if you can test it |
 | **K-Frame EIF, when the source has audio** | An additional note that the audio is being dropped — see Section 6 |
 
 These are notes, not errors. Nothing is blocked and no dialog appears. The conversion runs exactly as it always did; you are simply told where it stands so you can decide whether to check the result before trusting it on air.
@@ -707,9 +732,8 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 - **TGA sequence audio** is not supported
 - **HLG Rec.2020** colour space is not implemented (requires a reference HLG .SWS file to reverse-engineer the header values)
 - **EIF write and conversion** — coded and working by analysis, but not yet confirmed on a live K-Frame desk. MacHuna warns before converting to or from EIF. Verify your first import carefully.
-- **EIF audio** — companion `.eaf` audio files used by some K-Frame clips are not currently supported. EIF files are always loaded without audio in the Video Player.
+- **EIF audio is read, not written** — MacHuna reads a clip's companion `.eaf` when converting to QuickTime MOV (v1.10.0), but cannot yet write one, so EIF *output* is still silent. The Video Player also still plays EIF files without sound.
 - **Extraction outputs unconfirmed on hardware** — K-Frame TGA and Sony MVS TGA naming have not been verified on live desks. MacHuna will warn you before converting to these targets.
-- **K-Frame MOV output withdrawn** (v1.6.5) — it was never confirmed on hardware; use K-Frame TGA or K-Frame EIF instead.
 
 ---
 

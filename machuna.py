@@ -2,7 +2,7 @@
 """
 MacHuna for macOS
 Translates broadcast media assets between formats: MOV, MP4, MXF, TGA sequences,
-and still images to/from Grass Valley Kahuna .SWS, K-Frame MOV, K-Frame TGA, and Sony TGA.
+and still images to/from Grass Valley Kahuna .SWS, K-Frame EIF, K-Frame TGA, Sony TGA, and QuickTime MOV.
 
 Requirements:
     brew install ffmpeg   (or: https://ffmpeg.org/download.html)
@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.9.3"
+VERSION = "1.10.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -2997,7 +2997,7 @@ class SWSPlayer(tk.Toplevel):
 
 # ─────────────────────────────────────────────────────────────
 #  Hula — SWS / MOV Extractor (integrated from DNSVision/Hula)
-#  Converts .SWS or .MOV files to K-Frame MOV, K-Frame TGA,
+#  Converts .SWS, .EIF or .MOV files to QuickTime MOV, K-Frame TGA,
 #  or Sony TGA format.
 #  NOTE: K-Frame TGA output parameters are UNCONFIRMED pending hardware
 #  verification. Sony TGA parameters are confirmed for Sony MVS.
@@ -3015,8 +3015,6 @@ UNVERIFIED_OUTPUT_NOTES = {
     "K-Frame TGA":  "K-Frame TGA output has not yet been confirmed on a live K-Frame desk. "
                     "Frame naming and format are assumed from documentation. Check the result "
                     "before relying on it.",
-    "K-Frame MOV":  "K-Frame MOV output has not yet been confirmed on a live K-Frame desk. "
-                    "Check the result before relying on it.",
     "Sony TGA":     "Sony MVS TGA output has not yet been confirmed on a live Sony MVS. The "
                     "4-character clip naming is assumed from documentation, and 25i field order "
                     "defaults to TFF with a toggle in the UI if motion looks wrong.",
@@ -3050,7 +3048,7 @@ def unverified_output_note(output_name):
     return UNVERIFIED_OUTPUT_NOTES.get(output_name)
 
 
-HULA_TARGET_KFRAME_MOV = "K-Frame MOV"
+HULA_TARGET_QUICKTIME_MOV = "QuickTime MOV"
 HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # UNCONFIRMED — awaiting hardware verification
 HULA_TARGET_SONY_TGA    = "Sony TGA"
 _HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA}
@@ -3421,14 +3419,213 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
         log(f"  Done → {dest_dir}  ({out_count} TGA files)")
 
 
+# ── .eaf companion audio (Kayenne/K-Frame clip audio) ────────────────────────
+#
+# A K-Frame clip's picture is the .eif; its sound, when it has any, is a
+# separate .eaf of the same name beside it. Decoded 2026-09-09 from six real
+# files (0003-0007, 0022 in ~/Desktop/TEST WIPES/50i/EIF/), with exact byte
+# accounting on every one. See DEVELOPMENT_NOTES.md "EAF format".
+#
+# Reading is solved. WRITING an .eaf is deliberately not implemented: which
+# channels a desk *expects* is still an open question for the hardware session,
+# and so is the .eif audio flag at 0x60 bit 2. Do not add a writer here without
+# that answer.
+EAF_HEADER_BYTES   = 128
+EAF_CHANNELS       = 8
+EAF_SAMPLE_RATE    = 48000
+EAF_OFF_SAMPLES    = 0x64    # uint32: total sample count
+EAF_OFF_FRAMES     = 0x6A    # uint32: frame count, matches the paired .eif
+EAF_PROGRAMME_CHANS = (1, 3)  # observed in all six reference files
+
+
+def eaf_path_for(eif_path: str) -> str:
+    """The companion audio file a .eif would have, whether or not it exists."""
+    return str(Path(eif_path).with_suffix('.eaf'))
+
+
+def _channel_correlations(arr) -> list:
+    """Sample-to-sample correlation per channel: ~0.99 for real audio, ~0 for
+    anything else. Used to identify which channels of a .eaf carry programme
+    audio without being fooled by the loud non-audio channels."""
+    out = []
+    for c in range(arr.shape[1]):
+        x = arr[:, c].astype(np.float64)
+        if x.size < 2 or x.std() == 0:
+            out.append(0.0)
+            continue
+        a, b = x[:-1], x[1:]
+        if a.std() == 0 or b.std() == 0:
+            out.append(0.0)
+            continue
+        out.append(abs(float(np.corrcoef(a, b)[0, 1])))
+    return out
+
+
+def read_eaf_stereo(eaf_path: str, log=print):
+    """Read a .eaf and return interleaved little-endian stereo s16 bytes.
+
+    Returns None if the file is absent or does not parse as an .eaf. The body
+    is 8 channels of 16-bit BIG-endian at 48kHz; programme audio sits on
+    channels 1 and 3 in every reference file. Channels 0 and 2 carry
+    near-full-scale spikes that are not audio, so they are never chosen by
+    accident - the pair is only overridden if 1 and 3 are silent and something
+    else clearly is not.
+    """
+    if not eaf_path or not os.path.exists(eaf_path):
+        return None
+    size = os.path.getsize(eaf_path)
+    if size <= EAF_HEADER_BYTES:
+        return None
+    with open(eaf_path, 'rb') as f:
+        head = f.read(EAF_HEADER_BYTES)
+        body = f.read()
+    samples = struct.unpack_from('<I', head, EAF_OFF_SAMPLES)[0]
+    frames  = struct.unpack_from('<I', head, EAF_OFF_FRAMES)[0]
+    expect  = samples * EAF_CHANNELS * 2
+    if samples == 0 or expect == 0 or len(body) < expect:
+        log(f"  .eaf does not parse (declares {samples} samples, "
+            f"body is {len(body)} bytes) - audio skipped")
+        return None
+    arr = np.frombuffer(body[:expect], dtype='>i2').reshape(-1, EAF_CHANNELS)
+
+    # Choose the programme pair. Loudness is the wrong test here: channels 0
+    # and 2 carry near-full-scale spikes that are NOT audio, so picking "the
+    # loudest" would put garbage in the file. Sample-to-sample correlation
+    # tells them apart cleanly - real audio sits around 0.99, anything
+    # misread or non-audio collapses to about 0. That is the method that found
+    # the endianness error in the first place.
+    left_i, right_i = EAF_PROGRAMME_CHANS
+    corr = _channel_correlations(arr)
+    if corr[left_i] < 0.5 and corr[right_i] < 0.5:
+        ranked = [c for c in np.argsort(corr)[::-1] if corr[c] >= 0.9]
+        if len(ranked) >= 2:
+            left_i, right_i = int(min(ranked[:2])), int(max(ranked[:2]))
+            log(f"  .eaf: channels {EAF_PROGRAMME_CHANS} do not look like audio, "
+                f"using {left_i} and {right_i} instead")
+        else:
+            # Nothing in the file looks like audio. A genuinely silent .eaf is
+            # normal (0022 in the reference set is one), so take the expected
+            # pair and stay quiet rather than inventing a signal.
+            pass
+    stereo = np.empty((arr.shape[0], 2), dtype='<i2')
+    stereo[:, 0] = arr[:, left_i]
+    stereo[:, 1] = arr[:, right_i]
+    log(f"  .eaf: {samples} samples, {frames} frame(s), "
+        f"{samples / float(EAF_SAMPLE_RATE):.2f}s, channels {left_i}/{right_i}")
+    return stereo.tobytes()
+
+
+def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
+                stereo_pcm: str, out_path: str) -> list:
+    """The one ProRes 4444 encode used by every MOV path.
+
+    Kept in one place so SWS, EIF and TGA sources cannot drift apart in
+    colour handling or alpha.
+    """
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    cmd = [ffmpeg, '-y',
+           '-f', 'rawvideo', '-pix_fmt', 'rgba',
+           '-s', f"{width}x{height}",
+           '-r', fps_str, '-i', raw_rgba]
+    if stereo_pcm:
+        cmd += ['-f', 's16le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
+                '-i', stereo_pcm]
+    cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
+            '-pix_fmt', 'yuva444p10le',
+            '-color_primaries', 'bt709',
+            '-color_trc', 'bt709',
+            '-colorspace', 'bt709']
+    if stereo_pcm:
+        cmd += ['-c:a', 'pcm_s16le', '-ar', str(EAF_SAMPLE_RATE)]
+    cmd.append(out_path)
+    return cmd
+
+
+def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
+                             include_audio: bool = True, log=print) -> str:
+    """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
+
+    The output is an ordinary QuickTime file: picture, key as a real alpha
+    channel, and sound when the clip has a companion .eaf. Nothing about it is
+    K-Frame specific, so there is nothing here for a desk to confirm.
+    """
+    h    = EIFHeader(eif_path)
+    stem = Path(eif_path).stem
+    out_path = os.path.join(dest_parent, f"{stem}.mov")
+    log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
+        log(f"  Decoding {h.frame_count} frame(s) to RGBA...")
+        with open(eif_path, 'rb') as f_in, open(raw_rgba, 'wb') as f_out:
+            for i in range(h.frame_count):
+                f_in.seek(h.video_start + i * 3 * _EIF_UNIT_BYTES)
+                u0 = f_in.read(_EIF_UNIT_BYTES)
+                u1 = f_in.read(_EIF_UNIT_BYTES)
+                u2 = f_in.read(_EIF_UNIT_BYTES)
+                f_out.write(np.asarray(_decode_eif_frame_rgba(u0, u1, u2)).tobytes())
+                if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
+                    log(f"  Frame {i + 1}/{h.frame_count}")
+        stereo_pcm = None
+        if include_audio:
+            pcm = read_eaf_stereo(eaf_path_for(eif_path), log=log)
+            if pcm:
+                stereo_pcm = os.path.join(tmp, 'audio.pcm')
+                with open(stereo_pcm, 'wb') as af:
+                    af.write(pcm)
+            else:
+                log("  No companion .eaf - MOV will be silent")
+        log("  Encoding ProRes 4444...")
+        _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, f"{h.fps:.6g}",
+                                stereo_pcm, out_path), check=True)
+    log(f"  Done → {out_path}")
+    return out_path
+
+
+def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
+                           fps: float, vf: str = None, log=print) -> str:
+    """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio.
+
+    32-bit RGBA TGAs keep their key as a real alpha channel. The interlace
+    filter is supplied by the caller rather than worked out here: the rules for
+    a raw TGA pile with no declared source rate are subtle and already written
+    down once in _run_to_tga_seq. Deriving them twice is how the two paths
+    would drift apart.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+    out_path = os.path.join(dest_dir, f"{out_name}.mov")
+    ffmpeg   = _get_ffmpeg_path('ffmpeg')
+    log(f"  {len(tga_files)} frame(s) @ {fps:g}fps → ProRes 4444")
+    with tempfile.TemporaryDirectory() as tmp:
+        concat_file = os.path.join(tmp, 'concat.txt')
+        with open(concat_file, 'w') as cf:
+            for f in tga_files:
+                cf.write(f"file '{f}'\n")
+        cmd = [ffmpeg, '-y', '-r', f"{fps:g}",
+               '-f', 'concat', '-safe', '0', '-i', concat_file]
+        if vf:
+            cmd += ['-vf', vf]
+        cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
+                '-pix_fmt', 'yuva444p10le',
+                '-color_primaries', 'bt709', '-color_trc', 'bt709',
+                '-colorspace', 'bt709',
+                '-r', f"{fps:g}", out_path]
+        _run_ffmpeg(cmd, check=True)
+    log(f"  Done → {out_path}")
+    return out_path
+
+
 def _hula_convert_mov(sws_path: str, dest_parent: str,
-                      mov_number: int, log=print) -> str:
-    """Convert one SWS to a ProRes 4444 MOV with embedded alpha."""
+                      include_audio: bool = True, log=print) -> str:
+    """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
+
+    Named after the source file rather than a slot number: this is an ordinary
+    video file for an edit suite, not something addressed by slot on a desk.
+    """
     header   = HulaSWSHeader(sws_path)
     log(f"  {header}")
     fill_off = header.data_offset
     key_off  = header.data_offset + header.plane_size * header.frame_count
-    out_path = os.path.join(dest_parent, f"{mov_number:04d}.mov")
+    out_path = os.path.join(dest_parent, f"{Path(sws_path).stem}.mov")
     with tempfile.TemporaryDirectory() as tmp:
         raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
         log(f"  Decoding {header.frame_count} frame(s) to RGBA...")
@@ -3446,26 +3643,12 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
                 f_out.write(rgba.tobytes())
                 if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
                     log(f"  Frame {i + 1}/{header.frame_count}")
-        stereo_pcm = _hula_extract_audio_stereo(sws_path, header, tmp, log)
-        ffmpeg     = _get_ffmpeg_path('ffmpeg')
-        fps_str    = f"{header.fps:.6g}"
-        base_cmd   = [ffmpeg, '-y',
-                      '-f', 'rawvideo', '-pix_fmt', 'rgba',
-                      '-s', f"{header.width}x{header.height}",
-                      '-r', fps_str, '-i', raw_rgba]
-        if stereo_pcm:
-            base_cmd += ['-f', 's16le', '-ar', '48000', '-ac', '2',
-                         '-i', stereo_pcm]
-        base_cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
-                     '-pix_fmt', 'yuva444p10le',
-                     '-color_primaries', 'bt709',
-                     '-color_trc', 'bt709',
-                     '-colorspace', 'bt709']
-        if stereo_pcm:
-            base_cmd += ['-c:a', 'pcm_s16le', '-ar', '48000']
-        base_cmd.append(out_path)
+        stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
+                      if include_audio else None)
         log("  Encoding ProRes 4444...")
-        _run_ffmpeg(base_cmd, check=True)
+        _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
+                                f"{header.fps:.6g}", stereo_pcm, out_path),
+                    check=True)
     log(f"  Done → {out_path}")
     return out_path
 
@@ -3473,7 +3656,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
-                    clip_names: list = None,
+                    clip_names: list = None, include_audio: bool = True,
                     log=print):
     """Convert a list of SWS or MOV files to the specified extraction target.
 
@@ -3488,7 +3671,10 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
         cn = clip_names[idx - 1] if clip_names else clip_name
         try:
             ext = Path(path).suffix.lower()
-            if ext == '.eif':
+            if ext == '.eif' and target == HULA_TARGET_QUICKTIME_MOV:
+                _hula_convert_eif_to_mov(path, dest_dir,
+                                         include_audio=include_audio, log=log)
+            elif ext == '.eif':
                 if interlaced:
                     _hula_convert_eif_to_tga_interlaced(
                         path, dest_dir, target=target,
@@ -3498,15 +3684,16 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                         path, dest_dir, target=target,
                         clip_name=cn, log=log)
             elif ext == '.mov':
-                if target == HULA_TARGET_KFRAME_MOV:
+                if target == HULA_TARGET_QUICKTIME_MOV:
                     raise ValueError(
-                        "MOV input is not supported for K-Frame MOV output. "
+                        "MOV input is not supported for QuickTime MOV output. "
                         "Select a TGA target or use an SWS file.")
                 _hula_convert_mov_to_tga(path, dest_dir, target, standard,
                                          clip_name=cn,
                                          field_order=field_order, log=log)
-            elif target == HULA_TARGET_KFRAME_MOV:
-                _hula_convert_mov(path, dest_dir, idx, log=log)
+            elif target == HULA_TARGET_QUICKTIME_MOV:
+                _hula_convert_mov(path, dest_dir,
+                                  include_audio=include_audio, log=log)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:
@@ -4109,7 +4296,7 @@ def launch_gui():
 
     # ── Output format constants ──
     OUTPUT_KAHUNA_SWS  = "Kahuna SWS"
-    OUTPUT_KFRAME_MOV = "K-Frame MOV"
+    OUTPUT_QUICKTIME_MOV = "QuickTime MOV"
     OUTPUT_KFRAME_TGA = "K-Frame TGA"
     OUTPUT_KFRAME_EIF = "K-Frame EIF"
     OUTPUT_SONY_TGA    = "Sony TGA"
@@ -4157,6 +4344,10 @@ def launch_gui():
     if 'sequential'        in s:  seq_var.set(s['sequential'])
     if 'clip_name'         in s:  clip_name_var.set(s['clip_name'])
     if 'field_order'       in s:  field_order_var.set(s['field_order'])
+    # Saved since forever and never read back, so nobody's last output was
+    # ever actually remembered. Restoring it is safe because
+    # _update_output_options drops anything the new input cannot produce.
+    if 'output_format'     in s:  output_var.set(s['output_format'])
     # hula_clip / hula_field_order: backwards-compat with pre-v1.5.33 settings
     if 'hula_clip'         in s and 'clip_name' not in s:
         clip_name_var.set(s['hula_clip'])
@@ -4705,7 +4896,12 @@ def launch_gui():
                                       before=frm_row_actions)
             frm_row_bespoke_foot.pack(**bf)
             _align_list_controls()
-        if out != OUTPUT_KFRAME_MOV:
+        if out == OUTPUT_QUICKTIME_MOV:
+            # A TGA sequence declares no frame rate, so the Standard dropdown
+            # supplies one. SWS and EIF carry theirs in the header.
+            if _input_type[0] == 'to_sws_only':
+                frm_row_std.pack(**bf)
+        else:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
             frm_row_flags.pack(**bf)
@@ -4720,9 +4916,12 @@ def launch_gui():
             if show_tga or show_aud:
                 frm_row_tga_opts.pack(**bf)
             _pack_list()
-        elif out == OUTPUT_KFRAME_MOV:
-            if _has_audio_clips[0]:
+        elif out == OUTPUT_QUICKTIME_MOV:
+            # TGA sequences have no audio to include, so the checkbox would be
+            # a lie there. SWS carries audio inline, EIF in a .eaf companion.
+            if _input_type[0] in ('from_sws', 'from_eif', 'mixed_eif_sws'):
                 frm_row_hula_mov.pack(**bf)
+            _pack_list()
         elif out in (OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA):
             is_sony = (out == OUTPUT_SONY_TGA)
             frm_clip_inner.pack_forget()
@@ -4752,13 +4951,16 @@ def launch_gui():
     def _update_output_options():
         itype = _input_type[0]
         if itype == 'from_sws':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_KFRAME_EIF,
+                    OUTPUT_SONY_TGA, OUTPUT_QUICKTIME_MOV]
         elif itype in ('from_eif', 'mixed_eif_sws'):
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA,
+                    OUTPUT_QUICKTIME_MOV]
         elif itype == 'mov_only':
             opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         elif itype == 'to_sws_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA,
+                    OUTPUT_TGA_SEQ, OUTPUT_QUICKTIME_MOV]
         else:
             opts = []
         output_cb['values'] = opts
@@ -4947,7 +5149,8 @@ def launch_gui():
         # Without this guard a still routes into _run_to_tga_seq / _run_to_eif, which
         # handle only 'tga_seq'/'clip'/'sws' items, and vanishes with no file, no error
         # and no log line — the silent failure logged as Fix 4.
-        if out in (OUTPUT_TGA_SEQ, OUTPUT_SONY_TGA, OUTPUT_KFRAME_EIF):
+        if out in (OUTPUT_TGA_SEQ, OUTPUT_SONY_TGA, OUTPUT_KFRAME_EIF,
+                   OUTPUT_QUICKTIME_MOV):
             _stills = [i for i in _selected_items if i['type'] == 'still']
             if _stills:
                 _names = '\n'.join(f"  • {Path(s['path']).name}" for s in _stills[:5])
@@ -5154,8 +5357,9 @@ def launch_gui():
 
         def _run_from_sws():
             target_map = {
-                OUTPUT_KFRAME_TGA: HULA_TARGET_KFRAME_TGA,
-                OUTPUT_SONY_TGA:    HULA_TARGET_SONY_TGA,
+                OUTPUT_KFRAME_TGA:    HULA_TARGET_KFRAME_TGA,
+                OUTPUT_SONY_TGA:      HULA_TARGET_SONY_TGA,
+                OUTPUT_QUICKTIME_MOV: HULA_TARGET_QUICKTIME_MOV,
             }
             hula_target = target_map.get(out, HULA_TARGET_KFRAME_TGA)
             paths = [item['path'] for item in todo]
@@ -5166,6 +5370,7 @@ def launch_gui():
                             clip_name=clip_name_var.get().strip().upper(),
                             field_order=field_order_var.get(),
                             clip_names=names,
+                            include_audio=include_audio_var.get(),
                             log=log)
             # This path converts the batch in one call rather than per item, so
             # the rows are marked together once it returns.
@@ -5224,6 +5429,7 @@ def launch_gui():
             out_interlaced = 'i' in out_std
             tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
             is_sony = (out == OUTPUT_SONY_TGA)
+            is_mov  = (out == OUTPUT_QUICKTIME_MOV)
             cn = clip_name_var.get().strip().upper() if is_sony else None
             # Fix 10: honour the UI's field-order toggle instead of hardcoding TFF.
             # Only when the toggle is actually visible, which _update_adaptive_controls
@@ -5261,7 +5467,7 @@ def launch_gui():
                             # sequence's rate.
                             assumed_src_fps = tgt_fps / 2 if tgt_fps > 30 else tgt_fps
                             vf = _i_to_p_filter(assumed_src_fps, out_std, parity=parity)
-                            log(f"  TGA→TGA: {base} — interlaced→progressive via yadif, {fo} ({out_std})")
+                            log(f"  TGA→{'MOV' if is_mov else 'TGA'}: {base} — interlaced→progressive via yadif, {fo} ({out_std})")
                         elif not src_interlaced and out_interlaced:
                             # Raw TGA pile: no source fps to rate-check (see
                             # _p_to_i_field_map / convert_tga_sequence). Assumed to be a
@@ -5270,27 +5476,32 @@ def launch_gui():
                             # declare a TGA sequence's rate yet.
                             vf = ('tinterlace=mode=interleave_bottom' if fo == 'BFF'
                                   else 'tinterlace=mode=interleave_top')
-                            log(f"  TGA→TGA: {base} — progressive→interlaced {fo} ({out_std})")
+                            log(f"  TGA→{'MOV' if is_mov else 'TGA'}: {base} — progressive→interlaced {fo} ({out_std})")
                         else:
                             vf = None
-                            log(f"  TGA→TGA: {base} — passthrough ({out_std})")
-                        out_dir = os.path.join(d, cn_i if is_sony else base)
-                        os.makedirs(out_dir, exist_ok=True)
-                        with tempfile.TemporaryDirectory() as tmp:
-                            concat_file = os.path.join(tmp, 'concat.txt')
-                            with open(concat_file, 'w') as cf:
-                                for f in tga_files:
-                                    cf.write(f"file '{f}'\n")
-                            out_pattern = os.path.join(out_dir, f'{cn_i}%04d.tga' if is_sony else '%04d.tga')
-                            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
-                                   '-i', concat_file]
-                            if vf:
-                                cmd += ['-vf', vf]
-                            cmd += ['-start_number', '0' if is_sony else '1', out_pattern]
-                            _run_ffmpeg(cmd, check=True)
-                        count = len(list(Path(out_dir).glob('*.tga')))
-                        log(f"  Done → {out_dir}  ({count} frames)")
-                        results.append((base, base, 'OK'))
+                            log(f"  TGA→{'MOV' if is_mov else 'TGA'}: {base} — passthrough ({out_std})")
+                        if is_mov:
+                            convert_tga_seq_to_mov(tga_files, d, base, tgt_fps,
+                                                   vf=vf, log=log)
+                            results.append((base, base, 'OK'))
+                        else:
+                            out_dir = os.path.join(d, cn_i if is_sony else base)
+                            os.makedirs(out_dir, exist_ok=True)
+                            with tempfile.TemporaryDirectory() as tmp:
+                                concat_file = os.path.join(tmp, 'concat.txt')
+                                with open(concat_file, 'w') as cf:
+                                    for f in tga_files:
+                                        cf.write(f"file '{f}'\n")
+                                out_pattern = os.path.join(out_dir, f'{cn_i}%04d.tga' if is_sony else '%04d.tga')
+                                cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
+                                       '-i', concat_file]
+                                if vf:
+                                    cmd += ['-vf', vf]
+                                cmd += ['-start_number', '0' if is_sony else '1', out_pattern]
+                                _run_ffmpeg(cmd, check=True)
+                            count = len(list(Path(out_dir).glob('*.tga')))
+                            log(f"  Done → {out_dir}  ({count} frames)")
+                            results.append((base, base, 'OK'))
                     elif item['type'] == 'clip':
                         name = Path(item['path']).stem
                         info = get_video_info(item['path'])
@@ -5350,7 +5561,9 @@ def launch_gui():
                     _run_to_sws()
                 elif out == OUTPUT_KFRAME_EIF:
                     _run_to_eif()
-                elif out == OUTPUT_TGA_SEQ or (out == OUTPUT_SONY_TGA and itype == 'to_sws_only'):
+                elif (out == OUTPUT_TGA_SEQ
+                      or (out in (OUTPUT_SONY_TGA, OUTPUT_QUICKTIME_MOV)
+                          and itype == 'to_sws_only')):
                     _run_to_tga_seq()
                 else:
                     _run_from_sws()

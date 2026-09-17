@@ -38,7 +38,7 @@ Legend: `✓` = checkbox toggle · `(radio)` = mutually exclusive group · `▸`
 - Convert Selected
 - Stop ⌘. (Command-period, the Mac cancel convention)
 - —
-- Output Format ▸ (radio): Kahuna SWS · K-Frame EIF · K-Frame MOV · K-Frame TGA · Sony TGA · QuickTime MOV · TGA Sequence
+- Output Format ▸ (radio): Kahuna SWS · K-Frame EIF · K-Frame TGA · Sony TGA · QuickTime MOV · TGA Sequence
 - Video Standard ▸ (radio): 1080i/50 · 1080i/59.94 · 1080i/60 · 1080p/25 · 1080p/50 · 1080p/59.94 · 1080p/60
 - Field Order ▸ (radio): TFF · BFF
 - —
