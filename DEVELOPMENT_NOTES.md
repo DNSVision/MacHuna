@@ -92,7 +92,7 @@ git push
 - **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
 
 **Open code work (no hardware needed):**
-- **White key (INVESTIGATE ONLY)** - possible Y-value inversion in `_generate_white_key`; do not change without a hex-compare against a real K-Watch reference. Detail in "Outstanding review items" + "White Key Plane". **This is the only open code item.** Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
+- ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
 
 **Distribution - DONE 2026-09-07, no longer open work:**
 - Public download page live at `https://dnsvision.tv/machuna` (Cloudflare Pages/Worker `soft-glade-217b`), app served from R2 bucket `machuna` via `downloads.dnsvision.tv` because Pages caps files at 25 MB.
@@ -146,7 +146,23 @@ A full adversarial code review (Fable 5) produced a working file `REVIEW_FIXES_v
 1. ~~**Fix 4 (HIGH) — a still produces no output on TGA-Sequence / Sony-TGA outputs.**~~ — RESOLVED in v1.6.12 by **blocking the combination**, not by converting it. The review suggested "handle a still as single-frame TGA output, or log an error"; the first half of that is explicitly out of scope. See "Stills are SWS-only (settled)" below. The same silent-vanish gap was found in `_run_to_eif` (it handles `'tga_seq'`/`'clip'`/`'sws'` only) and is covered by the same guard.
 2. ~~**Fix 9(b) (MEDIUM) — cross-rate i→p on SWS→SWS / TGA-Sequence / Sony-TGA plays at the wrong speed.**~~ — RESOLVED in v1.6.12. A new shared `_i_to_p_filter()` appends an explicit fps resample on all four i→p paths so the output frame count matches the stamped target rate; it also fixed a previously-unrecorded instance in `convert_clip` itself (a down-rate SWS output, e.g. i5994→p25, ran ~20% slow). Raw TGA sequences are left unchanged (a TGA pile carries no declared frame rate to resample from). See CHANGELOG v1.6.12. *(Fix 9(a), the p→i cousin, was resolved earlier in v1.6.10.)*
 3. ~~**Fix 10 (MEDIUM) — Sony TGA field-order toggle ignored.**~~ — RESOLVED in v1.6.12. `_run_to_tga_seq` now honours the UI's `field_order_var` (BFF → parity `bff` / `interleave_bottom`) in both directions, for TGA-sequence and video-clip inputs; `_p_to_i_field_map` gained a `field_order` parameter so the hardware-confirmed SWS weave stays byte-for-byte unchanged. *Which* field order a Sony MVS actually wants is still hardware-unconfirmed — this just makes the toggle functional. See CHANGELOG v1.6.12.
-4. **White key — INVESTIGATE ONLY, do not change without evidence.** `_generate_white_key` (~404–418) decodes as Y=64 (black in the 64–940 convention), while the alphaextract and EIF→SWS key paths write 940 as opaque — a contradiction. *But* the white-key behaviour was confirmed on hardware, so the generated key is presumably correct as-is. Before any change: hex-compare `_generate_white_key`'s output against a real K-Watch reference file that has a generated key, and check what value the alphaextract path actually produces for a fully-opaque alpha. Document the finding here; change code only if the comparison proves an inversion. See also "### White Key Plane" below.
+4. ~~**White key — INVESTIGATE ONLY.**~~ — **INVESTIGATION CLOSED 2026-09-17. Do not change `_generate_white_key`.** The suspicion was correct as arithmetic and wrong as a conclusion.
+
+   **What the decode shows.** `_generate_white_key` writes the repeating pattern `20 01 02 00 04 08 00 40`, which through MacHuna's own v210 decoder is **Y=64, Cb=512, Cr=512** — black with neutral chroma, not white. MacHuna's own reader (`_hula_decode_frame` → `_yuv_to_gray8`) maps a key of 64 to **alpha 0**, fully transparent. So the function's name and its data disagree. That much is real.
+
+   **What the comparison shows.** MacHuna's first commit is 2026-05-04, so any `.SWS` older than that cannot be its work. A survey of 23 keyed files in `~/Documents/DNS Vision/` found:
+
+   - A Kahuna project still from **2023-05-12** — three years before MacHuna existed — with a key plane of **constant 64**.
+   - The same constant 64 in K-Watch-era TNT (2024-12, 2025-06, 2026-02), UEFA (2025-08) and DAZN (2025-10) wipes.
+   - Files with a *genuine* key from the same tool and era varying across **64–940**.
+
+   **Conclusion: K-Watch writes 64–940 for a real key and a flat 64 when the source has none. MacHuna reproduces that exactly.** The generated key is correct as-is, which is consistent with the behaviour having been confirmed on hardware. The hex comparison this item asked for is done; nothing in the write path needs changing.
+
+   **Two things the survey turned up that are worth a look on the desk:**
+   - `Wipes/UEFA/SUPER CUP 2025/WIPES/8.SWS` is **constant 940** while 1, 2, 3 and 6 from the same session are constant 64. A natural experiment already in the library — does 8 behave differently?
+   - `Kahuna Projects/PROJECTS/PRJ00014/STILLS/1.SWS` is a desk-written file whose key uses the **full 0–1023 range**, not 64–940. Desk-written keys are not always in video range. (It also has the 3072-byte header that caused the v1.9.1 shear.)
+
+   **What remains is a different question, and it is a desk question, not a code one** — see "Should a keyless source get a key plane at all?" in the hardware checklist.
 
 ### Stills are SWS-only (settled — do not reopen)
 
@@ -169,6 +185,17 @@ Fix 14 (clip→EIF speed, v1.6.11) cleared the last item that could be done with
 The single most important outstanding work in the project. When a live K-Frame ClipStore / Image Store is available, run the "Priority hardware test steps" above and, in the same visit, capture what's needed to close the other unknowns. Get through as much of this checklist as the desk time allows:
 
 - [ ] **THE KNOCKOUT_WIPE ROUND TRIP — do this first.** David's plan, and the highest-value test on the list: load one known MOV into the K-Frame, let the desk convert it natively, then analyse what the desk produced against the source. It answers several questions at once and needs no MacHuna output to be correct first. Full baseline below.
+
+- [ ] **Should a keyless source get a key plane at all?** (David's question, 2026-09-17.) Today, converting a source with no alpha while **Ignore alpha is unticked** writes a *full, flat* key plane (constant Y=64) and declares it in the header (`has_key=True`, `0x1A8` = frame count). Only ticking **Ignore alpha** produces a file with no key plane. David's stated requirement is the simpler contract: **no key in, no key out**, whatever the tickbox says.
+
+  **The test, about two minutes:** convert one keyless source twice — once as now (flat key plane) and once with Ignore alpha ticked (no key plane) — load both, and see whether the desk behaves any differently.
+
+  | Outcome | What to do |
+  |---|---|
+  | Desk behaves identically | Adopt "no key plane when the source has no alpha". **This halves every keyless file**, because a key plane is exactly the size of the fill plane — it also halves conversion time and doubles the clip length that fits under the 4GB split threshold |
+  | Desk behaves differently | Keep today's behaviour and record exactly how they differ |
+
+  **Why it has not simply been changed:** K-Watch writes the flat key in this case (evidence in "Outstanding review items" 4), so changing it would be MacHuna's first deliberate divergence from the reference. Same shape as the `0x60` EIF flag: cheap to settle at a desk, not worth guessing at.
 
 - [ ] **EIF write, 50fps (core go/no-go)** — Convert a known short 50fps TGA sequence to `0001.eif`, import, verify: file appears, frame count correct, plays at correct speed, colours correct, key correct.
 - [ ] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
@@ -558,6 +585,8 @@ Fill plane must use -colorspace bt709 -color_range tv flags. Without these, lumi
 
 ### White Key Plane
 Written by _generate_white_key() when source has no alpha and ignore alpha is NOT ticked. When ignore alpha IS ticked, no key plane is written at all -- header fields 0x1A8 and 0x1B4 are zeroed and the file contains fill only. The repeating 8-byte pattern for the white key plane is: 20 01 02 00 04 08 00 40 -- confirmed by hex analysis of a real K-Watch file.
+
+**Decoded (2026-09-17): that pattern is Y=64, Cb=512, Cr=512** -- black with neutral chroma, despite the name, and MacHuna's own reader maps it to alpha 0. **This is correct and must not be 'fixed':** K-Watch files predating MacHuna carry exactly the same constant-64 key plane, while their genuine keys vary across 64-940. See "Outstanding review items" 4 for the survey. Whether a keyless source should get this plane at all is a separate question, on the hardware checklist.
 
 ---
 
