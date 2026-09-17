@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `3381149` - 2026-09-17. **v1.10.0 is built and released. NOT published** - the live site still serves v1.9.1. The website files in `website/` are already updated to v1.10.0, so `./publish.sh --upload` is one command away whenever David asks.
+**Understanding baseline:** commit `5a74374` - 2026-09-17. **v1.10.0 is built and released. NOT published** - the live site still serves v1.9.1. The website files in `website/` are already updated to v1.10.0, so `./publish.sh --upload` is one command away whenever David asks.
+
+**v1.10.1 - the MOV can be named.** David's first job on v1.10.0 was a TGA sequence to MOV and there was no way to say what the file should be called, while every other output lets you name or number what it writes. New `BESPOKE_MODE_MOV` reuses the v1.6.13 naming machinery, so it inherits the duplicate and destination-collision checks. **Blank is valid and means "source name"** - the v1.10.0 behaviour stays the default, and blank rows are kept out of the clash checks because each resolves to its own source name. A worked reminder that a green suite proves nothing about a GUI field: only the driver showed the field was connected.
 
 **v1.10.0 - QuickTime MOV output, and `.eaf` audio reading.** Material could go onto a desk but only came back off as a folder of TGA frames. SWS, EIF and TGA sequences now convert to ProRes 4444 with the key as a real alpha channel and sound where the source has any. **The important part is what it is not: a desk format.** There is no hardware unknown attached to a ProRes file, so MOV has left the hardware-unknowns tables and the desk checklist, where it had been booking time to test an output nobody could select.
 
