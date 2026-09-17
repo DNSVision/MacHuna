@@ -1,4 +1,4 @@
-# MacHuna v1.10.1 — User Manual
+# MacHuna v1.10.2 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -382,7 +382,9 @@ Untick **Include audio** to produce a silent MOV from a source that has sound.
 
 Names may contain spaces, letters, digits and ordinary punctuation, up to 64 characters. Anything a filesystem would refuse is blocked as you type. Two items cannot be given the same name, and a name that already exists in the destination is refused rather than overwritten — the same protection the numbered outputs have. Typing `.mov` on the end is harmless; it will not be doubled.
 
-**Frame rate.** An `.SWS` and an `.EIF` both declare their rate in the header, so MacHuna uses it and the **Standard** dropdown is hidden. A TGA sequence declares nothing, so for TGA input the Standard dropdown appears and sets the rate.
+**Frame rate.** An `.SWS` and an `.EIF` both declare their rate in the header, so MacHuna uses it and no control appears. A TGA sequence declares nothing, so for TGA input a **Frame rate** control appears: 23.976, 24, 25, 29.97, 30, 50, 59.94 or 60. Set it to the rate the sequence was made at.
+
+> **Fixed in v1.10.2.** This used to be the **Standard** dropdown, which offers only the seven verified Kahuna broadcast standards. Its only 30fps entries are *interlaced*, so a 30fps sequence had nowhere correct to go — picking a progressive standard played it at the wrong speed, and picking an interlaced one wove fields into a QuickTime. A MOV is an ordinary video file and now gets ordinary video rates. **The "TGA source interlaced" tickbox does not appear for MOV output** and would not have helped: ProRes carries no field-order flag, so there is nothing to set and nothing downstream to read it.
 
 **Stills are not accepted**, in line with the rest of MacHuna: a single frame is not a clip. Stills convert to Kahuna SWS only.
 

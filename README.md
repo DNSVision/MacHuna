@@ -124,7 +124,8 @@ A conversion log is written to the destination folder on completion.
 
 #### QuickTime MOV / K-Frame TGA / Sony TGA output options
 
-- **Standard** — video standard for the output (TGA targets; for QuickTime MOV it is shown only for TGA-sequence input, which declares no frame rate of its own — an SWS or EIF source carries its rate in the header)
+- **Standard** — video standard for the output (TGA targets only)
+- **Frame rate** (v1.10.2; QuickTime MOV from a TGA sequence) — 23.976, 24, 25, 29.97, 30, 50, 59.94 or 60. A TGA sequence declares no rate of its own, so set this to the rate it was made at. Not shown for SWS or EIF sources, which carry their rate in the header. This replaced the Standard dropdown, whose only 30fps entries are interlaced — 30fps material had nowhere correct to go
 - **Clip name** — 4-character clip name (Sony TGA); output files use this name. With one shared name, Sony TGA converts one clip per batch (a second clip would overwrite the first in the same folder)
 - **Use bespoke names** (v1.6.13; Sony TGA) — give each selected clip its own 4-character name instead, one per row in a scrollable panel, replacing the shared Clip name field. Each name becomes its own output folder, so **several Sony clips can be converted in one batch**. Blank, malformed, duplicate, or already-present names block the batch with a message naming the clips
 - **Field order** — BFF or TFF for interlaced standards (Sony TGA always; K-Frame TGA for interlaced standards). Honoured in both conversion directions since v1.6.12; before that it was ignored for Sony TGA output from TGA/clip input. The conversion log records which order was applied.

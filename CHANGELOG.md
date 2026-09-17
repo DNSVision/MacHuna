@@ -4,6 +4,21 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.10.2 — 2026-09-17
+
+### Fixed
+- **A 30fps TGA sequence converted to QuickTime MOV played at double speed.** Reported by David within minutes of v1.10.1, on real material.
+  - **Cause, and it was a design error in v1.10.0.** A TGA sequence declares no frame rate, so MacHuna took one from the **Standard** dropdown — which exists to offer the seven *verified Kahuna broadcast standards*. That is right for an SWS and wrong for a MOV. Its progressive entries are 25, 50, 59.94 and 60, so **30fps material had nowhere correct to go**: a progressive standard ran it fast, and the only 30fps entries are interlaced, which wove fields into a QuickTime instead.
+  - **The frame rate is now its own control** for MOV output from a TGA sequence: 23.976, 24, 25, 29.97, 30, 50, 59.94, 60. It says one thing — the rate the sequence was made at.
+  - **The "TGA source interlaced" tickbox does not appear for MOV output**, and would not have fixed this. Tested: ticking it left the clip still running at double speed *and* put progressive frames through a deinterlacer. ProRes carries no field-order flag, so for a QuickTime there is nothing to set and nothing downstream to read it.
+  - SWS and EIF sources are unaffected and show no control — they declare their rate in the header, as they always have.
+
+### Notes for the record
+- Verified by driving the real app through the reported case: 30 frames at 30fps now lasts **1.000s**, where it lasted 0.500s.
+- **The first set of tests written for this were worthless and are recorded here as a warning.** They exercised `convert_tga_seq_to_mov` directly and passed happily with the bug deliberately reintroduced, because the fault lives in `_run_to_tga_seq` inside `launch_gui()` where no unit test can reach. A structural guard now asserts that runner reaches for the MOV rate control rather than the Standard dropdown, and it was verified by breaking it.
+
+---
+
 ## v1.10.1 — 2026-09-17
 
 ### Added

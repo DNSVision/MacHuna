@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.10.1"
+VERSION = "1.10.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3853,6 +3853,24 @@ def _scan_folder_unified(folder: str) -> tuple:
 #  the names, MacHuna has to police them before a single frame is written —
 #  nothing here ever overwrites, it only blocks and explains.
 
+# QuickTime MOV is an ordinary video file, so its frame rate is not restricted
+# to the seven verified Kahuna standards. A TGA sequence declares no rate of its
+# own, and tying it to the SWS list made 30fps material unconvertible: the only
+# 30fps entries there are INTERLACED standards, so reaching 30 meant a field
+# weave nobody wanted. Reported by David, 2026-09-17.
+MOV_FRAME_RATES = ('23.976', '24', '25', '29.97', '30', '50', '59.94', '60')
+DEFAULT_MOV_FPS = '25'
+
+
+def parse_mov_fps(text) -> float:
+    """The frame rate for a QuickTime MOV, or the default if unreadable."""
+    try:
+        v = float(str(text).strip())
+    except (TypeError, ValueError):
+        return float(DEFAULT_MOV_FPS)
+    return v if 1.0 <= v <= 240.0 else float(DEFAULT_MOV_FPS)
+
+
 BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
 BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.eif
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
@@ -4272,6 +4290,7 @@ def launch_gui():
                     'clip_name':        clip_name_var.get(),
                     'field_order':      field_order_var.get(),
                     'output_format':    output_var.get(),
+                    'mov_fps':          mov_fps_var.get(),
                     'window_geometry':  root.geometry(),
                 }, f)
         except Exception:
@@ -4351,6 +4370,7 @@ def launch_gui():
 
     # ── All tk variables (defined before load_settings) ──
     std_var               = tk.StringVar(value='1080i50')
+    mov_fps_var           = tk.StringVar(value=DEFAULT_MOV_FPS)
     split_var             = tk.BooleanVar(value=True)
     ignore_alpha_var      = tk.BooleanVar(value=False)
     include_audio_var     = tk.BooleanVar(value=True)
@@ -4379,6 +4399,7 @@ def launch_gui():
     # ever actually remembered. Restoring it is safe because
     # _update_output_options drops anything the new input cannot produce.
     if 'output_format'     in s:  output_var.set(s['output_format'])
+    if 'mov_fps'           in s:  mov_fps_var.set(s['mov_fps'])
     # hula_clip / hula_field_order: backwards-compat with pre-v1.5.33 settings
     if 'hula_clip'         in s and 'clip_name' not in s:
         clip_name_var.set(s['hula_clip'])
@@ -4411,6 +4432,14 @@ def launch_gui():
                            values=list(VIDEO_STANDARDS.keys()), state='readonly')
     ttk.Label(frm_row_std, text="Standard:").pack(side='left', padx=(8, 4), pady=4)
     std_cb.pack(side='left', pady=4)
+
+    frm_row_movfps = tk.Frame(frm_convert)
+    movfps_cb = ttk.Combobox(frm_row_movfps, textvariable=mov_fps_var, width=12,
+                             values=list(MOV_FRAME_RATES), state='readonly')
+    ttk.Label(frm_row_movfps, text="Frame rate:").pack(side='left', padx=(8, 4), pady=4)
+    movfps_cb.pack(side='left', pady=4)
+    ttk.Label(frm_row_movfps, foreground='#888888',
+              text="the rate the sequence was made at").pack(side='left', padx=(8, 0))
 
     frm_row_flags = tk.Frame(frm_convert)
     ttk.Checkbutton(frm_row_flags, text="Split >4GB (FAT32)", variable=split_var).pack(side='left', **pad)
@@ -4914,7 +4943,7 @@ def launch_gui():
     def _update_adaptive_controls(*_):
         out = output_var.get()
         is_interlaced_std = 'i' in std_var.get()
-        for frm in (frm_row_std, frm_row_flags, frm_row_tga_opts,
+        for frm in (frm_row_std, frm_row_movfps, frm_row_flags, frm_row_tga_opts,
                     frm_row_hula_tga, frm_row_hula_mov,
                     frm_row_bespoke, frm_row_bespoke_list, frm_row_bespoke_foot):
             frm.pack_forget()
@@ -4942,10 +4971,13 @@ def launch_gui():
             frm_row_bespoke_foot.pack(**bf)
             _align_list_controls()
         if out == OUTPUT_QUICKTIME_MOV:
-            # A TGA sequence declares no frame rate, so the Standard dropdown
-            # supplies one. SWS and EIF carry theirs in the header.
+            # A TGA sequence declares no frame rate, so one must be supplied -
+            # but NOT from the Standard list, which offers only the seven
+            # verified Kahuna standards. Its only 30fps entries are interlaced,
+            # so picking 30 used to weave fields into a QuickTime. A MOV is an
+            # ordinary video file; it gets ordinary video rates.
             if _input_type[0] == 'to_sws_only':
-                frm_row_std.pack(**bf)
+                frm_row_movfps.pack(**bf)
         else:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
@@ -5528,8 +5560,14 @@ def launch_gui():
                         if is_mov:
                             mov_name = (id_map.get(_bespoke_key(item)) or base
                                         if id_map else base)
-                            convert_tga_seq_to_mov(tga_files, d, mov_name, tgt_fps,
-                                                   vf=vf, log=log)
+                            # The rate the user stated, and the frames as they
+                            # are. vf above is for the TGA/SWS targets; a MOV
+                            # carries no field order, so weaving or bobbing
+                            # here would only damage the picture.
+                            mov_fps = parse_mov_fps(mov_fps_var.get())
+                            log(f"  TGA→MOV: {base} — {len(tga_files)} frame(s) at {mov_fps:g}fps")
+                            convert_tga_seq_to_mov(tga_files, d, mov_name, mov_fps,
+                                                   vf=None, log=log)
                             results.append((base, mov_name, 'OK'))
                         else:
                             out_dir = os.path.join(d, cn_i if is_sony else base)

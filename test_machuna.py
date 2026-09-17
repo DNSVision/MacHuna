@@ -1484,3 +1484,113 @@ class TestMovNaming(unittest.TestCase):
         codes, problems = m._analyse_bespoke_ids([('one', '')], self.MODE, self.tmp)
         self.assertEqual(codes, [None])
         self.assertEqual(problems, [])
+
+
+class TestMovFrameRate(unittest.TestCase):
+    """A QuickTime MOV is not a broadcast standard.
+
+    Tying its rate to the seven verified Kahuna standards made 30fps material
+    unconvertible: the only 30fps entries there are INTERLACED, so reaching 30
+    meant weaving fields into a QuickTime. David hit it within minutes of
+    v1.10.1 shipping - a 30fps sequence came out at double speed.
+    """
+
+    def test_the_rates_the_sws_list_could_not_offer_progressively(self):
+        # These are the ones that caused the bug: present in VIDEO_STANDARDS
+        # only as interlaced standards, so unreachable without a field weave.
+        self.assertIn('30', m.MOV_FRAME_RATES)
+        self.assertIn('29.97', m.MOV_FRAME_RATES)
+
+    def test_no_sws_standard_offers_30_progressive(self):
+        """Guard on the reason this bug existed, so it is not reintroduced."""
+        progressive = {s: m.FORMAT_VARIANT_FPS.get(m.FORMAT_VARIANTS.get(s, 0))
+                       for s in m.VIDEO_STANDARDS if 'i' not in s}
+        self.assertNotIn(30.0, progressive.values(),
+                         'a progressive 30fps SWS standard now exists - the MOV '
+                         'rate control may no longer be needed for that case')
+
+    def test_rates_parse_to_sensible_numbers(self):
+        for r in m.MOV_FRAME_RATES:
+            with self.subTest(rate=r):
+                self.assertAlmostEqual(m.parse_mov_fps(r), float(r), places=3)
+
+    def test_nonsense_falls_back_rather_than_crashing(self):
+        default = float(m.DEFAULT_MOV_FPS)
+        for bad in ('', '   ', 'abc', None, '0', '-5', '9999'):
+            with self.subTest(bad=bad):
+                self.assertEqual(m.parse_mov_fps(bad), default)
+
+
+class TestMovDurationFollowsTheStatedRate(unittest.TestCase):
+    """The outcome, not the setting: the file must actually last that long.
+
+    Asserting on the rate we passed in would have passed happily while the
+    bug was live, because the rate was never wrong - it was the wrong rate.
+    """
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _sequence(self, n, w=64, h=64):
+        from PIL import Image
+        import numpy as np
+        files = []
+        for i in range(n):
+            a = np.zeros((h, w, 4), dtype=np.uint8)
+            a[:, :, 0] = (i * 8) % 256
+            a[:, :, 3] = 255
+            f = os.path.join(self.tmp, 'f%04d.tga' % i)
+            Image.fromarray(a, 'RGBA').save(f, format='TGA')
+            files.append(f)
+        return files
+
+    def _duration(self, path):
+        import subprocess
+        ff = m._get_ffmpeg_path('ffprobe')
+        out = subprocess.run([ff, '-v', 'error', '-show_entries', 'format=duration',
+                              '-of', 'csv=p=0', path], capture_output=True, text=True)
+        return float(out.stdout.strip())
+
+    def test_thirty_frames_at_thirty_fps_lasts_one_second(self):
+        files = self._sequence(30)
+        out = m.convert_tga_seq_to_mov(files, self.tmp, 'thirty', 30.0,
+                                       log=lambda *a: None)
+        self.assertAlmostEqual(self._duration(out), 1.0, places=1)
+
+    def test_the_same_frames_at_sixty_fps_last_half_a_second(self):
+        """The old behaviour, now reachable only by asking for it."""
+        files = self._sequence(30)
+        out = m.convert_tga_seq_to_mov(files, self.tmp, 'sixty', 60.0,
+                                       log=lambda *a: None)
+        self.assertAlmostEqual(self._duration(out), 0.5, places=1)
+
+
+class TestMovRateComesFromItsOwnControl(unittest.TestCase):
+    """Structural guard, because the behavioural tests cannot see this.
+
+    The double-speed bug lived in _run_to_tga_seq, inside launch_gui(), which
+    no unit test can reach. Tests of convert_tga_seq_to_mov pass happily while
+    the GUI hands it the wrong number - verified by reintroducing the bug and
+    watching them stay green. This asserts the runner reaches for the MOV rate
+    control rather than the SWS Standard dropdown.
+    """
+
+    def test_the_tga_runner_uses_the_mov_rate_control(self):
+        fns = _nested_functions(_launch_gui_tree())
+        self.assertIn('_run_to_tga_seq', fns)
+        names = _calls_within(fns['_run_to_tga_seq'])
+        self.assertIn('parse_mov_fps', names,
+                      '_run_to_tga_seq no longer parses a MOV frame rate - a MOV '
+                      'may have gone back to taking its rate from the SWS '
+                      'Standard list, which has no progressive 30fps')
+        self.assertIn('mov_fps_var', names,
+                      '_run_to_tga_seq no longer reads the MOV rate control')
+
+    def test_the_rate_control_is_actually_built(self):
+        # A guard on a control that does not exist would assert nothing.
+        src = Path(__file__).with_name('machuna.py').read_text()
+        self.assertIn('frm_row_movfps', src)
+        self.assertIn('mov_fps_var', src)
