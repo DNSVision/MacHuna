@@ -6,7 +6,15 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `fdb6bd2` - 2026-09-10. **v1.9.1 is built, released, published and live.**
+**Understanding baseline:** commit `5ce7cd4` - 2026-09-17. **v1.9.2 is built and released. NOT published** - the live site still serves v1.9.1, and publishing stays opt-in until David asks.
+
+**v1.9.2 - the Kayenne formats are called K-Frame.** Kayenne is a control *panel*; the Image Store holding `.eif`/`.eaf` lives in the **K-Frame**, which Karrera and GV Korona drive too. So the old name was both wrong and needlessly narrow. Dropdown labels and their constants are now `K-Frame EIF/TGA/MOV`. **Those labels double as keys into `UNVERIFIED_OUTPUT_NOTES` and `MISSING_FEATURE_NOTES`** - a mismatch would swallow the hardware warnings silently, so it was verified by driving the real GUI, not by the suite (the constants live inside `launch_gui()` where unit tests cannot reach them). No settings migration was needed: `output_format` is written to `~/.kwatch_settings.json` and never read back.
+
+**Two things were deliberately NOT renamed, and should stay that way.** *Provenance* - "reverse-engineered from real Kayenne files" is a fact about the reference clips, and calling them K-Frame files would stretch an unproven claim across three panels. *History* - `CHANGELOG.md`, the version-history line in `DEVELOPMENT_NOTES.md` and the dated session notes below record what was known at the time.
+
+**Also corrected:** the in-app note and the manual still said the `.eaf` format was unknown and no real `.eaf` had been analysed. It was decoded on 2026-09-09 and the website has said so since. EIF output is still silent, but because the code is not built.
+
+**Found, not fixed - needs David's decision.** `K-Frame MOV` has been unreachable from every dropdown since v1.6.5, yet still carries a warning note, a row on the download page and an entry in the hardware-unknowns list. Either restore the option or drop the claims.
 
 **v1.9.1 - the data offset is read from the header, not assumed.** Some SWS files put the video planes after a **3072-byte header**, not 512. `0x19C` has always said so (MacHuna writes its own header size there) and nothing ever read it back, so those files were read **2560 bytes early = exactly half a 1920-pixel v210 line**, and the picture looked split down the middle with the halves swapped. **Four extraction paths had the same hardcoded 512**, so converting such a file to EIF/K-Frame TGA/Sony TGA/TGA-sequence sheared it silently. Invisible until v1.9.0 because the affected files were big enough to be split and splits could not be opened at all - fixing one bug exposed the other. Use `sws_data_offset()`; never hardcode 512 for where data starts. Verified across all seven joins of an 8-part clip in both planes.
 
