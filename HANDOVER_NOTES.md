@@ -6,7 +6,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `fced879` - 2026-09-17. **v1.10.3 is built, released and PUBLISHED.** dnsvision.tv/machuna serves it and the manifest announces it.
+**Understanding baseline:** commit `68086cd` - 2026-09-17. **v1.10.3 is built, released and PUBLISHED.** dnsvision.tv/machuna serves it and the manifest announces it.
 
 **v1.10.0-v1.10.3 are one feature and two of my mistakes.** QuickTime MOV output (SWS, EIF or TGA sequence → ProRes 4444 with the key as alpha and audio where the source has it), plus `.eaf` audio reading. v1.10.1 added per-item naming; v1.10.2 gave MOV its own frame-rate control; v1.10.3 restored deinterlacing. **David found every one of the three gaps within minutes of opening the app**, after I had verified the feature four different ways.
 
