@@ -100,6 +100,13 @@ git push
 - In-app update notifications and Report a Problem / Suggest a Feature shipped in v1.7.0.
 - The `~/Desktop/Machuna Share` iCloud folder is **retired**, stale at v1.6.20. Nothing publishes to it. David may delete it once everyone has the new link.
 
+**macOS floor is 26 - LEFT DELIBERATELY, do not "fix" it (decided 2026-09-17):**
+- The shipped `.app` requires **macOS 26 or later**, and the page, `version.json` and README now say so. Before this they claimed macOS 12, which was simply false.
+- **The floor is not Apple's doing and not a code problem.** It comes from the machine the build runs on: Homebrew bottles and pip wheels are both built for the current OS and stamp it as their minimum. Measured in the v1.10.1 bundle: **74 binaries at 26.0** (Homebrew - Python, Tcl/Tk, ffmpeg), **13 at 14.0** (numpy's pip wheels), **1 at 15.0** (libmp3lame). PyInstaller's own launcher is 11.0, so it is purely the bundled parts. `Python` itself is 26.0, and PyInstaller loads it before anything else, so on an older Mac the app dies at launch showing nothing.
+- **macOS 11 (the first Apple Silicon release) is not reachable** by swapping Homebrew for python.org alone - numpy's wheels would hold the floor at 14. That correction matters: an earlier suggestion in this session that a Python swap would reach macOS 11 was wrong.
+- **The real fix, if it is ever wanted, is to build on the oldest macOS to be supported** (an older machine or a cloud runner), because Homebrew and pip both follow the build machine. One change, all three sources drop together.
+- **David's decision: leave the floor alone and correct the claim instead.** No user has reported a failure, nobody knows what recipients run, and a CI pipeline is disproportionate to an unobserved problem. **There is no performance argument either way** - the minimum-OS stamp is a compatibility label, not a speed setting.
+
 **Known limitations (recorded, not scheduled):**
 - **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one applies the tick to both, so one comes out wrong. David's view (2026-09-09): not a real use case. The v1.8.0 item list makes mixed batches easier to build than the old UI did, which is why it is worth recording. The fix, if ever needed, is a per-row option rather than a batch-wide checkbox.
 

@@ -115,6 +115,7 @@ Also on the list: whether a keyless source should get a key plane at all, `.eaf`
 - Do not add unverified video standards to the dropdown — they must be confirmed against real K-Watch reference files first.
 - Field order for P→I transcoding is TFF (SMPTE standard for 1080i HD) — unconfirmed on 1080i hardware as of v1.5.19.
 - PyInstaller builds must happen on the M5 MacBook (Apple Silicon).
+- **The shipped app requires macOS 26+, and that is deliberate.** The floor comes from Homebrew bottles and pip wheels, which are built for the build machine's OS and stamp it as their minimum - not from the code. David's decision (2026-09-17) was to state the real requirement rather than chase a lower one. Do not propose fixing it unless a user actually reports a failure. Detail in `DEVELOPMENT_NOTES.md` under "macOS floor is 26".
 
 ## Extraction output hardware unknowns
 
