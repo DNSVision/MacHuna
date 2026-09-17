@@ -2,7 +2,7 @@
 """
 MacHuna for macOS
 Translates broadcast media assets between formats: MOV, MP4, MXF, TGA sequences,
-and still images to/from Grass Valley Kahuna .SWS, Kayenne MOV, Kayenne TGA, and Sony TGA.
+and still images to/from Grass Valley Kahuna .SWS, K-Frame MOV, K-Frame TGA, and Sony TGA.
 
 Requirements:
     brew install ffmpeg   (or: https://ffmpeg.org/download.html)
@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1081,9 +1081,9 @@ _EIF_AUDIO_EXT = bytes.fromhex(
 
 
 def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
-    """Build 18260-byte EIF file header (Grass Valley Kayenne format).
+    """Build 18260-byte EIF file header (Grass Valley K-Frame format).
 
-    [UNCONFIRMED: generated EIF output pending hardware verification on a live Kayenne]
+    [UNCONFIRMED: generated EIF output pending hardware verification on a live K-Frame desk]
     """
     is_25  = abs(fps - 25.0) <= abs(fps - 50.0)
     dur_us = 40000 if is_25 else 20000
@@ -1112,7 +1112,7 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
     struct.pack_into('<I', buf, 0x0B4, 0x000000DC)           # AVI RIFF start = 220
 
     # ── Embedded AVI RIFF (0x0DC–0x4753) ──
-    # RIFF header — size field left as 0 (Kayenne uses EIF fields directly)
+    # RIFF header — size field left as 0 (K-Frame uses EIF fields directly)
     buf[0x0DC:0x0E4] = b'RIFF\x00\x00\x00\x00'
     buf[0x0E4:0x0E8] = b'AVI '
 
@@ -1245,9 +1245,9 @@ def _eif_tail(fps: float) -> bytes:
 
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          cancel_event=None, out_name: str = None) -> str:
-    """Convert a video clip (MOV/MP4/etc.) to Kayenne EIF format.
+    """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format.
 
-    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
     """
     log(f"Converting to EIF: {os.path.basename(input_path)}")
     info   = get_video_info(input_path)
@@ -1265,7 +1265,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         # Resample to the chosen EIF rate (25/50) so the number of frames we
         # write matches the fps stamped in the header. Without this, a source
         # that is not already 25/50 (e.g. 30/29.97/60/59.94fps) is extracted at
-        # its own rate while the header says 25/50, so the Kayenne plays it at
+        # its own rate while the header says 25/50, so the K-Frame plays it at
         # the wrong speed. ffmpeg's fps filter drops/duplicates frames to hit
         # the target rate; vf_extra is applied to both fill and key planes so
         # their frame counts stay in sync. (Fix 14.)
@@ -1311,9 +1311,9 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              fps: float, log=print, cancel_event=None,
                              out_name: str = None,
                              source_interlaced: bool = False) -> str:
-    """Convert a TGA sequence to Kayenne EIF format.
+    """Convert a TGA sequence to K-Frame EIF format.
 
-    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
     """
     fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
     dest_path = os.path.join(dest_dir, (out_name or clip_name) + '.eif')
@@ -1403,9 +1403,9 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
 
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None) -> str:
-    """Convert a Kahuna SWS clip to Kayenne EIF format.
+    """Convert a Kahuna SWS clip to K-Frame EIF format.
 
-    [UNCONFIRMED: EIF output pending hardware verification on a live Kayenne]
+    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
     """
     h    = HulaSWSHeader(sws_path)
     log(f"  {h}")
@@ -1500,7 +1500,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         video_standard: str = '1080p25',
                         split_fat32: bool = True,
                         log=print, cancel_event=None) -> str:
-    """Convert a Kayenne EIF clip to Kahuna SWS format.
+    """Convert a K-Frame EIF clip to Kahuna SWS format.
 
     video_standard is ignored — standard is derived from EIF fps (25→1080p25, 50→1080p50)
     so the SWS frame rate always matches the source EIF.
@@ -1806,7 +1806,7 @@ class SWSHeader:
 
 
 class EIFHeader:
-    """Parsed .eif file header (Grass Valley Kayenne format).
+    """Parsed .eif file header (Grass Valley K-Frame format).
 
     Confirmed word layout: bits[29:20]=key (10-bit, 64=transparent, 940=opaque),
     bits[19:10]=Y luma, bits[9:0]=chroma C (even cols=Cb, odd cols=Cr).
@@ -2997,9 +2997,9 @@ class SWSPlayer(tk.Toplevel):
 
 # ─────────────────────────────────────────────────────────────
 #  Hula — SWS / MOV Extractor (integrated from DNSVision/Hula)
-#  Converts .SWS or .MOV files to Kayenne MOV, Kayenne TGA,
+#  Converts .SWS or .MOV files to K-Frame MOV, K-Frame TGA,
 #  or Sony TGA format.
-#  NOTE: Kayenne TGA output parameters are UNCONFIRMED pending hardware
+#  NOTE: K-Frame TGA output parameters are UNCONFIRMED pending hardware
 #  verification. Sony TGA parameters are confirmed for Sony MVS.
 # ─────────────────────────────────────────────────────────────
 
@@ -3008,14 +3008,14 @@ class SWSPlayer(tk.Toplevel):
 # lived in docstrings and the README, where someone converting a clip at 2am
 # will never see them. Stated once per batch, factually, in the log.
 UNVERIFIED_OUTPUT_NOTES = {
-    "Kayenne EIF":  "Kayenne EIF output has not yet been confirmed on a live Kayenne desk. "
+    "K-Frame EIF":  "K-Frame EIF output has not yet been confirmed on a live K-Frame desk. "
                     "The format is built from analysis of real Kayenne clips and is believed "
                     "correct, but no file from MacHuna has been loaded on one. Check the result "
                     "before relying on it.",
-    "Kayenne TGA":  "Kayenne TGA output has not yet been confirmed on a live Kayenne desk. "
+    "K-Frame TGA":  "K-Frame TGA output has not yet been confirmed on a live K-Frame desk. "
                     "Frame naming and format are assumed from documentation. Check the result "
                     "before relying on it.",
-    "Kayenne MOV":  "Kayenne MOV output has not yet been confirmed on a live Kayenne desk. "
+    "K-Frame MOV":  "K-Frame MOV output has not yet been confirmed on a live K-Frame desk. "
                     "Check the result before relying on it.",
     "Sony TGA":     "Sony MVS TGA output has not yet been confirmed on a live Sony MVS. The "
                     "4-character clip naming is assumed from documentation, and 25i field order "
@@ -3023,15 +3023,16 @@ UNVERIFIED_OUTPUT_NOTES = {
 }
 
 
-# Not "unverified" but "not written yet". Kayenne carries clip audio in a
-# companion .eaf file whose format is entirely unknown - no real .eaf has ever
-# been hex-analysed - so EIF output is silent, always. Worth saying out loud:
-# it is the one limitation David is certain of, as opposed to merely unproven.
+# Not "unverified" but "not written yet". A K-Frame carries clip audio in a
+# companion .eaf file. That format was decoded from real files on 2026-09-09
+# (8ch 16-bit big-endian 48k) but the read/write code is not built yet, so EIF
+# output is silent, always. Worth saying out loud: it is the one limitation
+# David is certain of, as opposed to merely unproven.
 MISSING_FEATURE_NOTES = {
-    "Kayenne EIF": "EIF output carries no audio. Kayenne stores clip audio in a "
-                   "companion .eaf file whose format has not been worked out yet, "
-                   "so any audio on the source is dropped. This is a missing "
-                   "feature, not a fault.",
+    "K-Frame EIF": "EIF output carries no audio. A K-Frame stores clip audio in a "
+                   "companion .eaf file. That format has been worked out, but the "
+                   "code to read and write it is not built yet, so any audio on the "
+                   "source is dropped. This is a missing feature, not a fault.",
 }
 
 
@@ -3049,10 +3050,10 @@ def unverified_output_note(output_name):
     return UNVERIFIED_OUTPUT_NOTES.get(output_name)
 
 
-HULA_TARGET_KAYENNE_MOV = "Kayenne MOV"
-HULA_TARGET_KAYENNE_TGA = "Kayenne TGA"   # UNCONFIRMED — awaiting hardware verification
+HULA_TARGET_KFRAME_MOV = "K-Frame MOV"
+HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # UNCONFIRMED — awaiting hardware verification
 HULA_TARGET_SONY_TGA    = "Sony TGA"
-_HULA_TGA_TARGETS = {HULA_TARGET_KAYENNE_TGA, HULA_TARGET_SONY_TGA}
+_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA}
 
 # Header field offsets for SWS read side (Hula uses read only)
 _HULA_OFF_STD_CODE = 0x188
@@ -3187,7 +3188,7 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
                 Image.fromarray(rgb[:, :, 2], 'L'),
                 Image.fromarray(alpha, 'L'),
             ])
-            if target == HULA_TARGET_KAYENNE_TGA:
+            if target == HULA_TARGET_KFRAME_TGA:
                 filename = f"{i + 1:04d}.tga"
             else:  # Sony TGA
                 cn = clip_name.upper()[:4].ljust(4)
@@ -3202,9 +3203,9 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
 def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
                               target: str = None, clip_name: str = 'WIPE',
                               log=print):
-    """Convert one EIF file to a Kayenne or Sony TGA sequence subfolder."""
+    """Convert one EIF file to a K-Frame or Sony TGA sequence subfolder."""
     if target is None:
-        target = HULA_TARGET_KAYENNE_TGA
+        target = HULA_TARGET_KFRAME_TGA
     h    = EIFHeader(eif_path)
     stem = Path(eif_path).stem
     folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
@@ -3234,7 +3235,7 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
                                           field_order: str = 'TFF', log=print):
     """Convert a 50fps EIF to an interlaced TGA sequence by field-weaving frame pairs."""
     if target is None:
-        target = HULA_TARGET_KAYENNE_TGA
+        target = HULA_TARGET_KFRAME_TGA
     h = EIFHeader(eif_path)
     if h.fps < 48.0:
         raise ValueError(
@@ -3284,7 +3285,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
 
     Each pair of consecutive source frames is woven into one interlaced frame.
     field_order: 'BFF' or 'TFF'.  Output frame count = input frame count // 2.
-    [UNCONFIRMED: Kayenne TGA output parameters pending hardware verification]
+    [UNCONFIRMED: K-Frame TGA output parameters pending hardware verification]
     """
     stem     = Path(sws_path).stem
     folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
@@ -3340,7 +3341,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
                 Image.fromarray(rgb_out[:, :, 2], 'L'),
                 Image.fromarray(alpha_out, 'L'),
             ])
-            if target == HULA_TARGET_KAYENNE_TGA:
+            if target == HULA_TARGET_KFRAME_TGA:
                 filename = f"{i + 1:04d}.tga"
             else:
                 filename = f"{cn}{i:04d}.tga"
@@ -3359,7 +3360,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
 
     Progressive standards → direct frame extraction.
     Interlaced standards → frame pairs field-woven into interlaced output.
-    [UNCONFIRMED: Kayenne TGA output parameters pending hardware verification]
+    [UNCONFIRMED: K-Frame TGA output parameters pending hardware verification]
     """
     stem      = Path(mov_path).stem
     is_sony   = target == HULA_TARGET_SONY_TGA
@@ -3497,14 +3498,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                         path, dest_dir, target=target,
                         clip_name=cn, log=log)
             elif ext == '.mov':
-                if target == HULA_TARGET_KAYENNE_MOV:
+                if target == HULA_TARGET_KFRAME_MOV:
                     raise ValueError(
-                        "MOV input is not supported for Kayenne MOV output. "
+                        "MOV input is not supported for K-Frame MOV output. "
                         "Select a TGA target or use an SWS file.")
                 _hula_convert_mov_to_tga(path, dest_dir, target, standard,
                                          clip_name=cn,
                                          field_order=field_order, log=log)
-            elif target == HULA_TARGET_KAYENNE_MOV:
+            elif target == HULA_TARGET_KFRAME_MOV:
                 _hula_convert_mov(path, dest_dir, idx, log=log)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
@@ -3660,7 +3661,7 @@ def _scan_folder_unified(folder: str) -> tuple:
 #  nothing here ever overwrites, it only blocks and explains.
 
 BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
-BESPOKE_MODE_EIF  = 'eif'    # Kayenne EIF  — integer 1-9999, writes <NNNN>.eif
+BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.eif
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
 
 
@@ -4108,9 +4109,9 @@ def launch_gui():
 
     # ── Output format constants ──
     OUTPUT_KAHUNA_SWS  = "Kahuna SWS"
-    OUTPUT_KAYENNE_MOV = "Kayenne MOV"
-    OUTPUT_KAYENNE_TGA = "Kayenne TGA"
-    OUTPUT_KAYENNE_EIF = "Kayenne EIF"
+    OUTPUT_KFRAME_MOV = "K-Frame MOV"
+    OUTPUT_KFRAME_TGA = "K-Frame TGA"
+    OUTPUT_KFRAME_EIF = "K-Frame EIF"
     OUTPUT_SONY_TGA    = "Sony TGA"
     OUTPUT_TGA_SEQ     = "TGA Sequence"
 
@@ -4293,7 +4294,7 @@ def launch_gui():
     def _bespoke_mode():
         """Which bespoke flavour the current output wants, or None."""
         return {OUTPUT_KAHUNA_SWS:  BESPOKE_MODE_SWS,
-                OUTPUT_KAYENNE_EIF: BESPOKE_MODE_EIF,
+                OUTPUT_KFRAME_EIF: BESPOKE_MODE_EIF,
                 OUTPUT_SONY_TGA:    BESPOKE_MODE_SONY}.get(output_var.get())
 
     def _bespoke_bucket(mode):
@@ -4454,7 +4455,7 @@ def launch_gui():
             # item: an empty field is the signal that it still needs an ID.
             var = tk.StringVar(value=bucket.get(_bespoke_key(item), ''))
             if mode is None:
-                # Kayenne TGA and TGA Sequence name themselves from the source
+                # K-Frame TGA and TGA Sequence name themselves from the source
                 # stem. Shown, but not editable — the point is that you can see
                 # what you are getting, which you could not before.
                 entry = ttk.Entry(row, width=6, state='disabled')
@@ -4690,7 +4691,7 @@ def launch_gui():
             """The list is always shown once something is selected.
 
             Sequential numbering is only offered where there is a number to
-            sequence: Sony wants a 4-character name per clip, and Kayenne TGA
+            sequence: Sony wants a 4-character name per clip, and K-Frame TGA
             and TGA Sequence name themselves from the source.
             """
             if not _selected_items:
@@ -4704,7 +4705,7 @@ def launch_gui():
                                       before=frm_row_actions)
             frm_row_bespoke_foot.pack(**bf)
             _align_list_controls()
-        if out != OUTPUT_KAYENNE_MOV:
+        if out != OUTPUT_KFRAME_MOV:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
             frm_row_flags.pack(**bf)
@@ -4719,10 +4720,10 @@ def launch_gui():
             if show_tga or show_aud:
                 frm_row_tga_opts.pack(**bf)
             _pack_list()
-        elif out == OUTPUT_KAYENNE_MOV:
+        elif out == OUTPUT_KFRAME_MOV:
             if _has_audio_clips[0]:
                 frm_row_hula_mov.pack(**bf)
-        elif out in (OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA):
+        elif out in (OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA):
             is_sony = (out == OUTPUT_SONY_TGA)
             frm_clip_inner.pack_forget()
             frm_field_inner.pack_forget()
@@ -4735,7 +4736,7 @@ def launch_gui():
                 chk_tga_int.pack(side='left', **pad)
                 frm_row_tga_opts.pack(**bf)
             _pack_list()
-        elif out == OUTPUT_KAYENNE_EIF:
+        elif out == OUTPUT_KFRAME_EIF:
             chk_tga_int.pack_forget()
             if _has_tga_seq[0]:
                 chk_tga_int.pack(side='left', **pad)
@@ -4751,13 +4752,13 @@ def launch_gui():
     def _update_output_options():
         itype = _input_type[0]
         if itype == 'from_sws':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA]
         elif itype in ('from_eif', 'mixed_eif_sws'):
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA]
         elif itype == 'mov_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_TGA, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_TGA, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         elif itype == 'to_sws_only':
-            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KAYENNE_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
+            opts = [OUTPUT_KAHUNA_SWS, OUTPUT_KFRAME_EIF, OUTPUT_SONY_TGA, OUTPUT_TGA_SEQ]
         else:
             opts = []
         output_cb['values'] = opts
@@ -4946,7 +4947,7 @@ def launch_gui():
         # Without this guard a still routes into _run_to_tga_seq / _run_to_eif, which
         # handle only 'tga_seq'/'clip'/'sws' items, and vanishes with no file, no error
         # and no log line — the silent failure logged as Fix 4.
-        if out in (OUTPUT_TGA_SEQ, OUTPUT_SONY_TGA, OUTPUT_KAYENNE_EIF):
+        if out in (OUTPUT_TGA_SEQ, OUTPUT_SONY_TGA, OUTPUT_KFRAME_EIF):
             _stills = [i for i in _selected_items if i['type'] == 'still']
             if _stills:
                 _names = '\n'.join(f"  • {Path(s['path']).name}" for s in _stills[:5])
@@ -4962,18 +4963,18 @@ def launch_gui():
                 return
 
         # Warning for unconfirmed MOV→TGA path
-        if itype == 'mov_only' and out in (OUTPUT_KAYENNE_TGA, OUTPUT_SONY_TGA):
+        if itype == 'mov_only' and out in (OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA):
             if not _ask_confirm(root,
                     "MOV → TGA has not been tested on hardware.\n\n"
-                    "The output may not load correctly on a Kayenne\n"
+                    "The output may not load correctly on a K-Frame\n"
                     "or Sony MVS desk.\n\nProceed anyway?"):
                 return
 
         # Warning for unconfirmed EIF output
-        if out == OUTPUT_KAYENNE_EIF:
+        if out == OUTPUT_KFRAME_EIF:
             if not _ask_confirm(root,
-                    "Kayenne EIF output has not been tested on hardware.\n\n"
-                    "The output may not load correctly on a live Kayenne desk.\n\n"
+                    "K-Frame EIF output has not been tested on hardware.\n\n"
+                    "The output may not load correctly on a live K-Frame desk.\n\n"
                     "Proceed anyway?"):
                 return
 
@@ -5075,7 +5076,7 @@ def launch_gui():
                         with tempfile.TemporaryDirectory() as _tmp_sws:
                             tga_dir = _hula_convert_tga(
                                 item['path'], _tmp_sws,
-                                target=HULA_TARGET_KAYENNE_TGA, log=log)
+                                target=HULA_TARGET_KFRAME_TGA, log=log)
                             tga_files_sws = sorted(
                                 str(p) for p in Path(tga_dir).glob('*.tga'))
                             if not tga_files_sws:
@@ -5153,10 +5154,10 @@ def launch_gui():
 
         def _run_from_sws():
             target_map = {
-                OUTPUT_KAYENNE_TGA: HULA_TARGET_KAYENNE_TGA,
+                OUTPUT_KFRAME_TGA: HULA_TARGET_KFRAME_TGA,
                 OUTPUT_SONY_TGA:    HULA_TARGET_SONY_TGA,
             }
-            hula_target = target_map.get(out, HULA_TARGET_KAYENNE_TGA)
+            hula_target = target_map.get(out, HULA_TARGET_KFRAME_TGA)
             paths = [item['path'] for item in todo]
             names = ([id_map[_bespoke_key(item)] for item in todo]
                      if id_map else None)
@@ -5347,7 +5348,7 @@ def launch_gui():
             try:
                 if out == OUTPUT_KAHUNA_SWS:
                     _run_to_sws()
-                elif out == OUTPUT_KAYENNE_EIF:
+                elif out == OUTPUT_KFRAME_EIF:
                     _run_to_eif()
                 elif out == OUTPUT_TGA_SEQ or (out == OUTPUT_SONY_TGA and itype == 'to_sws_only'):
                     _run_to_tga_seq()

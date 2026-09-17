@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.9.2 — 2026-09-17
+
+### Changed
+- **The Kayenne formats are now called K-Frame.** Kayenne is a control panel, not a frame. The Image Store that holds `.eif` and `.eaf` clips lives in the **K-Frame** itself, which is also driven by Karrera and GV Korona panels, so calling the format Kayenne was both wrong and needlessly narrow: it told two thirds of the K-Frame world the app was not for them.
+  - In the output dropdown, **Kayenne EIF / TGA / MOV** become **K-Frame EIF / TGA / MOV**. Nothing about the files themselves changes, and no setting needs re-picking.
+  - The manual and the download page now name the panels explicitly, so a Karrera or Korona operator can tell at a glance that EIF applies to them.
+  - **Where "Kayenne" described evidence rather than a platform it has been left alone.** The reference clips really were produced on a Kayenne, and saying "reverse-engineered from real Kayenne files" stays accurate; upgrading it to "K-Frame" would have quietly stretched an already-unproven claim across three panels. The changelog and the dated session notes are likewise left as written, because they are a record of what was known at the time.
+
+### Fixed
+- **The app no longer claims the `.eaf` audio format is unknown.** It was decoded on 2026-09-09 (8-channel 16-bit big-endian, 48 kHz), and the download page has said so since, but the in-app note and the manual still told people no `.eaf` had ever been analysed. EIF output is still silent — that part was accurate — but the reason is now "the code is not built yet" rather than "nobody knows the format". The one genuinely open question, which of the eight channels a K-Frame treats as programme audio, is now what the manual asks for.
+
+---
+
 ## v1.9.1 — 2026-09-10
 
 ### Fixed

@@ -6,7 +6,7 @@ A macOS application for converting video and still image files to the Grass Vall
 
 **Download: [dnsvision.tv/machuna](https://dnsvision.tv/machuna)** — current release, release notes and the user manual.
 
-MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley Kayenne `.eif` native clip files.
+MacHuna is a Mac-native alternative to the Windows-only K-Watch application included with Grass Valley K-Manager Pro. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 
 Converted files are placed into a destination folder, ready to be loaded onto a Kahuna mainframe via USB or network transfer.
 
@@ -15,12 +15,12 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Converts MOV, MP4, MXF, MKV, AVI and other ffmpeg-supported formats to `.SWS` (K-Watch supports MOV and AVI only)
 - Converts TGA sequences to `.SWS` clips — any naming convention (K-Watch, After Effects, custom renders); K-Watch naming is not required
 - Converts still images (PNG, TGA, BMP, JPG etc.) to `.SWS` stills
-- **Reads and writes Grass Valley Kayenne `.eif` native clips** *(UNCONFIRMED on hardware — awaiting live Kayenne desk test)*
+- **Reads and writes Grass Valley K-Frame `.eif` native clips** *(UNCONFIRMED on hardware — awaiting live K-Frame desk test)*
   - Converts MOV, TGA sequences, and SWS files to `.eif` (slot naming 0001.eif, 0002.eif…)
-  - Converts `.eif` files back to Kahuna SWS (lossless direct YCbCr repack), Kayenne TGA, or Sony TGA
+  - Converts `.eif` files back to Kahuna SWS (lossless direct YCbCr repack), K-Frame TGA, or Sony TGA
 - Converts `.SWS` files to other standards within the same format — interlaced↔progressive SWS re-encoding using `tinterlace` (P→I) or `yadif` (I→P); source interlace auto-detected from the SWS header
 - Converts TGA sequences and video clips to TGA Sequence output — interlaced↔progressive conversion; frames written to a named subfolder
-- Extracts `.SWS` files to Kayenne TGA or Sony TGA format
+- Extracts `.SWS` files to K-Frame TGA or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
 - Audio support -- 16-bit PCM, 16 channels, correct K-Watch channel mapping (L=Ch1, R=Ch3)
@@ -42,8 +42,8 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - **Help menu** (v1.7.0) — user manual (bundled in the .app, works offline), **Check for Updates…**, **Report a Problem…** and **Suggest a Feature…**
 - **Update notifications** (v1.7.0) — on launch MacHuna reads a small public JSON file at `dnsvision.tv/machuna/version.json` in a background thread with a 5s timeout. A newer version shows a dismissible strip at the top of the window; up to date, offline or any failure shows nothing at all. The manual check from the Help menu always reports its result. The check only reads that file: no information about the user or their files is sent, and there is no telemetry
 - **Contact the developer** (v1.7.0) — Report a Problem / Suggest a Feature open a pre-filled email to `machuna@dnsvision.tv` carrying the version, macOS, Mac model and the selected standard/output/source. A panel shows exactly what will be shared before anything opens, with Copy Details and Show Log in Finder
-- **Hardware-status notices in the log** (v1.7.1) — converting to Kayenne EIF, Kayenne TGA, Kayenne MOV or Sony MVS TGA logs a note that the output has never been confirmed on that desk. Kahuna SWS says nothing, being hardware-confirmed
-- **EIF audio gap stated plainly** (v1.7.1) — Kayenne stores clip audio in a companion `.eaf` file whose format is not yet worked out, so EIF output is silent. Converting a source that has audio now warns that it is being dropped. **This is the one known missing feature, as distinct from the untested-on-hardware paths**
+- **Hardware-status notices in the log** (v1.7.1) — converting to K-Frame EIF, K-Frame TGA, K-Frame MOV or Sony MVS TGA logs a note that the output has never been confirmed on that desk. Kahuna SWS says nothing, being hardware-confirmed
+- **EIF audio gap stated plainly** (v1.7.1) — K-Frame stores clip audio in a companion `.eaf` file whose format is not yet worked out, so EIF output is silent. Converting a source that has audio now warns that it is being dropped. **This is the one known missing feature, as distinct from the untested-on-hardware paths**
 - Conversion log written to the destination folder after each batch
 - Settings remembered between sessions
 - Fully self-contained .app bundle -- no separate ffmpeg installation required
@@ -100,11 +100,11 @@ A conversion log is written to the destination folder on completion.
 
 | Files in folder | Detected as | Available outputs |
 |---|---|---|
-| `.SWS` files only | SWS source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA |
-| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, Kayenne TGA, Kayenne EIF, Sony TGA, TGA Sequence |
-| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, Kayenne EIF, Sony TGA, TGA Sequence — **stills can only go to Kahuna SWS** |
-| `.EIF` files only | EIF source | Kahuna SWS, Kayenne TGA, Sony TGA |
-| Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, Kayenne TGA, Sony TGA |
+| `.SWS` files only | SWS source | Kahuna SWS, K-Frame TGA, K-Frame EIF, Sony TGA |
+| Video files only (MOV, MP4, MXF…) | Video source | Kahuna SWS, K-Frame TGA, K-Frame EIF, Sony TGA, TGA Sequence |
+| TGA sequences and/or stills | TGA/stills source | Kahuna SWS, K-Frame EIF, Sony TGA, TGA Sequence — **stills can only go to Kahuna SWS** |
+| `.EIF` files only | EIF source | Kahuna SWS, K-Frame TGA, Sony TGA |
+| Mix of `.EIF` and `.SWS` files | EIF+SWS mixed source | Kahuna SWS, K-Frame TGA, Sony TGA |
 | Mix of SWS and other non-EIF files | Error — shown in summary | — |
 
 #### Kahuna SWS output options
@@ -119,22 +119,22 @@ A conversion log is written to the destination folder on completion.
 
 **"Use source file number"** — tick this when converting K-Watch named files (e.g. `TNTS201_30_0001.tga`). MacHuna reads the slot number from the filename rather than the Start Number.
 
-**"Use bespoke numbering"** (v1.6.13) — tick this to set each item's output number yourself rather than take an auto-sequence. A scrollable panel lists every selected item with its own field (1-9999); the Start number and "Use source file number" controls are hidden while it is on. Fields start blank on purpose, so it is obvious which items still need a number, and they blank again whenever you tick or untick the checkbox, finish a batch, or press **Select** to start a new list. (As of v1.6.21 finishing *any* conversion clears the whole selection, not just the typed numbers.) **Add to List** keeps the numbers you have already typed and gives the newly added items blank fields. **Unticking the checkbox clears the whole selection**, files included — it is the way to start over, since items can otherwise only be added to a list. Before converting, MacHuna blocks the batch if any field is blank or out of range, if two items share a number, or if a number would collide with something already in the destination (`12.SWS` as a file or as a split-file folder). Clashes must be corrected — there is no overwrite option. Every offending field is marked in red with the reason for that row, and the panel scrolls to the first one and focuses it, so a blocked batch tells you where to type rather than just what is wrong (v1.6.17). The same checkbox appears for Kayenne EIF output, where the number becomes the slot (`0012.eif`). It is not offered for Kayenne TGA or TGA Sequence output, which name their folders from the source file.
+**"Use bespoke numbering"** (v1.6.13) — tick this to set each item's output number yourself rather than take an auto-sequence. A scrollable panel lists every selected item with its own field (1-9999); the Start number and "Use source file number" controls are hidden while it is on. Fields start blank on purpose, so it is obvious which items still need a number, and they blank again whenever you tick or untick the checkbox, finish a batch, or press **Select** to start a new list. (As of v1.6.21 finishing *any* conversion clears the whole selection, not just the typed numbers.) **Add to List** keeps the numbers you have already typed and gives the newly added items blank fields. **Unticking the checkbox clears the whole selection**, files included — it is the way to start over, since items can otherwise only be added to a list. Before converting, MacHuna blocks the batch if any field is blank or out of range, if two items share a number, or if a number would collide with something already in the destination (`12.SWS` as a file or as a split-file folder). Clashes must be corrected — there is no overwrite option. Every offending field is marked in red with the reason for that row, and the panel scrolls to the first one and focuses it, so a blocked batch tells you where to type rather than just what is wrong (v1.6.17). The same checkbox appears for K-Frame EIF output, where the number becomes the slot (`0012.eif`). It is not offered for K-Frame TGA or TGA Sequence output, which name their folders from the source file.
 
-#### Kayenne MOV / Kayenne TGA / Sony TGA output options
+#### K-Frame MOV / K-Frame TGA / Sony TGA output options
 
-- **Standard** — video standard for the output (TGA targets; not shown for Kayenne MOV)
+- **Standard** — video standard for the output (TGA targets; not shown for K-Frame MOV)
 - **Clip name** — 4-character clip name (Sony TGA); output files use this name. With one shared name, Sony TGA converts one clip per batch (a second clip would overwrite the first in the same folder)
 - **Use bespoke names** (v1.6.13; Sony TGA) — give each selected clip its own 4-character name instead, one per row in a scrollable panel, replacing the shared Clip name field. Each name becomes its own output folder, so **several Sony clips can be converted in one batch**. Blank, malformed, duplicate, or already-present names block the batch with a message naming the clips
-- **Field order** — BFF or TFF for interlaced standards (Sony TGA always; Kayenne TGA for interlaced standards). Honoured in both conversion directions since v1.6.12; before that it was ignored for Sony TGA output from TGA/clip input. The conversion log records which order was applied.
-- **Include audio** — include audio in Kayenne MOV output (shown only if source SWS contains audio)
+- **Field order** — BFF or TFF for interlaced standards (Sony TGA always; K-Frame TGA for interlaced standards). Honoured in both conversion directions since v1.6.12; before that it was ignored for Sony TGA output from TGA/clip input. The conversion log records which order was applied.
+- **Include audio** — include audio in K-Frame MOV output (shown only if source SWS contains audio)
 
-#### Kayenne EIF output options *(UNCONFIRMED on hardware)*
+#### K-Frame EIF output options *(UNCONFIRMED on hardware)*
 
-- **Slot number** — starting slot number for output files (0001, 0002… — 4-digit zero-padded). Increments per batch item. Kayenne requires this naming convention.
+- **Slot number** — starting slot number for output files (0001, 0002… — 4-digit zero-padded). Increments per batch item. K-Frame requires this naming convention.
 - **TGA source interlaced** — shown when source is a TGA sequence. Tick when TGA frames are from an interlaced source; MacHuna deinterlaces each frame using yadif (field separation, TFF) to produce 50fps progressive EIF.
 
-EIF output is always 1920×1080 progressive. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps). An UNCONFIRMED notice appears on the output; awaiting live Kayenne hardware test.
+EIF output is always 1920×1080 progressive. Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps). An UNCONFIRMED notice appears on the output; awaiting live K-Frame hardware test.
 
 #### TGA Sequence output options
 
@@ -152,7 +152,7 @@ Click **Open…** and pick a file. Supports:
 - **.SWS** — full fill, key, composite, and audio meter display; standard, frame count, duration, and timecode shown in info strip
 - **TGA sequences** — select any frame from the sequence; prompts for frame rate (25fps default); fill, key, and composite shown if the TGAs have an alpha channel
 - **.MOV, .MP4, .MXF, .MKV, .AVI** — frames extracted via ffmpeg; alpha channel preserved for formats that carry it (e.g. ProRes 4444); audio meters active
-- **.EIF** — Grass Valley Kayenne native format; frame rate auto-detected from header; key and composite panels populated; fill, key, and composite display with transport controls
+- **.EIF** — Grass Valley K-Frame native format; frame rate auto-detected from header; key and composite panels populated; fill, key, and composite display with transport controls
 
 The info strip shows the format of the loaded file (SWS, TGA, MOV, EIF) alongside frame count and duration.
 
@@ -167,7 +167,7 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 ### From SWS
 
 - **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF) and requires a double-rate source — a same-rate source SWS (e.g. 1080p/25 → 1080i/50) is blocked with an error rather than doubled in speed; I→P uses `yadif`. The output clip name and key state follow the source SWS; embedded audio is not carried through (a warning is logged if the source has audio).
-- **Kayenne TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley Kayenne Image Store
+- **K-Frame TGA** *(UNCONFIRMED on hardware)* -- 32-bit RGBA TGA sequence, for Grass Valley K-Frame Image Store
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 
 For TGA targets, choose the **Standard** from the dropdown. For progressive standards, frames are extracted as-is. For interlaced standards, pairs of progressive source frames are field-woven into interlaced output. If the source SWS is already interlaced, frames are passed through directly with a log note. A **BFF/TFF field order** toggle appears for interlaced selections and always for Sony TGA. Sony TGA requires a 4-character **clip name** (all output files share this name so they merge cleanly on import), or a bespoke name per clip when several clips are converted together.
@@ -176,9 +176,9 @@ For Kahuna SWS output, the Standard dropdown controls the output standard and co
 
 ### From EIF *(UNCONFIRMED on hardware)*
 
-- **Kayenne EIF → Kahuna SWS** -- lossless direct YCbCr repack; no RGB round-trip; output standard auto-derived from EIF fps
-- **Kayenne EIF → Kayenne TGA** -- full-resolution 1920×1080 RGBA TGA sequence, progressive or interlaced
-- **Kayenne EIF → Sony TGA** -- 32-bit RGBA with 4-char clip name prefix, progressive or interlaced
+- **K-Frame EIF → Kahuna SWS** -- lossless direct YCbCr repack; no RGB round-trip; output standard auto-derived from EIF fps
+- **K-Frame EIF → K-Frame TGA** -- full-resolution 1920×1080 RGBA TGA sequence, progressive or interlaced
+- **K-Frame EIF → Sony TGA** -- 32-bit RGBA with 4-char clip name prefix, progressive or interlaced
 
 All EIF conversion paths are UNCONFIRMED pending live hardware test. See Roadmap below.
 
@@ -190,8 +190,8 @@ The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endi
 
 The authoritative roadmap lives in [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md) under "Roadmap (canonical)". In short, the feature set is essentially complete and the remaining work is mostly **hardware verification**:
 
-- **EIF** write and conversion paths are coded and verified by analysis, but not yet confirmed on a live Grass Valley Kayenne desk (the top priority).
-- **Extraction outputs** (Kayenne TGA, Sony MVS TGA) need confirming on real Kayenne and Sony MVS hardware.
+- **EIF** write and conversion paths are coded and verified by analysis, but not yet confirmed on a live Grass Valley K-Frame desk (the top priority).
+- **Extraction outputs** (K-Frame TGA, Sony MVS TGA) need confirming on real K-Frame and Sony MVS hardware.
 - A few small code items (cross-rate interlaced-to-progressive resample, Sony TGA field-order toggle) and future options (HLG Rec.2020, EIF to MOV) remain.
 
 See `DEVELOPMENT_NOTES.md` for the full status list.

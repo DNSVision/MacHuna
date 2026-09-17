@@ -190,19 +190,19 @@ footer{padding-block:30px;color:var(--silver-faint)}
             <td>Verified on a live Kahuna mainframe. All seven standards checked byte&#8209;for&#8209;byte against reference files, along with fill and key, 16&#8209;channel audio, the auto and loop play flags, and the &gt;4&nbsp;GB split. This is the path that has been in daily use.</td>
           </tr>
           <tr>
-            <th scope="row">Kayenne EIF<span>native Kayenne clips</span></th>
+            <th scope="row">K-Frame EIF<span>Kayenne, Karrera, GV Korona</span></th>
             <td><span class="pill untested">Untested on a desk</span></td>
             <td>The format was reverse&#8209;engineered from real Kayenne clips and the header verified byte&#8209;for&#8209;byte. Converting between MOV, SWS, TGA and EIF is expected to work &mdash; it just has not been proven on a desk yet. Check the result before relying on it.</td>
           </tr>
           <tr>
-            <th scope="row">Audio in Kayenne EIF<span>the one known gap</span></th>
+            <th scope="row">Audio in K-Frame EIF<span>the one known gap</span></th>
             <td><span class="pill no">Not built yet</span></td>
-            <td><b>EIF clips are silent.</b> Kayenne keeps clip audio in a companion <span class="mono">.eaf</span> file. That format has now been worked out, but the code to read and write it is not written yet, so any audio on your source is dropped when converting to EIF &mdash; MacHuna tells you so in the log. This is the one thing on this page known not to work, rather than merely unproven, and it is next on the list. <b>One question is still open: which of the eight audio channels a Kayenne treats as programme audio.</b> If you know, or can find out on a desk, that is the last piece.</td>
+            <td><b>EIF clips are silent.</b> K-Frame keeps clip audio in a companion <span class="mono">.eaf</span> file. That format has now been worked out, but the code to read and write it is not written yet, so any audio on your source is dropped when converting to EIF &mdash; MacHuna tells you so in the log. This is the one thing on this page known not to work, rather than merely unproven, and it is next on the list. <b>One question is still open: which of the eight audio channels a K-Frame treats as programme audio.</b> If you know, or can find out on a desk, that is the last piece.</td>
           </tr>
           <tr>
-            <th scope="row">Kayenne TGA and MOV</th>
+            <th scope="row">K-Frame TGA and MOV</th>
             <td><span class="pill untested">Untested on a desk</span></td>
-            <td>Coded and routing correctly. Frame naming and format are taken from documentation rather than proven. Interlaced source to MOV is a known gap: ProRes carries no field&#8209;order flag, and whether a Kayenne minds is unknown.</td>
+            <td>Coded and routing correctly. Frame naming and format are taken from documentation rather than proven. Interlaced source to MOV is a known gap: ProRes carries no field&#8209;order flag, and whether a K-Frame minds is unknown.</td>
           </tr>
           <tr>
             <th scope="row">Sony MVS TGA</th>
@@ -232,7 +232,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
 
     <p class="note" style="margin-top:18px"><b>One more caveat on a confirmed path.</b> Progressive&#8209;to&#8209;interlaced conversion assumes top field first, which is standard for 1080i HD, but this has not been checked on a genuine 1080i Kahuna. If you have one and can look, that is a five&#8209;minute job that would settle it.</p>
 
-    <p class="note" style="margin-top:12px"><b>If you have a Kayenne or a Sony MVS</b>, testing one of the rows above and telling me what happened is the single most useful thing anyone could do for MacHuna. It is how the Kahuna row came to say Confirmed.</p>
+    <p class="note" style="margin-top:12px"><b>If you have a K-Frame or a Sony MVS</b>, testing one of the rows above and telling me what happened is the single most useful thing anyone could do for MacHuna. It is how the Kahuna row came to say Confirmed.</p>
   </section>
 
   <section>
@@ -277,7 +277,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
         <div class="rel-v">v1.7.1 <span>8 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">MacHuna now tells you, in the log, when an output has never been tested on the desk it is for.</p>
-          <p>Converting to Kayenne EIF, Kayenne TGA or MOV, or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
+          <p>Converting to K-Frame EIF, K-Frame TGA or MOV, or Sony MVS TGA writes a note saying so at the head of the batch. Kahuna SWS says nothing, because it is confirmed on real hardware and warning about it would be false caution. Converting a clip that has audio to EIF now also warns that the audio is dropped &mdash; see the verification table above for why. Nothing is blocked and no dialog appears; you are simply told where things stand.</p>
         </div>
       </div>
 
@@ -342,7 +342,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>
-        <li><b>You have a Kayenne or a Sony MVS.</b> Those output paths are written but have never been loaded on a live desk. If you can test one and report back, that is the most useful thing anyone could do for MacHuna.</li>
+        <li><b>You have a K-Frame or a Sony MVS.</b> Those output paths are written but have never been loaded on a live desk. If you can test one and report back, that is the most useful thing anyone could do for MacHuna.</li>
       </ul>
     </div>
   </section>

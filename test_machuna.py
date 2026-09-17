@@ -418,7 +418,7 @@ class TestEifFpsResample(unittest.TestCase):
     """Fix 14: convert_clip_to_eif must resample the source to the EIF header
     rate (25/50) so the number of frames written matches the fps stamped in the
     header. Otherwise a non-25/50 source (30/29.97/60/59.94fps) is extracted at
-    its own rate while the header claims 25/50, and the Kayenne plays it at the
+    its own rate while the header claims 25/50, and the K-Frame plays it at the
     wrong speed."""
 
     class _Stop(Exception):
@@ -880,7 +880,7 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
         self.assertIsNone(m.unverified_output_note('Kahuna SWS'))
 
     def test_untested_desk_outputs_are_warned_about(self):
-        for out in ('Kayenne EIF', 'Kayenne TGA', 'Kayenne MOV', 'Sony TGA'):
+        for out in ('K-Frame EIF', 'K-Frame TGA', 'K-Frame MOV', 'Sony TGA'):
             with self.subTest(out=out):
                 note = m.unverified_output_note(out)
                 self.assertIsNotNone(note)
@@ -894,13 +894,13 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
     def test_every_note_names_the_desk_it_is_about(self):
         for out, note in m.UNVERIFIED_OUTPUT_NOTES.items():
             with self.subTest(out=out):
-                self.assertTrue('Kayenne' in note or 'Sony' in note)
+                self.assertTrue('K-Frame' in note or 'Sony' in note)
 
     def test_notes_cover_exactly_the_documented_unknowns(self):
         # keep this in step with "Extraction output hardware unknowns" in
         # DEVELOPMENT_NOTES.md; if a path is hardware-confirmed, remove it here
         self.assertEqual(set(m.UNVERIFIED_OUTPUT_NOTES),
-                         {'Kayenne EIF', 'Kayenne TGA', 'Kayenne MOV', 'Sony TGA'})
+                         {'K-Frame EIF', 'K-Frame TGA', 'K-Frame MOV', 'Sony TGA'})
 
 
 class TestMissingFeatureNotes(unittest.TestCase):
@@ -908,21 +908,21 @@ class TestMissingFeatureNotes(unittest.TestCase):
     hardware-unverified notices so the two are never conflated."""
 
     def test_eif_audio_is_declared_missing(self):
-        note = m.missing_feature_note('Kayenne EIF')
+        note = m.missing_feature_note('K-Frame EIF')
         self.assertIsNotNone(note)
         self.assertIn('no audio', note)
         self.assertIn('.eaf', note)
 
     def test_outputs_that_do_carry_audio_say_nothing(self):
-        for out in ('Kahuna SWS', 'Kayenne TGA', 'Sony TGA', 'TGA Sequence'):
+        for out in ('Kahuna SWS', 'K-Frame TGA', 'Sony TGA', 'TGA Sequence'):
             with self.subTest(out=out):
                 self.assertIsNone(m.missing_feature_note(out))
 
     def test_missing_is_not_the_same_list_as_unverified(self):
         # EIF is both: untested on a desk AND missing audio. Everything else
         # untested is only untested.
-        self.assertEqual(set(m.MISSING_FEATURE_NOTES), {'Kayenne EIF'})
-        self.assertIn('Kayenne EIF', m.UNVERIFIED_OUTPUT_NOTES)
+        self.assertEqual(set(m.MISSING_FEATURE_NOTES), {'K-Frame EIF'})
+        self.assertIn('K-Frame EIF', m.UNVERIFIED_OUTPUT_NOTES)
 
 
 class TestUsableGeometry(unittest.TestCase):

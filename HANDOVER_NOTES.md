@@ -8,7 +8,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 **Understanding baseline:** commit `fdb6bd2` - 2026-09-10. **v1.9.1 is built, released, published and live.**
 
-**v1.9.1 - the data offset is read from the header, not assumed.** Some SWS files put the video planes after a **3072-byte header**, not 512. `0x19C` has always said so (MacHuna writes its own header size there) and nothing ever read it back, so those files were read **2560 bytes early = exactly half a 1920-pixel v210 line**, and the picture looked split down the middle with the halves swapped. **Four extraction paths had the same hardcoded 512**, so converting such a file to EIF/Kayenne TGA/Sony TGA/TGA-sequence sheared it silently. Invisible until v1.9.0 because the affected files were big enough to be split and splits could not be opened at all - fixing one bug exposed the other. Use `sws_data_offset()`; never hardcode 512 for where data starts. Verified across all seven joins of an 8-part clip in both planes.
+**v1.9.1 - the data offset is read from the header, not assumed.** Some SWS files put the video planes after a **3072-byte header**, not 512. `0x19C` has always said so (MacHuna writes its own header size there) and nothing ever read it back, so those files were read **2560 bytes early = exactly half a 1920-pixel v210 line**, and the picture looked split down the middle with the halves swapped. **Four extraction paths had the same hardcoded 512**, so converting such a file to EIF/K-Frame TGA/Sony TGA/TGA-sequence sheared it silently. Invisible until v1.9.0 because the affected files were big enough to be split and splits could not be opened at all - fixing one bug exposed the other. Use `sws_data_offset()`; never hardcode 512 for where data starts. Verified across all seven joins of an 8-part clip in both planes.
 
 **v1.9.0 - the Video Player opens split files, and loads long clips at all.** A user could not check a 20-second graphic bed. A clip over 4GB is a *folder* of 2GB chunks, and the macOS file dialog navigates into folders rather than selecting them - so they reached a single chunk, and only the first carries a header. The folder **or any chunk inside it** now loads the whole clip; the info strip says `Split: 3 parts`.
 
@@ -22,7 +22,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 **150 tests.** New coverage for split detection and reading across chunk joins. Four GUI drivers now live in the session scratchpad: interaction, pixel alignment, end-to-end conversion, and split playback.
 
-**Open:** the Kayenne desk session (booked, agenda recorded in memory - the EIF `0x60` audio-flag test first); EIF audio reading, buildable now; and the white-key investigation.
+**Open:** the K-Frame desk session (booked, agenda recorded in memory - the EIF `0x60` audio-flag test first); EIF audio reading, buildable now; and the white-key investigation.
 
 **On resuming:** run `git log --oneline 5948e77..HEAD` and `git status -s` to see what changed since the baseline, and reconcile against the code before trusting this document. Update this block (commit + date + one line of what moved) at the end of any session that changes the repo. See "Staying current between sessions" in `CLAUDE.md`.
 
@@ -343,7 +343,7 @@ Claude Code CLI has direct file system access and edits machuna.py directly usin
 
 **MacHuna** (`DNSVision/MacHuna`) is a macOS application that converts video and still image files to the Grass Valley Kahuna `.SWS` native format. It is a Mac-native alternative to the Windows-only K-Watch application. Built by David Steer (DNS Vision Limited) and Claude (Anthropic) using AI-assisted development with no prior coding background on David's part.
 
-MacHuna also extracts `.SWS` files back to standard media formats for Kayenne and Sony MVS desks (SWS → Kayenne MOV, Kayenne TGA, Sony TGA). This extraction engine was originally built as a standalone app (`DNSVision/Hula`), integrated into MacHuna v1.5.0, and unified into the main Convert interface in v1.5.33. The standalone repo is **archived and no longer maintained**.
+MacHuna also extracts `.SWS` files back to standard media formats for K-Frame and Sony MVS desks (SWS → K-Frame MOV, K-Frame TGA, Sony TGA). This extraction engine was originally built as a standalone app (`DNSVision/Hula`), integrated into MacHuna v1.5.0, and unified into the main Convert interface in v1.5.33. The standalone repo is **archived and no longer maintained**.
 
 MacHuna repo is currently **private**.
 
@@ -351,7 +351,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.9.1
+- **MacHuna:** v1.9.2
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -440,11 +440,11 @@ git push
 - Audio: 16-bit LE PCM, 16ch, 48kHz, L=Ch1 R=Ch3 (K-Watch mapping)
 - Auto play / Loop play flags
 - Large file support: >4GB split into 2GB FAT32-safe chunks
-- Built-in Video Player (fill, key, composite, audio meters) -- supports SWS, TGA sequences, MOV/MP4/MXF/AVI, and Kayenne EIF
-- Built-in extraction engine (SWS → Kayenne MOV, Kayenne TGA, Sony TGA)
-- **Kayenne EIF read** -- Video Player opens .eif files with fill, key, and composite panels; frame rate auto-detected from header
-- **Kayenne EIF write** (UNCONFIRMED on hardware) -- converts MOV, TGA sequences, and SWS to .eif with slot-numbered output (0001.eif, 0002.eif...)
-- **Kayenne EIF conversion** (UNCONFIRMED on hardware) -- EIF → Kahuna SWS (lossless YCbCr repack), EIF → Kayenne TGA, EIF → Sony TGA
+- Built-in Video Player (fill, key, composite, audio meters) -- supports SWS, TGA sequences, MOV/MP4/MXF/AVI, and K-Frame EIF
+- Built-in extraction engine (SWS → K-Frame MOV, K-Frame TGA, Sony TGA)
+- **K-Frame EIF read** -- Video Player opens .eif files with fill, key, and composite panels; frame rate auto-detected from header
+- **K-Frame EIF write** (UNCONFIRMED on hardware) -- converts MOV, TGA sequences, and SWS to .eif with slot-numbered output (0001.eif, 0002.eif...)
+- **K-Frame EIF conversion** (UNCONFIRMED on hardware) -- EIF → Kahuna SWS (lossless YCbCr repack), EIF → K-Frame TGA, EIF → Sony TGA
 - Window size persisted between sessions
 - Settings saved to `~/.kwatch_settings.json`
 
@@ -453,8 +453,8 @@ git push
 ## Extraction Output Summary
 
 - Converts .SWS to three output targets:
-  - Kayenne MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present
-  - Kayenne TGA: 32-bit RGBA, frames 0001.tga onwards, subfolder per SWS
+  - K-Frame MOV: ProRes 4444 with embedded alpha, BT.709, audio muxed if present
+  - K-Frame TGA: 32-bit RGBA, frames 0001.tga onwards, subfolder per SWS
   - Sony TGA: 32-bit RGBA, frames XXXX0000.tga (4-char clip name prefix), subfolder named after clip
 - Progressive or interlaced output via Standard dropdown (TGA targets)
 - Field order toggle (BFF/TFF) for interlaced standards; always shown for Sony TGA
@@ -493,7 +493,7 @@ The v210 decoder functions (`_v210_plane_to_yuv`, `_yuv_to_rgb8`, `_yuv_to_gray8
 
 The canonical roadmap is in `DEVELOPMENT_NOTES.md` under "Roadmap (canonical - the one list to work from)". Do not keep a separate copy here - read it there and reconcile against the code.
 
-Everything that used to live in this section is folded into that list, including the two items that were only recorded here: the **Windows port** (community contribution once repos go public - the core Python has no Mac-specific dependencies beyond ffmpeg path handling and the macOS menu code) and **going public** (do the live Kayenne/Sony hardware tests first, then make the repo public).
+Everything that used to live in this section is folded into that list, including the two items that were only recorded here: the **Windows port** (community contribution once repos go public - the core Python has no Mac-specific dependencies beyond ffmpeg path handling and the macOS menu code) and **going public** (do the live K-Frame/Sony hardware tests first, then make the repo public).
 
 ---
 

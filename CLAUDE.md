@@ -1,6 +1,6 @@
 # MacHuna — Claude Code Instructions
 
-MacHuna is a single-file Python app (`machuna.py`) that translates broadcast media assets between formats: video, TGA sequences, and stills to/from Grass Valley Kahuna `.SWS`, Kayenne MOV, Kayenne TGA, and Sony TGA. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
+MacHuna is a single-file Python app (`machuna.py`) that translates broadcast media assets between formats: video, TGA sequences, and stills to/from Grass Valley Kahuna `.SWS`, K-Frame MOV, K-Frame TGA, and Sony TGA. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
 
 ## Dev environment
 
@@ -109,10 +109,10 @@ Four rules, in order of value:
 
 MacHuna's extraction logic is correct by code analysis, but the following output paths have never been tested on real hardware. Do not remove the UNCONFIRMED notes in the code or README until these are verified:
 
-- **Kayenne MOV output** — never loaded on a live Kayenne ClipStore/Image Store
-- **Kayenne TGA output** — frame naming and format unconfirmed
+- **K-Frame MOV output** — never loaded on a live K-Frame ClipStore/Image Store
+- **K-Frame TGA output** — frame naming and format unconfirmed
 - **Sony MVS clip naming** — 4-char prefix convention unconfirmed on a live Sony MVS
-- **Interlaced SWS → MOV: interlace metadata** — ProRes container has no field-order flags; unknown whether a Kayenne desk requires them. Potential fix when confirmed: add `-field_order tb` (TFF) or `bb` (BFF) to `_hula_convert_mov` ffmpeg command
+- **Interlaced SWS → MOV: interlace metadata** — ProRes container has no field-order flags; unknown whether a K-Frame desk requires them. Potential fix when confirmed: add `-field_order tb` (TFF) or `bb` (BFF) to `_hula_convert_mov` ffmpeg command
 - **Sony MVS 25i field order** — TFF default (on engineer advice); BFF toggle retained in UI if incorrect on hardware
 - **MOV → TGA** — full path coded, never hardware-tested
 
