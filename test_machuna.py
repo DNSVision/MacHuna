@@ -1594,3 +1594,85 @@ class TestMovRateComesFromItsOwnControl(unittest.TestCase):
         src = Path(__file__).with_name('machuna.py').read_text()
         self.assertIn('frm_row_movfps', src)
         self.assertIn('mov_fps_var', src)
+
+
+class TestMovDeinterlacing(unittest.TestCase):
+    """A MOV is never WOVEN, but an interlaced source must still be DEINTERLACED.
+
+    Those are two different things and v1.10.2 wrongly dropped both, on the
+    reasoning that ProRes carries no field-order flag. True, and irrelevant:
+    if the incoming frames already contain fields, a progressive file made
+    from them stays combed. Spotted by David.
+    """
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _interlaced_sequence(self, n, w=64, h=64):
+        from PIL import Image
+        import numpy as np
+        files = []
+        for i in range(n):
+            a = np.zeros((h, w, 4), dtype=np.uint8)
+            a[0::2, :, 0] = 255          # one field
+            a[1::2, :, 1] = 255          # the other
+            a[:, :, 3] = 255
+            f = os.path.join(self.tmp, 'i%04d.tga' % i)
+            Image.fromarray(a, 'RGBA').save(f, format='TGA')
+            files.append(f)
+        return files
+
+    def _probe(self, path):
+        import subprocess
+        ff = m._get_ffmpeg_path('ffprobe')
+        out = subprocess.run([ff, '-v', 'error', '-show_entries',
+                              'stream=nb_frames', '-show_entries', 'format=duration',
+                              '-of', 'csv=p=0', path], capture_output=True, text=True)
+        parts = out.stdout.split()
+        return int(parts[0]), float(parts[1])
+
+    def test_bobbing_doubles_the_frames_and_keeps_the_duration(self):
+        files = self._interlaced_sequence(25)
+        out = m.convert_tga_seq_to_mov(
+            files, self.tmp, 'bob', 25.0,
+            vf='yadif=mode=send_field:parity=tff', out_fps=50.0,
+            log=lambda *a: None)
+        frames, duration = self._probe(out)
+        self.assertEqual(frames, 50, 'bob should give one frame per field')
+        self.assertAlmostEqual(duration, 1.0, places=1,
+                               msg='deinterlacing must not change how long it runs')
+
+    def test_out_fps_defaults_to_the_source_rate(self):
+        """Without deinterlacing nothing changes, so the two rates must match."""
+        files = self._interlaced_sequence(25)
+        out = m.convert_tga_seq_to_mov(files, self.tmp, 'plain', 25.0,
+                                       log=lambda *a: None)
+        frames, duration = self._probe(out)
+        self.assertEqual(frames, 25)
+        self.assertAlmostEqual(duration, 1.0, places=1)
+
+
+class TestMovRunnerStillDeinterlaces(unittest.TestCase):
+    """Structural guard: the behavioural tests above cannot see the GUI.
+
+    v1.10.2 removed the deinterlace path from _run_to_tga_seq's MOV branch
+    while every test stayed green, because that code lives in launch_gui().
+    """
+
+    def test_the_mov_branch_reads_the_interlaced_tickbox(self):
+        fns = _nested_functions(_launch_gui_tree())
+        names = _calls_within(fns['_run_to_tga_seq'])
+        self.assertIn('src_interlaced', names,
+                      'the MOV branch no longer consults the interlaced tickbox - '
+                      'an interlaced TGA sequence would come out combed')
+        # mov_vf / mov_out exist only to carry the deinterlace filter and the
+        # doubled output rate. (Keyword-argument names are not Name nodes, so
+        # asserting on 'out_fps' itself would silently pass regardless.)
+        self.assertIn('mov_vf', names,
+                      'the MOV branch no longer builds a deinterlace filter')
+        self.assertIn('mov_out', names,
+                      'the MOV branch no longer computes a doubled output rate, '
+                      'so bobbed frames would be thrown away again')

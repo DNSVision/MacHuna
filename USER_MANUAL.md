@@ -1,4 +1,4 @@
-# MacHuna v1.10.2 — User Manual
+# MacHuna v1.10.3 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -384,7 +384,11 @@ Names may contain spaces, letters, digits and ordinary punctuation, up to 64 cha
 
 **Frame rate.** An `.SWS` and an `.EIF` both declare their rate in the header, so MacHuna uses it and no control appears. A TGA sequence declares nothing, so for TGA input a **Frame rate** control appears: 23.976, 24, 25, 29.97, 30, 50, 59.94 or 60. Set it to the rate the sequence was made at.
 
-> **Fixed in v1.10.2.** This used to be the **Standard** dropdown, which offers only the seven verified Kahuna broadcast standards. Its only 30fps entries are *interlaced*, so a 30fps sequence had nowhere correct to go — picking a progressive standard played it at the wrong speed, and picking an interlaced one wove fields into a QuickTime. A MOV is an ordinary video file and now gets ordinary video rates. **The "TGA source interlaced" tickbox does not appear for MOV output** and would not have helped: ProRes carries no field-order flag, so there is nothing to set and nothing downstream to read it.
+> **Fixed in v1.10.2.** This used to be the **Standard** dropdown, which offers only the seven verified Kahuna broadcast standards. Its only 30fps entries are *interlaced*, so a 30fps sequence had nowhere correct to go — picking a progressive standard played it at the wrong speed, and picking an interlaced one wove fields into a QuickTime. A MOV is an ordinary video file and now gets ordinary video rates. **The "TGA source interlaced" tickbox would not have helped either** — ticking it left the clip running at double speed and put progressive frames through a deinterlacer.
+
+**If your TGA frames are themselves interlaced**, tick **TGA source interlaced** and choose the field order. MacHuna deinterlaces them into full progressive frames — one frame per field, so a 25fps interlaced sequence becomes a 50fps progressive MOV of the same length, with smooth motion and no combing. Leave it unticked for ordinary progressive renders, which is the normal case.
+
+> A QuickTime is never *woven* into interlace — ProRes carries no field-order flag, so there would be nothing to set and nothing downstream to read it. But frames that already contain fields still have to be *deinterlaced*, or the comb stays in the picture. Those are two different things, and v1.10.2 briefly dropped both. Restored in v1.10.3 after David spotted it.
 
 **Stills are not accepted**, in line with the rest of MacHuna: a single frame is not a clip. Stills convert to Kahuna SWS only.
 

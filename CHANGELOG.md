@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.10.3 — 2026-09-17
+
+### Fixed
+- **An interlaced TGA sequence can be converted to a progressive MOV again.** v1.10.2 removed the option entirely, which was my error. Spotted by David immediately.
+  - **The reasoning was half right and therefore wrong.** ProRes carries no field-order flag, so a QuickTime is never *woven* into interlace — true. But that says nothing about frames that *already contain fields*: those still have to be **deinterlaced**, or the comb stays in a supposedly progressive file. Two different operations; v1.10.2 dropped both.
+  - **TGA source interlaced** is offered again for MOV output, with the field-order control appearing once it is ticked. Deinterlacing bobs one frame per field, so a 25fps interlaced sequence becomes a **50fps progressive MOV of the same length** — verified at 50 frames and 1.000s.
+  - Progressive sequences are untouched and show no field-order control.
+
+### Notes for the record
+- Verified through the real GUI for both cases, not by unit test alone.
+- The structural guard added for this asserts the deinterlace path exists in `_run_to_tga_seq`. It was falsified properly: removing the block — which is how v1.10.2 lost it — makes it fail. It does **not** catch the code being neutered while the variable names survive; that is the known limit of a guard that asserts a call exists rather than that it works.
+
+---
+
 ## v1.10.2 — 2026-09-17
 
 ### Fixed

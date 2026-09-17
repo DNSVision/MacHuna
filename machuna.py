@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.10.2"
+VERSION = "1.10.3"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3583,7 +3583,8 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 
 
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
-                           fps: float, vf: str = None, log=print) -> str:
+                           fps: float, vf: str = None, out_fps: float = None,
+                           log=print) -> str:
     """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio.
 
     32-bit RGBA TGAs keep their key as a real alpha channel. The interlace
@@ -3595,7 +3596,11 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
     os.makedirs(dest_dir, exist_ok=True)
     out_path = os.path.join(dest_dir, f"{out_name}.mov")
     ffmpeg   = _get_ffmpeg_path('ffmpeg')
-    log(f"  {len(tga_files)} frame(s) @ {fps:g}fps → ProRes 4444")
+    # Deinterlacing bobs one frame into two, so the result runs at double the
+    # source rate. Pinning the output back to `fps` would discard half of it.
+    out_fps  = out_fps or fps
+    log(f"  {len(tga_files)} frame(s) @ {fps:g}fps → ProRes 4444"
+        + (f" (out {out_fps:g}fps)" if out_fps != fps else ""))
     with tempfile.TemporaryDirectory() as tmp:
         concat_file = os.path.join(tmp, 'concat.txt')
         with open(concat_file, 'w') as cf:
@@ -3609,7 +3614,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                 '-pix_fmt', 'yuva444p10le',
                 '-color_primaries', 'bt709', '-color_trc', 'bt709',
                 '-colorspace', 'bt709',
-                '-r', f"{fps:g}", out_path]
+                '-r', f"{out_fps:g}", out_path]
         _run_ffmpeg(cmd, check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -4978,6 +4983,18 @@ def launch_gui():
             # ordinary video file; it gets ordinary video rates.
             if _input_type[0] == 'to_sws_only':
                 frm_row_movfps.pack(**bf)
+                # A MOV is never woven - but a sequence whose frames already
+                # contain fields still has to be deinterlaced, or the comb
+                # stays in a progressive file. Field order matters for that,
+                # so it appears only once the box is ticked.
+                chk_tga_int.pack_forget()
+                frm_field_inner.pack_forget()
+                if _has_tga_seq[0]:
+                    chk_tga_int.pack(side='left', **pad)
+                    frm_row_tga_opts.pack(**bf)
+                    if source_interlaced_var.get():
+                        frm_field_inner.pack(side='left', padx=(16, 8), pady=4)
+                        frm_row_hula_tga.pack(**bf)
         else:
             frm_row_std.pack(**bf)
         if out == OUTPUT_KAHUNA_SWS:
@@ -5046,6 +5063,9 @@ def launch_gui():
             output_var.set(opts[0] if opts else '')
         _update_adaptive_controls()
 
+    # Ticking "TGA source interlaced" changes which controls are relevant
+    # (field order appears for MOV), so the panel has to be rebuilt.
+    source_interlaced_var.trace_add('write', lambda *_a: _update_adaptive_controls())
     chk_bespoke.config(command=_on_seq_toggle)
 
     def _on_clear_all():
@@ -5560,14 +5580,23 @@ def launch_gui():
                         if is_mov:
                             mov_name = (id_map.get(_bespoke_key(item)) or base
                                         if id_map else base)
-                            # The rate the user stated, and the frames as they
-                            # are. vf above is for the TGA/SWS targets; a MOV
-                            # carries no field order, so weaving or bobbing
-                            # here would only damage the picture.
+                            # The rate the user stated. A MOV carries no field
+                            # order, so it is never WOVEN - but an interlaced
+                            # source still has to be DEINTERLACED, or the fields
+                            # stay combed in a progressive file. Those are two
+                            # different things; v1.10.2 wrongly dropped both.
                             mov_fps = parse_mov_fps(mov_fps_var.get())
-                            log(f"  TGA→MOV: {base} — {len(tga_files)} frame(s) at {mov_fps:g}fps")
+                            mov_vf, mov_out = None, mov_fps
+                            if src_interlaced:
+                                mov_vf  = f'yadif=mode=send_field:parity={parity}'
+                                mov_out = mov_fps * 2      # bob: one frame per field
+                                log(f"  TGA→MOV: {base} — interlaced→progressive via yadif, "
+                                    f"{fo}; {mov_fps:g}fps source → {mov_out:g}fps")
+                            else:
+                                log(f"  TGA→MOV: {base} — {len(tga_files)} frame(s) "
+                                    f"at {mov_fps:g}fps, progressive")
                             convert_tga_seq_to_mov(tga_files, d, mov_name, mov_fps,
-                                                   vf=None, log=log)
+                                                   vf=mov_vf, out_fps=mov_out, log=log)
                             results.append((base, mov_name, 'OK'))
                         else:
                             out_dir = os.path.join(d, cn_i if is_sony else base)
