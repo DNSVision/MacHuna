@@ -6,7 +6,11 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `68086cd` - 2026-09-17. **v1.10.3 is built, released and PUBLISHED.** dnsvision.tv/machuna serves it and the manifest announces it.
+**Understanding baseline:** commit `2d71a1c` - 2026-09-18. **v1.10.3 is built, released and PUBLISHED.** dnsvision.tv/machuna serves it and the manifest announces it.
+
+**v1.11.0 - a keyless source gets NO key plane.** CONFIRMED ON A LIVE KAHUNA 2026-09-18 and **the first thing MacHuna deliberately does differently from K-Watch.** The old flat plane loads as a black key and does not key; without it the desk shows Fill only and labels the file `C` not `CK`. Halves every keyless file (896 MB to 448 MB on a 52-frame wipe). `_generate_white_key` removed. **This closes the white-key item that sat in the roadmap for months.**
+
+**Still open on the desk list: the P-to-I field order test (803/804 in Wipes/MacHuna/DESK TESTS).** Blocked 2026-09-18 because the desk was locked to 1080p50 for a show - those files are 1080i50 and field order is meaningless on a progressive desk. Needs a genuine 1080i Kahuna. The files are built and waiting.
 
 **v1.10.0-v1.10.3 are one feature and two of my mistakes.** QuickTime MOV output (SWS, EIF or TGA sequence → ProRes 4444 with the key as alpha and audio where the source has it), plus `.eaf` audio reading. v1.10.1 added per-item naming; v1.10.2 gave MOV its own frame-rate control; v1.10.3 restored deinterlacing. **David found every one of the three gaps within minutes of opening the app**, after I had verified the feature four different ways.
 
