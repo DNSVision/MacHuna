@@ -1,8 +1,8 @@
 {
-  "version": "1.10.3",
-  "released": "2026-09-17",
-  "summary": "Adds QuickTime MOV output: turn an SWS, an EIF or a TGA sequence back into an editable ProRes 4444 file with the key as alpha and the sound intact. Name the file, set its frame rate, and deinterlace an interlaced sequence on the way.",
-  "download": "https://downloads.dnsvision.tv/MacHuna-1.10.3.zip",
+  "version": "1.11.0",
+  "released": "2026-09-18",
+  "summary": "A clip with no key now makes an SWS with no key plane, instead of a black one that never keyed. Every keyless file is half the size.",
+  "download": "https://downloads.dnsvision.tv/MacHuna-1.11.0.zip",
   "page": "https://dnsvision.tv/machuna",
   "minimum_macos": "26.0"
 }

@@ -145,13 +145,13 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Current release</p>
     <div class="dl">
       <div class="dl-top">
-        <span class="dl-ver">v1.10.3</span>
+        <span class="dl-ver">v1.11.0</span>
         <span class="dl-date">10 September 2026</span>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.10.3.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
+        <a class="btn btn-primary" href="https://downloads.dnsvision.tv/MacHuna-1.11.0.zip">Download MacHuna <span class="sz">34 MB &middot; .zip</span></a>
         <a class="btn btn-ghost" href="MacHuna_User_Manual.pdf">User manual <span class="sz">PDF</span></a>
-        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.10.3">Contact developer</a>
+        <a class="btn btn-ghost" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.11.0">Contact developer</a>
       </div>
       <div class="req">
         <span><b>macOS 26</b> or later</span>
@@ -245,7 +245,17 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <div class="rel">
 
       <div class="rel-item current">
-        <div class="rel-v">v1.10.3 <span>17 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-v">v1.11.0 <span>18 Sep 2026</span> <span class="now">Current</span></div>
+        <div class="rel-body">
+          <p class="lead">A clip with no key now produces an SWS with no key plane &mdash; instead of a black one that never keyed and doubled the file.</p>
+          <p>Converting something without a key used to write a full key plane anyway, flat black, and tell the desk it was there. Loaded on a Kahuna it shows a Key panel that is solid black, and it does not key. It never worked; it only made the file twice as big.</p>
+          <p>Now the rule is simply that a key plane is written when there is a key. <b>Every keyless file is half the size</b> &mdash; a 52&#8209;frame wipe drops from 896&nbsp;MB to 448&nbsp;MB, converts in about half the time, and a clip twice as long fits under the 4&nbsp;GB split. Files that do have a key are unaffected.</p>
+          <p class="note">Confirmed on a live Kahuna on 18 September, loading both versions side by side. This is the first thing MacHuna deliberately does differently from the software it was modelled on, and it was changed only once a desk had shown the old behaviour was useless.</p>
+        </div>
+      </div>
+
+      <div class="rel-item">
+        <div class="rel-v">v1.10.3 <span>17 Sep 2026</span></div>
         <div class="rel-body">
           <p class="lead">Adds QuickTime MOV output: turn an SWS, an EIF or a TGA sequence back into an editable ProRes&nbsp;4444 file, with the key as a real alpha channel and the sound intact.</p>
           <p>Until now material could go onto a desk but only came back off as a folder of TGA frames. A QuickTime is what an edit suite, a grade or an archive actually wants. Sound comes from the SWS itself, or for a K-Frame clip from its companion <span class="mono">.eaf</span> file, which MacHuna can now read. It is an ordinary video file rather than a desk format, so there is nothing about it waiting to be proven on hardware.</p>
@@ -353,7 +363,7 @@ footer{padding-block:30px;color:var(--silver-faint)}
     <p class="eyebrow">Problems and requests</p>
     <div class="contact">
       <p class="note" style="color:var(--silver)">MacHuna was vibecoded by one person against real desks, so it improves fastest when someone says what went wrong. There is nothing to sign up to.</p>
-      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.10.3">machuna@dnsvision.tv</a>
+      <a class="mailto" href="mailto:machuna@dnsvision.tv?subject=MacHuna%20v1.11.0">machuna@dnsvision.tv</a>
       <ul>
         <li><b>Something went wrong.</b> Send the version, your standard, the source file and what the log said. MacHuna writes a conversion log into the destination folder after every batch, and that usually answers it.</li>
         <li><b>It needs to do something else.</b> A format, a standard, a naming convention your facility uses.</li>

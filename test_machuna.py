@@ -1676,3 +1676,64 @@ class TestMovRunnerStillDeinterlaces(unittest.TestCase):
         self.assertIn('mov_out', names,
                       'the MOV branch no longer computes a doubled output rate, '
                       'so bobbed frames would be thrown away again')
+
+
+class TestKeylessSourceGetsNoKeyPlane(unittest.TestCase):
+    """A source with no alpha produces an SWS with no key plane.
+
+    MacHuna used to generate a flat plane here, copying K-Watch. Confirmed on a
+    live Kahuna on 2026-09-18: that plane loads as a black key and keys out to
+    nothing, so it was never usable - it only doubled the file size. This is
+    MacHuna's first deliberate divergence from K-Watch, made on evidence.
+    """
+
+    def test_generate_white_key_stays_deleted(self):
+        src = Path(__file__).with_name('machuna.py').read_text()
+        self.assertNotIn('_generate_white_key', src,
+                         'the flat key plane is back - it loads as a black key '
+                         'on a Kahuna and keys out to nothing')
+
+    def test_no_flat_key_pattern_anywhere_in_the_writer(self):
+        # The v210 bytes that produced Y=64. Documented in DEVELOPMENT_NOTES as
+        # reference; must not reappear as something the app writes.
+        src = Path(__file__).with_name('machuna.py').read_text()
+        self.assertNotIn('0x20, 0x01, 0x02, 0x00, 0x04, 0x08, 0x00, 0x40', src)
+
+
+class TestKeylessConversionOutcome(unittest.TestCase):
+    """The observable result, not the code: header says no key, file is half."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _keyless_clip(self):
+        """A small progressive clip with no alpha channel at all."""
+        import subprocess
+        out = os.path.join(self.tmp, 'nokey.mov')
+        ff = m._get_ffmpeg_path('ffmpeg')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=50:duration=0.2',
+                        '-c:v', 'prores_ks', '-profile:v', '3',
+                        '-pix_fmt', 'yuv422p10le', out], check=True)
+        return out
+
+    def test_a_keyless_source_writes_no_key_plane_either_way(self):
+        src = self._keyless_clip()
+        self.assertFalse(m.get_video_info(src)['has_alpha'], 'test source must have no alpha')
+        sizes = {}
+        for ignore in (False, True):
+            d = os.path.join(self.tmp, 'ig' if ignore else 'keep')
+            os.makedirs(d, exist_ok=True)
+            m.convert_clip(src, 1, d, video_standard='1080p50', ignore_alpha=ignore,
+                           include_audio=False, split_fat32=False, log=lambda *a: None)
+            p = os.path.join(d, '1.SWS')
+            h = m.HulaSWSHeader(p)
+            with self.subTest(ignore_alpha=ignore):
+                self.assertFalse(h.has_key,
+                                 'a source with no alpha must not produce a key plane')
+            sizes[ignore] = os.path.getsize(p)
+        self.assertEqual(sizes[False], sizes[True],
+                         'the tickbox must make no difference when there is no alpha')

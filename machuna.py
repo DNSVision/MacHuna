@@ -42,7 +42,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.10.3"
+VERSION = "1.11.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -511,23 +511,6 @@ def _byteswap_v210(path: str):
     data.tofile(path)                       # write back
 
 
-def _generate_white_key(fill_raw: str, output_path: str):
-    """Generate a solid white v210 key plane matching the size of the fill plane.
-    
-    White in v210 big-endian is the repeating 8-byte pattern:
-    20 01 02 00 04 08 00 40  (confirmed from K-Watch reference file)
-    """
-    fill_size = os.path.getsize(fill_raw)
-    pattern = bytes([0x20, 0x01, 0x02, 0x00, 0x04, 0x08, 0x00, 0x40])
-    repeats = fill_size // len(pattern)
-    with open(output_path, 'wb') as f:
-        f.write(pattern * repeats)
-        # Handle any remainder (shouldn't happen with valid v210 data)
-        remainder = fill_size % len(pattern)
-        if remainder:
-            f.write(pattern[:remainder])
-
-
 def extract_audio(input_path: str, output_path: str, frame_count: int, fps: float) -> bool:
     """Extract audio from input file and write as raw 16-bit LE PCM, 16 channels, 48kHz.
 
@@ -757,8 +740,13 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             # No key plane written at all -- matches K-Watch behaviour
             actual_key = None
         elif key_raw is None:
-            actual_key = os.path.join(tmp, 'key.v210')
-            _generate_white_key(fill_raw, actual_key)
+            # No alpha in the source means no key to write. MacHuna used to
+            # generate a flat plane here, copying K-Watch. Confirmed on a live
+            # Kahuna 2026-09-18: that plane loads as a black key and keys out
+            # to nothing - never usable, and it doubled the file size for
+            # nothing. A key plane is written
+            # only when there is a real key. See DEVELOPMENT_NOTES "White Key".
+            actual_key = None
         else:
             actual_key = os.path.join(tmp, 'key.v210')
             os.rename(fill_raw + '.alpha.raw', actual_key)
@@ -856,8 +844,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             actual_key = os.path.join(tmp, 'key.v210')
             os.rename(fill_raw + '.alpha.raw', actual_key)
         else:
-            actual_key = os.path.join(tmp, 'key.v210')
-            _generate_white_key(fill_raw, actual_key)
+            # No alpha in the source means no key to write. MacHuna used to
+            # generate a flat plane here, copying K-Watch. Confirmed on a live
+            # Kahuna 2026-09-18: that plane loads as a black key and keys out
+            # to nothing - never usable, and it doubled the file size for
+            # nothing. A key plane is written
+            # only when there is a real key. See DEVELOPMENT_NOTES "White Key".
+            actual_key = None
 
         # v210 plane_size is exact from dimensions: ceil(width/6)*16*height
         # Derive actual frame count from file size -- more reliable than ffprobe estimate,
@@ -1005,8 +998,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             _byteswap_v210(key_raw)
             actual_key = key_raw
         else:
-            actual_key = os.path.join(tmp, 'key.v210')
-            _generate_white_key(fill_raw, actual_key)
+            # No alpha in the source means no key to write. MacHuna used to
+            # generate a flat plane here, copying K-Watch. Confirmed on a live
+            # Kahuna 2026-09-18: that plane loads as a black key and keys out
+            # to nothing - never usable, and it doubled the file size for
+            # nothing. A key plane is written
+            # only when there is a real key. See DEVELOPMENT_NOTES "White Key".
+            actual_key = None
 
         _byteswap_v210(fill_raw)
 

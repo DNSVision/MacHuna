@@ -4,6 +4,24 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.11.0 — 2026-09-18
+
+### Changed
+- **A source with no key now produces an SWS with no key plane.** Confirmed on a live Kahuna, and it is the first time MacHuna has deliberately done something differently from K-Watch.
+  - Until now, converting a keyless source with **Ignore alpha** unticked wrote a *full, flat* key plane and told the desk it was there. K-Watch does the same, which was the only reason MacHuna did.
+  - **David loaded both on a Kahuna on 18 September.** The file with the flat plane shows a Key panel with a solid black thumbnail; the file without shows no Key panel at all. Neither keys — **the flat plane is a black key and keys out to nothing.** It was never usable; it only doubled the file.
+  - **Every keyless file is now half the size.** A key plane is exactly as big as the fill plane, so a 52-frame wipe drops from 896 MB to 448 MB. Conversions take about half as long, and a clip twice as long now fits under the 4 GB split threshold.
+  - The rule is simply: **a key plane is written when there is a real key, and not otherwise.** Ticking Ignore alpha on a source that has no alpha now makes no difference, because there was nothing to ignore.
+  - Sources that *do* have a key are completely unaffected.
+- `_generate_white_key` is removed. Its name promised white and its data was black — the v210 pattern decoded to Y=64, which is why it never keyed. The byte pattern stays documented in `DEVELOPMENT_NOTES.md` as reference for reading K-Watch files.
+
+### Notes for the record
+- This closes a question that had been open in the roadmap for months as "white key — investigate only". The investigation finished on 17 September against K-Watch files predating MacHuna; the hardware test on 18 September settled what to do about it.
+- Verified before release: the same source and settings that produced the 896 MB file now produce one **byte-identical** to the no-key version, apart from the header.
+- **Confirmed on the desk after building:** the new output loads with a Fill panel and no Key panel, and the Kahuna's own file list labels it `C` rather than `CK` — so the desk classifies it as a clip without a key, rather than a clip whose key happens to be empty.
+
+---
+
 ## v1.10.3 — 2026-09-17
 
 ### Fixed
