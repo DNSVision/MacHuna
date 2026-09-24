@@ -120,7 +120,12 @@ git push
 - 720p/59.94 reinstatement (genuine US demand, ABC/Fox) - needs a K-Watch 720p reference, hardware, and the plane_size fix. See "Format Support Rationale".
 - HLG Rec.2020 colour space (needs a real HLG SWS to reverse-engineer).
 - Windows port (community contribution; note in README when repos go public).
-- Going public - make the repo public once the K-Frame/Sony hardware tests pass.
+- ~~Going public~~ - **DONE, and this note was stale.** `DNSVision/MacHuna` has
+  been public since before 2026-09-24, which is ahead of the condition written
+  here (once the K-Frame/Sony hardware tests pass). Found while auditing for
+  loose ends. Nothing to do; the condition is simply no longer the policy.
+  `DNSVision/MacHuna-Swift` is **private** for now, by David's decision
+  2026-09-24, and can be opened whenever there is something worth showing.
 
 **Settled - do not reopen:** stills are SWS-only (see "Stills are SWS-only (settled)").
 
