@@ -112,7 +112,7 @@ git push
 
 **Small things left over from the distribution work (low priority):**
 - Take a Video Player screenshot for the download page, using `~/Desktop/MacHuna Demo Asset/MacHuna_Wipe.mov` - a synthetic 50fps ProRes 4444 wipe with a real key and audio, generated for exactly this so no client material is involved. The player section was cut when David simplified the page down to downloads, release notes and contact, so this would mean reinstating a section. Only worth doing if the page ever becomes promotional again.
-- Apple Developer certificate (GBP 79/yr) so downloads open without the Gatekeeper warning. **Deferred by David to the SwiftUI rewrite** - do not re-pitch before then.
+- Apple Developer certificate so downloads open without the Gatekeeper warning. **DECIDED 2026-09-24: parked, and enrolled as an INDIVIDUAL on David's existing Apple ID when we do it** - never as DNS Vision Limited, because Apple pushes organizations toward an Apple ID on the company domain and two Apple IDs on one Mac is the problem he wanted to avoid. Apple lists 99 USD/yr (this note said GBP 79; prices vary by region, confirm when paying). Full reasoning in `MacHuna-Swift/DESIGN_DECISIONS.md` section 9.6. Do not re-pitch.
 - Cloudflare publish token expires **2027-09-07**.
 
 **Future / low priority (no demand yet):**
@@ -122,9 +122,19 @@ git push
 - Windows port (community contribution; note in README when repos go public).
 - Going public - make the repo public once the K-Frame/Sony hardware tests pass.
 
-**Settled - do not reopen:** stills are SWS-only (see "Stills are SWS-only (settled)"); true drag-and-drop dropped; manual batch reorder dropped.
+**Settled - do not reopen:** stills are SWS-only (see "Stills are SWS-only (settled)").
 
-**After the gate:** the native Swift port (see HANDOVER_NOTES "Swift Rewrite" and `design/`).
+**Dropped from THIS version, but being built in Swift:** true drag-and-drop, and
+manual batch reorder. Both were dropped because Tkinter could not do them well,
+not because they were bad ideas; both are near-free in AppKit and are specified
+in `MacHuna-Swift/DESIGN_DECISIONS.md` (4.5 and 3.3). Do not reopen them *here*.
+
+**The Swift work has started and does NOT wait for the gate.** As of 2026-09-24
+it lives in `DNSVision/MacHuna-Swift` as a new interface driving this frozen
+engine, so it needs nothing from the desk session. See HANDOVER_NOTES "Swift
+Rewrite" and `MacHuna-Swift/DESIGN_DECISIONS.md`. What *does* still wait for the
+gate is the full Swift rewrite of the conversion pipeline, which is a later
+phase.
 
 ---
 

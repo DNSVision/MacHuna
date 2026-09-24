@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `2d71a1c` - 2026-09-18. **v1.10.3 is built, released and PUBLISHED.** dnsvision.tv/machuna serves it and the manifest announces it.
+**Understanding baseline:** commit `2d71a1c` - 2026-09-18. **v1.11.0 is built, released and PUBLISHED**, and this repo is now **PARKED** at tag `v1.11.0` - see "Swift Rewrite" below. dnsvision.tv/machuna serves v1.11.0 and the manifest announces it.
+
+*(This line said v1.10.3 was the published release until 2026-09-24. It was stale from the v1.11.0 publish onwards, so any session resuming from it started with a false picture. Corrected when the Swift work began.)*
 
 **v1.11.0 - a keyless source gets NO key plane.** CONFIRMED ON A LIVE KAHUNA 2026-09-18 and **the first thing MacHuna deliberately does differently from K-Watch.** The old flat plane loads as a black key and does not key; without it the desk shows Fill only and labels the file `C` not `CK`. Halves every keyless file (896 MB to 448 MB on a 52-frame wipe). `_generate_white_key` removed. **This closes the white-key item that sat in the roadmap for months.**
 
@@ -519,14 +521,36 @@ Everything that used to live in this section is folded into that list, including
 
 ---
 
-## Swift Rewrite - see design/ and the plan
+## Swift Rewrite - STARTED 2026-09-24, and it is NOT what this section used to say
 
-The native Swift/SwiftUI rewrite is a planned "for fun" project, gated on the MacHuna feature roadmap being complete and hardware-tested first (the Python version stays the reference implementation throughout). The approach is settled:
+**This repo is PARKED at v1.11.0** (tag `v1.11.0`). The Swift work lives in
+**`DNSVision/MacHuna-Swift`**, and its decision record is the authority:
+`MacHuna-Swift/DESIGN_DECISIONS.md`. Read that before doing any Swift work.
 
-- **Option 1:** keep FFmpeg (shell out to the bundled binary, byte-identical pipeline) and build a native "mac-arsed" SwiftUI GUI around it. A full native-transcode rewrite (AVFoundation) is an optional "someday", not the goal - FFmpeg wins on MXF and exotic codecs regardless.
-- **Architecture:** four Swift Package modules - FormatKit (pure-Swift port of the SWS/EIF/v210 crown jewels; lowest risk; start here), TranscodeKit (a TranscodeBackend protocol, FFmpegBackend first), PlayerKit (native player + AVAudioEngine), App (SwiftUI).
-- **Its own repo** when it starts (e.g. `DNSVision/MacHuna-Swift`), not this one. Only Phase 1 (FormatKit + XCTest parity) is safe to begin before the roadmap gate clears.
-- Reference material lives in `design/` (native GUI mockup + menu model). The `mac-arsed-mac-app` skill drives the UI work. Prereqs: an Apple Developer account for notarisation, plus sandbox + security-scoped bookmarks.
+**What changed, and why the old plan here was wrong.** This section used to
+describe four Swift packages (FormatKit, TranscodeKit, PlayerKit, App) gated on
+the roadmap being complete and hardware-tested. David brought the work forward
+on 2026-09-24 because K-Frame access kept being cancelled, and the architecture
+changed with it:
+
+- **`machuna.py` is FROZEN at v1.11.0 and does all the conversion.** The Swift
+  app is a new interface that drives it. Not a line of the Python changes.
+- **There is no FormatKit.** The format code is not ported. Keeping one copy
+  means every K-Frame desk finding is fixed once rather than twice, and the
+  Python has to keep living anyway as the base for the PC fork.
+- **The player comes across as a re-skin**, not a rewrite. Python decodes, Swift
+  draws.
+- **The full Swift rewrite of the pipeline is still planned**, but as a LATER
+  phase, gated on finishing the K-Frame testing and getting this repo into a
+  state that can be handed over for the PC fork.
+
+**What is still true from the old plan:** ffmpeg stays, shelled out to as a
+bundled binary; the `mac-arsed-mac-app` skill drives the UI work; the app will
+need sandbox and security-scoped bookmarks.
+
+**`design/` is superseded.** Its mockup and menu model are reference for how the
+thinking started, not a spec. The current mockups are a canvas linked from
+`DESIGN_DECISIONS.md`.
 
 ---
 

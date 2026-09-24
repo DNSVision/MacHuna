@@ -1,7 +1,13 @@
 # MacHuna — menu model (native Swift port)
 
-Reference only. See [README.md](README.md): this describes the eventual
-mac-arsed Swift app, not the shipping Python app.
+Reference only. See [README.md](README.md): this describes the Swift app, not
+the shipping Python app.
+
+**Partly superseded 2026-09-24.** The Swift work has begun in
+`DNSVision/MacHuna-Swift`; `DESIGN_DECISIONS.md` there is the authority. The
+command model below still holds in shape, with two corrections marked inline,
+and it does not yet include the commands decided since: filter the list, reorder
+rows, and drag a converted file out.
 
 The mac-arsed skill's first rule is "build the command model before polishing
 screens." This is that command model: the full menu bar for a native MacHuna,
@@ -40,7 +46,7 @@ Legend: `✓` = checkbox toggle · `(radio)` = mutually exclusive group · `▸`
 - —
 - Output Format ▸ (radio): Kahuna SWS · K-Frame EIF · K-Frame TGA · Sony TGA · QuickTime MOV · TGA Sequence
 - Video Standard ▸ (radio): 1080i/50 · 1080i/59.94 · 1080i/60 · 1080p/25 · 1080p/50 · 1080p/59.94 · 1080p/60
-- Field Order ▸ (radio): TFF · BFF
+- Field Order ▸ (radio): TFF · BFF — **only for the outputs that have one (corrected 2026-09-24).** Kahuna SWS has no field order control at all: its weave is hardware-confirmed TFF and `_p_to_i_field_map` defaults to it, so offering a toggle would invite breaking a verified path. See `MacHuna-Swift/DESIGN_DECISIONS.md` 2.7 for the full per-output matrix.
 - —
 - Include Audio ✓
 - Ignore Key ✓
@@ -55,7 +61,7 @@ Legend: `✓` = checkbox toggle · `(radio)` = mutually exclusive group · `▸`
 - Go to Start / Go to End
 - Loop ✓
 - —
-- Show Fill / Show Key / Show Composite (radio)
+- Show Fill / Show Key / Show Composite (✓ toggles, **corrected 2026-09-24**: this was a radio, on the assumption of one view at a time. David kept the 2x2 quad, so all four are visible together and these hide or show a quadrant instead.)
 - Show Audio Meters ✓
 
 ## View

@@ -1,5 +1,16 @@
 # MacHuna — Claude Code Instructions
 
+> **PARKED at v1.11.0 (tag `v1.11.0`) as of 2026-09-24.** Active development has
+> moved to **`DNSVision/MacHuna-Swift`**, a native SwiftUI interface that drives
+> this engine. **`machuna.py` is frozen: not a line of it changes**, by David's
+> standing instruction, so that every K-Frame desk finding is fixed in one place.
+> Documentation here may still be updated. Read
+> `MacHuna-Swift/DESIGN_DECISIONS.md` before doing any Swift work, and see
+> "Swift Rewrite" in `HANDOVER_NOTES.md`.
+>
+> This repo stays alive: it is the reference implementation and the base for the
+> Windows fork, and it is where the desk-session fixes will land.
+
 MacHuna is a single-file Python app (`machuna.py`) that translates broadcast media assets between formats: video, TGA sequences, and stills to/from Grass Valley Kahuna `.SWS`, K-Frame EIF, K-Frame TGA, Sony TGA, and QuickTime MOV. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
 
 ## Dev environment

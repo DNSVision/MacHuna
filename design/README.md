@@ -11,9 +11,19 @@ app**:
 They exist purely to capture design intent so it isn't lost. Treat them as a
 sketch, not a spec.
 
-When the Swift port actually begins (Phase 1, FormatKit), it should live in its
-own repository (e.g. `DNSVision/MacHuna-Swift`), not here. This folder is a
-temporary home until that point.
+**SUPERSEDED 2026-09-24.** The Swift work has begun and lives in
+`DNSVision/MacHuna-Swift`. Its decision record, `DESIGN_DECISIONS.md`, is the
+authority, and the current mockups are a canvas linked from it.
+
+Two things here are now actively wrong and are kept only as a record of how the
+thinking started:
+
+- There is **no FormatKit and no Phase 1**. The format code is not ported to
+  Swift at all; `machuna.py` is frozen and does the conversion.
+- `native-gui-mockup.png` predates the decision to make the source list a
+  **table** with per-item output naming, status and a live output cell.
+
+`menu-model.md` is closer to current, but see the correction noted in it.
 
 ## Contents
 
