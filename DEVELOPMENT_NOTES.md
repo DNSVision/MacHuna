@@ -361,6 +361,31 @@ A thorough code review (May 2026) identified the following items that are coded 
 
 ---
 
+## MOV audio into SWS is bit-identical - verified 2026-09-25
+
+`KNOCKOUT_WIPE.mov` (1080p50, 85 frames, stereo) converted to `1.SWS` with
+"include audio" on, then both read back and compared sample for sample:
+
+| | source MOV | written SWS |
+|---|---|---|
+| frames | 85 @ 50fps | 85 @ 50fps |
+| audio length | 1.700s | 1.700s |
+| peak | -10.0 dBFS | -10.0 dBFS |
+| RMS | -25.2 dBFS | -25.2 dBFS |
+
+81,600 samples compared, **zero** length difference, largest sample
+difference -180 dBFS. The audio is carried through the conversion
+unaltered - no resample, no gain change, no truncation.
+
+This also confirms the 16-channel layout the player reads back: programme
+audio on channels 0 and 2, as `_player_compute_rms` has always assumed.
+
+Found while testing: the engine has TWO SWS header classes and they are not
+interchangeable. `SWSHeader` (machuna.py:1743) is the player's and carries
+`total_size` and `parts`; `HulaSWSHeader` (machuna.py:3073) is for conversion
+and carries neither. Anything reading audio, or reading a SPLIT clip, needs
+the first.
+
 ## EIF scan type is NOT recorded, and the one sample measures progressive - 2026-09-25
 
 `EIFHeader` decodes a frame duration at `0x0FC` and nothing else about the
