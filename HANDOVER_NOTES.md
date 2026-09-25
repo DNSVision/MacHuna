@@ -6,7 +6,11 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `e37c144` - 2026-09-25. Docs only since the v1.11.0 parking: the code is unchanged. The one substantive addition is a measurement finding, **EIF files record no scan type and the `50i` samples are progressive 25fps** (see that section in `DEVELOPMENT_NOTES.md`, plus `tools_eif_comb_test.py`), raised because EIF to TGA converts 1:1 with no deinterlacing.
+**Understanding baseline:** commit `b5bb372` - 2026-09-25. Docs only since the v1.11.0 parking: the code is untouched. Two measurement findings were added, both in `DEVELOPMENT_NOTES.md`: **EIF files record no scan type** and the `50i` samples measure progressive 25fps, and **MOV audio into SWS is bit-identical** (81,600 samples, zero length difference, -180 dBFS largest difference), which also confirms programme audio sits on channels 0 and 2.
+
+**The Mac app is now `DNSVision/MacHuna-Swift` v2.0.0**, self-contained and ready to publish, pending Apple Developer approval. When it ships it takes over this repo's update channel and bundle identifier (decision 39 there). `machuna.py` stays frozen at 1.11.0 as the reference implementation and the base for the Windows fork.
+
+**Previous baseline:** commit `e37c144` - 2026-09-25. Docs only since the v1.11.0 parking: the code is unchanged. The one substantive addition is a measurement finding, **EIF files record no scan type and the `50i` samples are progressive 25fps** (see that section in `DEVELOPMENT_NOTES.md`, plus `tools_eif_comb_test.py`), raised because EIF to TGA converts 1:1 with no deinterlacing.
 
 **Previous baseline:** commit `2d71a1c` - 2026-09-18. **v1.11.0 is built, released and PUBLISHED**, and this repo is now **PARKED** at tag `v1.11.0` - see "Swift Rewrite" below. dnsvision.tv/machuna serves v1.11.0 and the manifest announces it.
 
