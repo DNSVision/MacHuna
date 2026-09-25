@@ -6,9 +6,17 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `b5bb372` - 2026-09-25. Docs only since the v1.11.0 parking: the code is untouched. Two measurement findings were added, both in `DEVELOPMENT_NOTES.md`: **EIF files record no scan type** and the `50i` samples measure progressive 25fps, and **MOV audio into SWS is bit-identical** (81,600 samples, zero length difference, -180 dBFS largest difference), which also confirms programme audio sits on channels 0 and 2.
+**Understanding baseline:** commit `b2f8dd8` - 2026-09-25. Docs only since the v1.11.0 parking: **the code is untouched and stays that way.**
 
-**The Mac app is now `DNSVision/MacHuna-Swift` v2.0.0**, self-contained and ready to publish, pending Apple Developer approval. When it ships it takes over this repo's update channel and bundle identifier (decision 39 there). `machuna.py` stays frozen at 1.11.0 as the reference implementation and the base for the Windows fork.
+**MACHUNA 2.0.0 SHIPPED ON 2026-09-25, AND IT IS THE SWIFT APP.** `DNSVision/MacHuna-Swift` is now what dnsvision.tv/machuna serves: notarised by Apple, Developer ID signed, stapled, and verified from the live URL with the download quarantine flag set (`accepted, source=Notarized Developer ID`). It took over this repo's update channel and its bundle identifier, so a v1.11.0 copy checking for updates is offered it. **The 1.11.0 zip has been deleted from the R2 bucket** at David's instruction; a verified copy is kept locally at `dist/released/MacHuna-1.11.0.zip` (gitignored) in case it is ever wanted again.
+
+**What that means for this repo.** It is no longer what people download. It remains the **reference implementation**, the **base for the Windows fork**, and **where the K-Frame desk findings will land**. `machuna.py` stays frozen at 1.11.0, and the Swift app drives it unchanged - so a desk fix made here reaches users through the Swift release, not through a Python build. Nothing in `publish.sh` or `website/` here should be run again; that job moved to the Swift repo's copies.
+
+**Still open, and unchanged by any of this:** the K-Frame desk session. The `.eif` `0x60` bit 2 audio flag, the KNOCKOUT_WIPE round trip, and the rest of the checklist in `DEVELOPMENT_NOTES.md`. Shipping a new interface proved nothing about the hardware questions.
+
+**Previous baseline:** commit `b5bb372` - 2026-09-25. Docs only since the v1.11.0 parking: the code is untouched. Two measurement findings were added, both in `DEVELOPMENT_NOTES.md`: **EIF files record no scan type** and the `50i` samples measure progressive 25fps, and **MOV audio into SWS is bit-identical** (81,600 samples, zero length difference, -180 dBFS largest difference), which also confirms programme audio sits on channels 0 and 2.
+
+*(At that point)* **the Mac app `DNSVision/MacHuna-Swift` v2.0.0** was self-contained and ready to publish, pending Apple Developer approval - it has since shipped, as above. `machuna.py` stays frozen at 1.11.0 as the reference implementation and the base for the Windows fork.
 
 **Previous baseline:** commit `e37c144` - 2026-09-25. Docs only since the v1.11.0 parking: the code is unchanged. The one substantive addition is a measurement finding, **EIF files record no scan type and the `50i` samples are progressive 25fps** (see that section in `DEVELOPMENT_NOTES.md`, plus `tools_eif_comb_test.py`), raised because EIF to TGA converts 1:1 with no deinterlacing.
 
