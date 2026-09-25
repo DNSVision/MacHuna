@@ -361,6 +361,36 @@ A thorough code review (May 2026) identified the following items that are coded 
 
 ---
 
+## EIF scan type is NOT recorded, and the one sample measures progressive - 2026-09-25
+
+`EIFHeader` decodes a frame duration at `0x0FC` and nothing else about the
+picture. **There is no scan-type field.** A 25fps EIF is therefore ambiguous
+from the header alone: it could be 1080p25, or it could be 1080i50 stored as
+25 woven frames of 1080 lines.
+
+This matters because `_hula_convert_eif_to_tga` writes EIF frames to TGA
+**1:1 with no deinterlacing**. If the frames were woven, every output TGA
+would carry comb teeth and nothing in MacHuna would say so.
+
+**Measured, 2026-09-25.** `~/Desktop/TEST WIPES/50i/EIF/0003.eif` (DOWNHILL)
+and `0005.eif` (CROSSCOUNTRY), both 27 frames @ 25fps. For every frame of
+both files, neighbouring lines differ about **half** as much as lines two
+apart (ratio 0.50 to 0.67). Woven fields would invert that, because
+neighbouring lines would come from different moments; the ratio would exceed
+1. There is ample motion to test against (15 to 67 mean luma change between
+frames), so the result is not an artefact of a static picture.
+
+**Conclusion: these files hold progressive frames at 25fps**, despite living
+in a folder named `50i`, and the existing 1:1 conversion is correct for them.
+
+**What is still unknown.** Both samples are synthetic wipes. Whether a K-Frame
+ever writes woven frames - for camera material, or in another standard - is
+not answered by two files, and cannot be answered from the header. Add it to
+the desk session: write a clip the desk considers interlaced and measure it.
+
+`tools_eif_comb_test.py` in this repo performs the measurement. It reads
+`machuna.py` as a library and does not modify it.
+
 ## EIF Format (Grass Valley K-Frame Native)
 
 Added in v1.5.39–v1.6.0. MacHuna can read and write Grass Valley K-Frame `.eif` clips. The format was fully reverse-engineered from real Kayenne-produced files (UCI Downhill World Cup title card, 50fps, file `0003.eif`).
