@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `2d71a1c` - 2026-09-18. **v1.11.0 is built, released and PUBLISHED**, and this repo is now **PARKED** at tag `v1.11.0` - see "Swift Rewrite" below. dnsvision.tv/machuna serves v1.11.0 and the manifest announces it.
+**Understanding baseline:** commit `e37c144` - 2026-09-25. Docs only since the v1.11.0 parking: the code is unchanged. The one substantive addition is a measurement finding, **EIF files record no scan type and the `50i` samples are progressive 25fps** (see that section in `DEVELOPMENT_NOTES.md`, plus `tools_eif_comb_test.py`), raised because EIF to TGA converts 1:1 with no deinterlacing.
+
+**Previous baseline:** commit `2d71a1c` - 2026-09-18. **v1.11.0 is built, released and PUBLISHED**, and this repo is now **PARKED** at tag `v1.11.0` - see "Swift Rewrite" below. dnsvision.tv/machuna serves v1.11.0 and the manifest announces it.
 
 *(This line said v1.10.3 was the published release until 2026-09-24. It was stale from the v1.11.0 publish onwards, so any session resuming from it started with a false picture. Corrected when the Swift work began.)*
 
