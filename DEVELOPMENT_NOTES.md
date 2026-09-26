@@ -94,9 +94,12 @@ git push
 **Open code work (no hardware needed):**
 - ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
 
-**Distribution - DONE 2026-09-07, no longer open work:**
+**Distribution - DONE 2026-09-07, and MOVED to the Swift repo 2026-09-25:**
+- **THE DOWNLOAD IS NO LONGER THIS APP.** `dnsvision.tv/machuna` has served **MacHuna 2.0.0, the Swift app**, since 2026-09-25. It took over this repo's update channel and bundle identifier, so a v1.11.0 copy checking for updates is offered it. **`publish.sh` and `website/` in THIS repo are retired - do not run them.** Publishing now happens from `MacHuna-Swift/publish.sh`, which is a port of this one plus a refusal to publish an app that is not self-contained.
+- The 1.11.0 zip was **deleted from the bucket** on David's instruction 2026-09-25. A verified copy is kept at `dist/released/MacHuna-1.11.0.zip` (gitignored) so it can be put back if anyone ever needs it.
 - Public download page live at `https://dnsvision.tv/machuna` (Cloudflare Pages/Worker `soft-glade-217b`), app served from R2 bucket `machuna` via `downloads.dnsvision.tv` because Pages caps files at 25 MB.
-- Page source tracked in `website/`; `./publish.sh --upload` builds and uploads, enforcing zip-before-site and refusing to run if the version constant, the built `.app`, `version.json` and the page disagree.
+- Page source tracked in `website/` **(in the Swift repo)**; `./publish.sh --upload` builds and uploads, enforcing zip-before-site and refusing to run if the version constant, the built `.app`, `version.json` and the page disagree. **For a site-only change, such as the favicon, build with `./publish.sh` and then `wrangler deploy` alone** - the release script always re-uploads the 35 MB app, which is pointless when only a page changed.
+- The site carries a favicon built from the app icon (`MacHuna-Swift/Scripts/make-favicons.py`), added 2026-09-26.
 - In-app update notifications and Report a Problem / Suggest a Feature shipped in v1.7.0.
 - The `~/Desktop/Machuna Share` iCloud folder is **retired**, stale at v1.6.20. Nothing publishes to it. David may delete it once everyone has the new link.
 
@@ -107,12 +110,25 @@ git push
 - **The real fix, if it is ever wanted, is to build on the oldest macOS to be supported** (an older machine or a cloud runner), because Homebrew and pip both follow the build machine. One change, all three sources drop together.
 - **David's decision: leave the floor alone and correct the claim instead.** No user has reported a failure, nobody knows what recipients run, and a CI pipeline is disproportionate to an unobserved problem. **There is no performance argument either way** - the minimum-OS stamp is a compatibility label, not a speed setting.
 
+**MacHuna 2.0 (Swift) - open items.** The interface shipped 2026-09-25; these
+are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
+- **`--selftest` resolves `testmedia/` against the working directory**, so from
+  anywhere but the repo it reports `0 of 4 opened` and still exits 0. A zero that
+  reads as failure should say the media is missing instead. Found 2026-09-26
+  while verifying the published build.
+- **No Settings window**, and possibly none needed - everything lives in the
+  inspector and the menus. Recorded so the absence is a decision, not an oversight.
+- **`DNSVision/MacHuna-Swift` is private**, by David's decision 2026-09-24. It can
+  be opened whenever there is something worth showing.
+- The **full Swift rewrite of the conversion pipeline** is a later phase - see the
+  last paragraph of this roadmap.
+
 **Known limitations (recorded, not scheduled):**
 - **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one applies the tick to both, so one comes out wrong. David's view (2026-09-09): not a real use case. The v1.8.0 item list makes mixed batches easier to build than the old UI did, which is why it is worth recording. The fix, if ever needed, is a per-row option rather than a batch-wide checkbox.
 
 **Small things left over from the distribution work (low priority):**
-- Take a Video Player screenshot for the download page, using `~/Desktop/MacHuna Demo Asset/MacHuna_Wipe.mov` - a synthetic 50fps ProRes 4444 wipe with a real key and audio, generated for exactly this so no client material is involved. The player section was cut when David simplified the page down to downloads, release notes and contact, so this would mean reinstating a section. Only worth doing if the page ever becomes promotional again.
-- Apple Developer certificate so downloads open without the Gatekeeper warning. **DECIDED 2026-09-24: parked, and enrolled as an INDIVIDUAL on David's existing Apple ID when we do it** - never as DNS Vision Limited, because Apple pushes organizations toward an Apple ID on the company domain and two Apple IDs on one Mac is the problem he wanted to avoid. Apple lists 99 USD/yr (this note said GBP 79; prices vary by region, confirm when paying). Full reasoning in `MacHuna-Swift/DESIGN_DECISIONS.md` section 9.6. Do not re-pitch.
+- Take a Video Player screenshot for the download page, using `~/Desktop/MacHuna Demo Asset/MacHuna_Wipe.mov` - a synthetic 50fps ProRes 4444 wipe with a real key and audio, generated for exactly this so no client material is involved. **Partly overtaken:** the 2.0.0 page carries one screenshot of the conversion window, and the one-page flier carries two, so the page is promotional again - a player shot would now have somewhere to go. Still nobody has asked for it.
+- ~~Apple Developer certificate so downloads open without the Gatekeeper warning.~~ **DONE 2026-09-25.** Enrolled as an individual on David's existing Apple ID, exactly as decided on 2026-09-24 (never as DNS Vision Limited, to avoid two Apple IDs on one Mac). **MacHuna 2.0.0 is Developer ID signed, notarised by Apple and stapled**, verified by downloading it from the live URL, setting the Safari quarantine attribute and getting `accepted, source=Notarized Developer ID`. Team `76DH86HPU3`; `notarytool` credentials are in keychain profile `machuna`. Operational detail in `MacHuna-Swift/DESIGN_DECISIONS.md` section 41.
 - Cloudflare publish token expires **2027-09-07**.
 
 **Future / low priority (no demand yet):**
@@ -134,9 +150,11 @@ manual batch reorder. Both were dropped because Tkinter could not do them well,
 not because they were bad ideas; both are near-free in AppKit and are specified
 in `MacHuna-Swift/DESIGN_DECISIONS.md` (4.5 and 3.3). Do not reopen them *here*.
 
-**The Swift work has started and does NOT wait for the gate.** As of 2026-09-24
-it lives in `DNSVision/MacHuna-Swift` as a new interface driving this frozen
-engine, so it needs nothing from the desk session. See HANDOVER_NOTES "Swift
+**The Swift work has started and does NOT wait for the gate - and it has now
+SHIPPED.** `DNSVision/MacHuna-Swift` v2.0.0 was published on 2026-09-25 as a new
+interface driving this frozen engine, so it needed nothing from the desk session.
+A desk fix made in `machuna.py` now reaches users through a Swift release, not
+through a Python build. See HANDOVER_NOTES "Swift
 Rewrite" and `MacHuna-Swift/DESIGN_DECISIONS.md`. What *does* still wait for the
 gate is the full Swift rewrite of the conversion pipeline, which is a later
 phase.

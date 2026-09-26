@@ -6,6 +6,12 @@ A macOS application for converting video and still image files to the Grass Vall
 
 **Download: [dnsvision.tv/machuna](https://dnsvision.tv/machuna)** — current release, release notes and the user manual.
 
+> **This repository is no longer what people download.** Since 2026-09-25 that link
+> serves **MacHuna 2.0**, a native Mac app in [`DNSVision/MacHuna-Swift`](https://github.com/DNSVision/MacHuna-Swift)
+> which drives this engine unchanged. `machuna.py` is **frozen at v1.11.0** and is
+> now the reference implementation, the base for the Windows fork, and where the
+> K-Frame desk findings will land. Everything below still describes it accurately.
+
 MacHuna is a macOS application for broadcast graphics conversion. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 
 Converted files are placed into a destination folder, ready to be loaded onto a Kahuna mainframe via USB or network transfer.
@@ -56,8 +62,13 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 
 ## Publishing a release
 
-The public download page lives in `website/` and is deployed to `dnsvision.tv/machuna`
-(Cloudflare Pages + R2). After a release has been built and pushed:
+**RETIRED - do not run this.** Publishing moved to `MacHuna-Swift/publish.sh` on
+2026-09-25, when the Swift app took over the download and the update channel.
+Running the steps below would replace MacHuna 2.0 on the live site with v1.11.0.
+Kept only as a record of how it worked.
+
+The public download page lived in `website/` and was deployed to `dnsvision.tv/machuna`
+(Cloudflare Pages + R2). After a release had been built and pushed:
 
 ```bash
 ./publish.sh --upload      # builds publish/, uploads the zip then the site, verifies
@@ -194,7 +205,7 @@ The authoritative roadmap lives in [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md
 
 - **EIF** write and conversion paths are coded and verified by analysis, but not yet confirmed on a live Grass Valley K-Frame desk (the top priority).
 - **Extraction outputs** (K-Frame TGA, Sony MVS TGA) need confirming on real K-Frame and Sony MVS hardware.
-- A few small code items (cross-rate interlaced-to-progressive resample, Sony TGA field-order toggle) and future options (HLG Rec.2020, EIF to MOV) remain.
+- **There are no open code items** in this repository - everything remaining is gated on the desk. Future options (HLG Rec.2020, additional output standards, 720p reinstatement) need reference files or hardware before they can be started.
 
 See `DEVELOPMENT_NOTES.md` for the full status list.
 
