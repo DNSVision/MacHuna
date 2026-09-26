@@ -6,7 +6,15 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `b2f8dd8` - 2026-09-25. Docs only since the v1.11.0 parking: **the code is untouched and stays that way.**
+**Understanding baseline:** commit `d3c9c9e` - 2026-09-26. Docs and `publish.sh` only; **`machuna.py` is untouched and stays that way** (0 commits against it since the `v1.11.0` tag).
+
+**`publish.sh` IN THIS REPO NOW REFUSES TO RUN.** Documentation alone was not enough: on 2026-09-26 a dry run printed "Ready to publish v1.11.0" with every one of its guards satisfied, because all of them compare this repo against *itself* and nothing here knows what is live. Publishing it would have put v1.11.0 over MacHuna 2.0 and offered every user a downgrade. **The procedure now lives in `MacHuna-Swift/PUBLISHING.md` and nowhere else.** Its header documents the deliberate manual route for restoring the old 1.11.0 zip to the bucket without announcing it as an update.
+
+**The roadmap was reconciled** against 2.0 having shipped: distribution moved to the Swift repo, the Apple Developer item is done rather than parked, and the Swift app's own open items are in the one canonical list. Two instructions in `CLAUDE.md` were actively dangerous and are corrected - step 8 said to copy a Python build over `/Applications/MacHuna.app`, which is now the notarised 2.0 app.
+
+**Still open, and untouched by any of this:** the K-Frame desk session. The `.eif` `0x60` bit 2 audio flag, the KNOCKOUT_WIPE round trip, and the rest of the checklist in `DEVELOPMENT_NOTES.md`.
+
+**Previous baseline:** commit `b2f8dd8` - 2026-09-25. Docs only since the v1.11.0 parking: **the code is untouched and stays that way.**
 
 **MACHUNA 2.0.0 SHIPPED ON 2026-09-25, AND IT IS THE SWIFT APP.** `DNSVision/MacHuna-Swift` is now what dnsvision.tv/machuna serves: notarised by Apple, Developer ID signed, stapled, and verified from the live URL with the download quarantine flag set (`accepted, source=Notarized Developer ID`). It took over this repo's update channel and its bundle identifier, so a v1.11.0 copy checking for updates is offered it. **The 1.11.0 zip has been deleted from the R2 bucket** at David's instruction; a verified copy is kept locally at `dist/released/MacHuna-1.11.0.zip` (gitignored) in case it is ever wanted again.
 
