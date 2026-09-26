@@ -64,15 +64,20 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 
 **RETIRED - do not run this.** Publishing moved to `MacHuna-Swift/publish.sh` on
 2026-09-25, when the Swift app took over the download and the update channel.
-Running the steps below would replace MacHuna 2.0 on the live site with v1.11.0.
-Kept only as a record of how it worked.
+Running the steps below would replace MacHuna 2.0 on the live site with v1.11.0
+and offer every user a downgrade, so **`publish.sh` in this repo now refuses to
+run.** The procedure lives in **`MacHuna-Swift/PUBLISHING.md`** and nowhere else.
+Kept below only as a record of how it worked.
 
 The public download page lived in `website/` and was deployed to `dnsvision.tv/machuna`
 (Cloudflare Pages + R2). After a release had been built and pushed:
 
 ```bash
-./publish.sh --upload      # builds publish/, uploads the zip then the site, verifies
-./publish.sh               # builds publish/ only, for a manual upload
+# RETIRED - both of these now refuse to run. Do not copy them.
+# To publish:  cd ../MacHuna-Swift && ./publish.sh --upload
+# Procedure:   MacHuna-Swift/PUBLISHING.md
+./publish.sh --upload      # (historic) built publish/, uploaded the zip then the site
+./publish.sh               # (historic) built publish/ only, for a manual upload
 ```
 
 Update `website/machuna/version.json` and `website/machuna/index.html` for the new

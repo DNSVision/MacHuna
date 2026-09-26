@@ -59,12 +59,15 @@ Then build with PyInstaller and push to GitHub unless David says otherwise.
 
 8. **Refresh David's own copy** — ~~`rm -rf /Applications/MacHuna.app && cp -R dist/MacHuna.app /Applications/MacHuna.app`~~. **NO LONGER DO THIS.** Since 2026-09-25 `/Applications/MacHuna.app` is **MacHuna 2.0, the Swift app**, and his Dock launches that. Copying a Python build over it would downgrade him to v1.11.0 and replace a notarised app with an ad-hoc signed one. Build to `dist/` and leave `/Applications` alone.
 
-9. **Publish to dnsvision.tv** — **DO NOT. RETIRED 2026-09-25.** Publishing moved to `MacHuna-Swift/publish.sh` when the Swift app took over the download and the update channel. **Running `./publish.sh --upload` in THIS repo would put v1.11.0 back over MacHuna 2.0 on the live site and offer every user a downgrade.** If David asks to publish, it is the Swift repo he means. The rest of this section is kept as a record of how it worked, and because the Swift script is a port of it.
+9. **Publish to dnsvision.tv** — **DO NOT. RETIRED 2026-09-25.** Publishing moved to `MacHuna-Swift/publish.sh` when the Swift app took over the download and the update channel. **The procedure now lives in one place only: `MacHuna-Swift/PUBLISHING.md`.** **Running `./publish.sh --upload` in THIS repo would put v1.11.0 back over MacHuna 2.0 on the live site and offer every user a downgrade — verified by dry run on 2026-09-26, with every one of its own guards satisfied. The script now refuses to run at all.** If David asks to publish, it is the Swift repo he means. The rest of this section is kept as a record of how it worked, and because the Swift script is a port of it.
 
    *(Historic, from when this repo was the download: only when David explicitly asks, deliberately decoupled from step 8, because he wants to run a build himself before the public gets it.)*
 
    ```
-   ./publish.sh --upload
+   # RETIRED - this script now refuses to run. Do not copy this line.
+   # To publish:  cd ../MacHuna-Swift && ./publish.sh --upload
+   # Procedure:   MacHuna-Swift/PUBLISHING.md
+   ./publish.sh --upload      # (historic, from this repo)
    ```
 
    That builds `publish/` and uploads it: the versioned zip to the Cloudflare R2 bucket `machuna`, then the site to the Worker `soft-glade-217b`, then verifies the live URLs. **The zip always goes first** — the page and `version.json` both announce a version, so if they led, MacHuna would tell people about a release the download link could not serve. The script enforces the order and refuses to run if `machuna.py`, the built `.app`, `website/machuna/version.json` and the page disagree about the version.

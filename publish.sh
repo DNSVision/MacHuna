@@ -1,4 +1,39 @@
 #!/bin/bash
+#
+# ############################################################################
+# ##  RETIRED 2026-09-25. THIS SCRIPT PUBLISHES A DOWNGRADE. DO NOT RUN IT. ##
+# ############################################################################
+#
+# dnsvision.tv/machuna serves MacHuna 2.0, the Swift app, from
+# DNSVision/MacHuna-Swift. Publishing from here would upload MacHuna-1.11.0.zip
+# and deploy a page announcing 1.11.0, and every 2.0 user checking for updates
+# would be offered a downgrade.
+#
+# This was verified, not assumed: on 2026-09-26 a dry run of this script said
+# "Ready to publish v1.11.0" with every one of its own guards satisfied. They
+# all compare this repo against ITSELF - machuna.py, version.json, the page and
+# the built app all agree on 1.11.0 - and nothing here knows what is live. That
+# is precisely why a comment was not considered enough and the refusal below
+# exists.
+#
+# TO PUBLISH: use MacHuna-Swift/publish.sh, which carries the same checks plus
+# one this never had - it asks the live site its version and refuses to go
+# backwards.
+#
+# IF v1.11.0 EVER GENUINELY NEEDS TO GO BACK UP, do it deliberately by hand;
+# a verified copy is kept at dist/released/MacHuna-1.11.0.zip:
+#   export CLOUDFLARE_API_TOKEN=$(cat ~/.machuna_publish_token)
+#   export CLOUDFLARE_ACCOUNT_ID=6929e90daf2e30ca1a943c9c2801b38b
+#   npx wrangler@latest r2 object put machuna/MacHuna-1.11.0.zip \
+#       --file dist/released/MacHuna-1.11.0.zip --content-type application/zip \
+#       --content-disposition 'attachment; filename="MacHuna-1.11.0.zip"' --remote
+# That restores the download WITHOUT touching the page or version.json, so
+# nobody is offered it as an update - which is almost certainly what you want.
+#
+# Everything below is kept as a record of how releases worked from this repo,
+# and because the Swift script is a port of it.
+#
+# ---------------------------------------------------------------------------
 # Build, and optionally upload, a MacHuna release.
 #
 #   ./publish.sh            build publish/ only, upload by hand
@@ -17,6 +52,26 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# ── RETIRED: refuse, loudly, before doing anything at all ────────────────────
+cat >&2 <<'RETIRED'
+
+  ========================================================================
+   publish.sh in the MacHuna (Python) repo is RETIRED as of 2026-09-25.
+  ========================================================================
+
+   dnsvision.tv/machuna serves MacHuna 2.0, the Swift app.
+   This script would publish v1.11.0 over it and offer every user a
+   downgrade. Its own guards do not catch that: they only check that
+   this repo agrees with itself, and it does.
+
+   To publish:   cd ../MacHuna-Swift && ./publish.sh --upload
+
+   To restore the old 1.11.0 download WITHOUT announcing it as an
+   update, see the header of this file for the exact wrangler command.
+
+RETIRED
+exit 1
 
 UPLOAD=0
 [ "${1:-}" = "--upload" ] && UPLOAD=1
