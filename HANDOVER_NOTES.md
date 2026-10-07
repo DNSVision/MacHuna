@@ -6,7 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `d3c9c9e` - 2026-09-26. Docs and `publish.sh` only; **`machuna.py` is untouched and stays that way** (0 commits against it since the `v1.11.0` tag).
+**Understanding baseline:** commit `e7e7ce3` plus the K-Frame desk-session commit that follows it - 2026-10-07. Docs only; **`machuna.py` is still untouched** (0 commits against it since the `v1.11.0` tag).
+
+**THE K-FRAME DESK SESSION HAPPENED ON 2026-10-07.** Full results in `DEVELOPMENT_NOTES.md`, from "KNOCKOUT_WIPE round-trip RESULTS" onwards; files in `MacHuna-Swift/testmedia/desk/2026-10-07-kframe/`. Confirmed on the desk: EIF at 50fps; EIF at 25fps/50i once the `0x064` rate-code bug is fixed; K-Frame TGA via the MOV route; a MacHuna-written `.eaf`. Engine fixes now due (Python first, then move the Swift `engine/` pin): the 25fps rate code, `read_eaf_stereo` (the `.eaf` is 4ch 24-bit-in-32-bit LE, not 8ch 16-bit BE), `.eaf` writing, the MOV-to-TGA 1080i50 pair-weave, and lifting the UNCONFIRMED warnings for what was proven. **One result outstanding:** the EIF- and SWS-route K-Frame TGA test (bottom-up TGAs: right way up or not?).
 
 **`publish.sh` IN THIS REPO NOW REFUSES TO RUN.** Documentation alone was not enough: on 2026-09-26 a dry run printed "Ready to publish v1.11.0" with every one of its guards satisfied, because all of them compare this repo against *itself* and nothing here knows what is live. Publishing it would have put v1.11.0 over MacHuna 2.0 and offered every user a downgrade. **The procedure now lives in `MacHuna-Swift/PUBLISHING.md` and nowhere else.** Its header documents the deliberate manual route for restoring the old 1.11.0 zip to the bucket without announcing it as an update.
 
