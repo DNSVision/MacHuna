@@ -473,7 +473,7 @@ def get_video_info(input_path: str) -> dict:
 def convert_to_v210(input_path: str, output_path: str,
                     extract_alpha: bool = False,
                     width: int = 0, height: int = 0,
-                    vf_extra: str = ''):
+                    vf_extra: str = '', interlaced: bool = False):
     """Convert input to raw v210 using ffmpeg, then byte-swap to big-endian.
 
     ffmpeg outputs v210 as little-endian 32-bit words.
@@ -486,8 +486,11 @@ def convert_to_v210(input_path: str, output_path: str,
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     cmd_fill = [ffmpeg, '-y', '-i', input_path]
     vf_parts = []
+    # interlaced: scale each field on its own, or resizing blends the two
+    # moments in time together (2026-10-08).
+    scale = f'scale={width}:{height}' + (':interl=1' if interlaced else '')
     if width and height:
-        vf_parts.append(f'scale={width}:{height}')
+        vf_parts.append(scale)
     if vf_extra:
         vf_parts.append(vf_extra)
     if vf_parts:
@@ -506,7 +509,7 @@ def convert_to_v210(input_path: str, output_path: str,
         # not already the output size gave a source-sized key under a scaled
         # fill, and EIF output crashed reading past its end (found 2026-10-08).
         if width and height:
-            vf_key += f',scale={width}:{height}'
+            vf_key += f',{scale}'
         if vf_extra:
             vf_key += f',{vf_extra}'
         cmd_key = [ffmpeg, '-y', '-i', input_path,
@@ -517,7 +520,7 @@ def convert_to_v210(input_path: str, output_path: str,
             # Simpler fallback
             vf_key_fallback = 'alphaextract'
             if width and height:
-                vf_key_fallback += f',scale={width}:{height}'
+                vf_key_fallback += f',{scale}'
             if vf_extra:
                 vf_key_fallback += f',{vf_extra}'
             cmd_key = [ffmpeg, '-y', '-i', input_path,
@@ -784,7 +787,12 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
 
         has_alpha = info['has_alpha'] and not ignore_alpha
         log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha)
+        rescale = (w, h) != (1920, 1080)            # decision G
+        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha,
+                                  width=1920 if rescale else 0, height=1080 if rescale else 0)
+        if rescale:
+            log(f"  Scaling {w}×{h} → 1920×1080")
+            w, h = 1920, 1080
         if ignore_alpha:
             # No key plane written at all -- matches K-Watch behaviour
             actual_key = None
@@ -876,6 +884,13 @@ def _dual_mono_stereo24(input_path: str):
     return out
 
 
+def _v210_plane_size(width: int, height: int) -> int:
+    """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
+    multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when
+    the width was a multiple of 48 (second review, 2026-10-08)."""
+    return ((width + 47) // 48) * 128 * height
+
+
 def _fps_expr(fps: float) -> str:
     """A frame rate as ffmpeg should be given it: the exact NTSC fractions for
     29.97/59.94 (rounded decimals drift by about a frame every quarter hour)."""
@@ -961,7 +976,15 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         actual_key = None
         audio_raw  = None
 
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace)
+        # Decision G (David, 2026-10-08): every SWS is 1920x1080, as every
+        # standard MacHuna offers is. Full-HD sources are not touched.
+        rescale = (w, h) != (1920, 1080)
+        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
+                                  width=1920 if rescale else 0, height=1080 if rescale else 0,
+                                  interlaced=rescale and info['is_interlaced'])
+        if rescale:
+            log(f"  Scaling {w}×{h} → 1920×1080")
+            w, h = 1920, 1080
         if ignore_alpha:
             # No key plane written at all -- matches K-Watch behaviour
             actual_key = None
@@ -980,7 +1003,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # v210 plane_size is exact from dimensions: ceil(width/6)*16*height
         # Derive actual frame count from file size -- more reliable than ffprobe estimate,
         # especially after tinterlace which may output a different count than frame_count//2.
-        plane_size         = ((w + 5) // 6) * 16 * h
+        plane_size         = _v210_plane_size(w, h)
         output_frame_count = os.path.getsize(fill_raw) // plane_size
 
         # Extract audio if requested and present
@@ -1101,10 +1124,17 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         fill_raw = os.path.join(tmp, 'fill.v210')
         ffmpeg = _get_ffmpeg_path('ffmpeg')
+        # Decision G (David, 2026-10-08): every SWS is 1920x1080. Scaled ahead of
+        # any interlace filter, one field at a time for interlaced frames.
+        scale_vf = ''
+        if (w, h) != (1920, 1080):
+            scale_vf = 'scale=1920:1080' + (':interl=1' if source_interlaced else '')
+            log(f"  Scaling {w}×{h} → 1920×1080")
+        fill_vf = ','.join(f for f in (scale_vf, vf_tinterlace) if f)
         cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
-        if vf_tinterlace:
-            cmd += ['-vf', vf_tinterlace]
-        elif not do_i_to_p:
+        if fill_vf:
+            cmd += ['-vf', fill_vf]
+        if not vf_tinterlace and not do_i_to_p:
             cmd += ['-frames:v', str(frame_count)]
         cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
         _run_ffmpeg(cmd, check=True)
@@ -1118,6 +1148,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             key_raw = os.path.join(tmp, 'key.v210')
             vf_key1 = 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv'
             vf_key2 = 'alphaextract'
+            if scale_vf:
+                vf_key1 += f',{scale_vf}'
+                vf_key2 += f',{scale_vf}'
             if vf_tinterlace:
                 vf_key1 += f',{vf_tinterlace}'
                 vf_key2 += f',{vf_tinterlace}'
@@ -1146,7 +1179,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         _byteswap_v210(fill_raw)
 
         # Derive actual output frame count from file size — reliable after tinterlace.
-        plane_size         = ((w + 5) // 6) * 16 * h
+        if scale_vf:
+            w, h = 1920, 1080
+        plane_size         = _v210_plane_size(w, h)
         output_frame_count = os.path.getsize(fill_raw) // plane_size
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
         src_name  = os.path.basename(tga_files[0])
@@ -1527,7 +1562,9 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         key_path  = convert_to_v210(input_path, fill_v210,
                                     width=1920, height=1080,
                                     extract_alpha=info['has_alpha'],
-                                    vf_extra=f'fps={fps:g}')
+                                    vf_extra=f'fps={fps:g}',
+                                    interlaced=info['is_interlaced'] and
+                                    (info['width'], info['height']) != (1920, 1080))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if frame_count == 0:
             raise ValueError("No complete frames extracted from source.")

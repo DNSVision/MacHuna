@@ -2697,6 +2697,92 @@ class TestProbeFrameRate(unittest.TestCase):
                 self.assertAlmostEqual(info['fps'], want, places=4)
 
 
+class TestSwsIsAlways1080(unittest.TestCase):
+    """Decision G (David, 2026-10-08): every SWS output is 1920x1080, as every
+    standard MacHuna offers is. Before, a clip kept its own size, and a width
+    that was not a multiple of 48 (1280-wide 720p) gave a broken SWS: the line
+    size was miscalculated, so frame count and audio position were wrong."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _check(self, sws, frames, key, audio):
+        h = m.HulaSWSHeader(sws)
+        size = os.path.getsize(sws)
+        self.assertEqual((h.width, h.height), (1920, 1080))
+        self.assertEqual(h.plane_size, 5529600)
+        self.assertEqual(h.frame_count, frames)
+        self.assertEqual(h.has_key, key)
+        self.assertEqual(h.has_audio, audio)
+        declared = struct.unpack_from('>I', Path(sws).read_bytes()[:0x200], 0x1CC)[0]
+        self.assertEqual(declared, size, 'header total size must match the file')
+        planes = h.frame_count * h.plane_size * (2 if key else 1)
+        if audio:
+            self.assertEqual(h.audio_offset, 512 + planes)
+            self.assertEqual(size - h.audio_offset, frames * int(round(48000 / h.fps)) * 32)
+        else:
+            self.assertEqual(size, 512 + planes)
+
+    def test_a_720p_clip_with_key_and_audio(self):
+        import subprocess
+        src = os.path.join(self.tmp, 'c720.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-t', '0.24', '-f', 'lavfi', '-i',
+                        'testsrc2=size=1280x720:rate=25', '-f', 'lavfi', '-t', '0.24', '-i',
+                        'sine=f=500:sample_rate=48000', '-vf',
+                        "format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,640),4095,0)'",
+                        '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+                        '-c:a', 'pcm_s16le', src], check=True)
+        d = os.path.join(self.tmp, 'o1'); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        self._check(os.path.join(d, '1.SWS'), 6, True, True)
+
+    def test_a_720p_tga_sequence(self):
+        from PIL import Image
+        tg = []
+        for i in range(3):
+            p = os.path.join(self.tmp, f'S_{i:04d}.tga')
+            Image.new('RGBA', (1280, 720), (10 * i, 50, 90, 128)).save(p); tg.append(p)
+        d = os.path.join(self.tmp, 'o2'); os.makedirs(d)
+        out = m.convert_tga_sequence(tg, 2, d, '1080p25', False, False, lambda *a: None,
+                                     write_log=False)
+        self._check(out, 3, True, False)
+
+    def test_a_small_still(self):
+        from PIL import Image
+        p = os.path.join(self.tmp, 'still.png')
+        Image.new('RGB', (640, 480), (200, 30, 30)).save(p)
+        d = os.path.join(self.tmp, 'o3'); os.makedirs(d)
+        m.convert_still(p, 3, d, '1080p25', False, False, lambda *a: None)
+        h = m.HulaSWSHeader(os.path.join(d, '3.SWS'))
+        self.assertEqual((h.width, h.height, h.plane_size), (1920, 1080, 5529600))
+
+    def test_an_interlaced_sd_clip_keeps_its_fields_apart(self):
+        """Scaling an interlaced picture as if it were progressive blends the
+        two fields; they must be scaled one at a time."""
+        import subprocess, numpy as np
+        src = os.path.join(self.tmp, 'sd25i.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-t', '0.12', '-f', 'lavfi', '-i',
+                        'color=c=black:size=720x576:rate=25', '-vf',
+                        "geq=lum='if(mod(Y,2),200,40)':cb=128:cr=128,setfield=tff",
+                        '-flags', '+ilme+ildct', '-c:v', 'prores_ks', src], check=True)
+        d = os.path.join(self.tmp, 'o4'); os.makedirs(d)
+        m.convert_clip(src, 4, d, video_standard='1080i50', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        sws = os.path.join(d, '4.SWS')
+        h = m.HulaSWSHeader(sws)
+        self.assertEqual((h.width, h.height), (1920, 1080))
+        rgb, _ = m._hula_decode_frame(Path(sws).read_bytes()[h.data_offset:h.data_offset + h.plane_size],
+                                      None, h.width, h.height)
+        col = rgb[100:120, 960, 0].astype(int)
+        # Lines alternate between the two fields' levels instead of blending.
+        self.assertGreater(abs(int(col[0]) - int(col[1])), 100, f'fields blended: {col[:6]}')
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
