@@ -1100,7 +1100,10 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
     name_b = clip_name.encode('ascii', errors='replace')[:31]
     buf[0x004:0x004 + len(name_b)] = name_b                 # clip name
     struct.pack_into('<I', buf, 0x060, flags)
-    struct.pack_into('<I', buf, 0x064, 0x000104A4 | (unk064 & 0xFF))
+    # Rate code: 0x10484 at 25fps, 0x104A4 at 50fps in every desk-made file.
+    # Was 0x104A4 | unk064, and 0xA4 | 0x84 == 0xA4, so 25fps clips carried the
+    # 50fps code and played too fast on a K-Frame (desk session 2026-10-07).
+    struct.pack_into('<I', buf, 0x064, 0x00010400 | unk064)
     struct.pack_into('<I', buf, 0x06C, frame_count)
     struct.pack_into('<I', buf, 0x070, _EIF_HDR_SIZE)        # video_start
     struct.pack_into('<I', buf, 0x080, video_end)

@@ -1425,6 +1425,108 @@ class TestEafAgainstRealFiles(unittest.TestCase):
                     self.assertIsNone(m.read_eaf_stereo(m.eaf_path_for(str(eif))))
 
 
+REFERENCE_EIF_DIRS = (REFERENCE_EIF_DIR,
+                      Path(os.path.expanduser('~/Desktop/TEST WIPES/50P/EIF')))
+
+# EIF header 0x064 rate code, as every desk-made reference file has it:
+# 0x10484 in all 18 at 25fps, 0x104A4 in all 10 at 50fps.
+EIF_RATE_CODE = {25: 0x00010484, 50: 0x000104A4}
+
+
+def _eif_rate_and_duration(path):
+    with open(path, 'rb') as f:
+        head = f.read(0x100)
+    return struct.unpack_from('<I', head, 0x064)[0], struct.unpack_from('<I', head, 0x0FC)[0]
+
+
+class TestEifRateCode(unittest.TestCase):
+    """The K-Frame reads 0x064 as the clip's rate. Desk session 2026-10-07: a
+    25fps MacHuna EIF carrying the 50fps code played too fast on a 1080i 25Hz
+    desk, and the same file with only that field corrected played correctly.
+
+    Driven through every EIF writer, because all four call the header builder
+    and a fix that reached only one would be the "one of four paths" failure
+    this suite has seen before. Read back from the file on disk."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.quiet = lambda *a, **k: None
+
+    def _mov(self, fps):
+        import subprocess
+        out = os.path.join(self.tmp, f'src{fps}.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', f'testsrc=size=192x108:rate={fps}',
+                        '-frames:v', '2', '-c:v', 'prores_ks', '-profile:v', '3',
+                        '-pix_fmt', 'yuv422p10le', out], check=True)
+        return out
+
+    def _outputs(self, fps):
+        """One EIF from each of the four writers, all at this rate."""
+        made = {}
+        d = os.path.join(self.tmp, f'out{fps}')
+        os.makedirs(d, exist_ok=True)
+        src = self._mov(fps)
+
+        made['clip'] = m.convert_clip_to_eif(src, d, log=self.quiet, out_name=f'clip{fps}')
+
+        from PIL import Image
+        tgas = []
+        for i in range(2):
+            p = os.path.join(self.tmp, f't{fps}_{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (40 * i, 80, 160, 255)).save(p)
+            tgas.append(p)
+        made['tga'] = m.convert_tga_seq_to_eif(tgas, d, f'TGA{fps}', float(fps),
+                                               log=self.quiet, out_name=f'tga{fps}')
+        if fps == 50:
+            # The interlaced-TGA writer always produces 50fps (it deinterlaces),
+            # so it can only be checked here; covered so it cannot drift unseen.
+            made['tga_interlaced'] = m.convert_tga_seq_to_eif(
+                tgas, d, 'TGAI', 25.0, log=self.quiet, out_name='tgai',
+                source_interlaced=True)
+
+        # convert_sws_to_eif takes its rate from the SWS: 1080i50 is 25fps, 1080p50 is 50.
+        sws_dir = os.path.join(self.tmp, f'sws{fps}')
+        os.makedirs(sws_dir, exist_ok=True)
+        std = '1080i50' if fps == 25 else '1080p50'
+        sws_src = self._mov(50)     # 50p source: woven to 1080i50, or kept for 1080p50
+        m.convert_clip(sws_src, 7, sws_dir, video_standard=std, include_audio=False,
+                       split_fat32=False, log=self.quiet)
+        made['sws'] = m.convert_sws_to_eif(os.path.join(sws_dir, '7.SWS'), d,
+                                           log=self.quiet, out_name=f'sws{fps}')
+        return made
+
+    def test_every_writer_stamps_the_rate_code_for_its_own_rate(self):
+        for fps, dur in ((25, 40000), (50, 20000)):
+            for route, path in self._outputs(fps).items():
+                rate, got_dur = _eif_rate_and_duration(path)
+                with self.subTest(route=route, fps=fps):
+                    self.assertEqual(got_dur, dur, 'frame duration must say the clip rate')
+                    self.assertEqual(hex(rate), hex(EIF_RATE_CODE[fps]),
+                                     f'0x064 must be the {fps}fps rate code')
+
+    @unittest.skipUnless(_reference_files_readable(),
+                         'reference K-Frame files not readable on this machine')
+    def test_builder_matches_every_desk_made_file(self):
+        """The expected codes above come from the desk, not from memory: every
+        reference file's own 0x064 must equal what the builder writes for that
+        file's rate."""
+        checked = 0
+        for folder in REFERENCE_EIF_DIRS:
+            for eif in sorted(folder.glob('*.eif')):
+                rate, dur = _eif_rate_and_duration(eif)
+                fps = 1_000_000 // dur
+                built = struct.unpack_from('<I', m._build_eif_header('X', 1, float(fps)), 0x064)[0]
+                with self.subTest(clip=f'{folder.parent.name}/{eif.name}', fps=fps):
+                    self.assertEqual(rate, EIF_RATE_CODE[fps])
+                    self.assertEqual(hex(built), hex(rate))
+                checked += 1
+        self.assertEqual(checked, 28, 'expected all 28 desk-made reference files')
+
+
 class TestMovNaming(unittest.TestCase):
     """QuickTime MOV names.
 

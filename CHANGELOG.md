@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased — K-Frame desk-session fixes (to become v1.12.0)
+
+Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; the release is cut once they are all in.
+
+### Fixed
+- **25fps (50i) EIF clips no longer play too fast on a K-Frame.** The header's rate code at `0x064` is `0x10484` at 25fps and `0x104A4` at 50fps in every desk-made file. MacHuna built it as `0x104A4 | 0x84`, and since `0xA4` already contains every bit of `0x84`, **every 25fps EIF MacHuna has written carried the 50fps code**. On the desk, a MacHuna file with the wrong code played too fast and the same file with only that field corrected played correctly. 50fps output was never affected.
+  - Proved through all four EIF writers (MOV, TGA sequence, interlaced TGA sequence, SWS) by reading the written file back, and against all 28 desk-made reference files.
+  - A fresh conversion of the desk test clip is now **byte-identical** to the file that played correctly on the K-Frame.
+
+---
+
 ## v1.11.0 — 2026-09-18
 
 ### Changed
