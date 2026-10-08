@@ -794,6 +794,15 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
     return dest_path
 
 
+def _fps_expr(fps: float) -> str:
+    """A frame rate as ffmpeg should be given it: the exact NTSC fractions for
+    29.97/59.94 (rounded decimals drift by about a frame every quarter hour)."""
+    for exact in (24000 / 1001, 30000 / 1001, 60000 / 1001):
+        if abs(fps - exact) < 0.01:
+            return f"{round(exact * 1001)}/1001"
+    return f"{fps:g}"
+
+
 def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  video_standard: str = '1080i50',
                  split_fat32: bool = True,
@@ -838,9 +847,28 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         output_frame_count = int(round(frame_count * target_fps / fps))
         log(f"  Transcoding interlaced→progressive: {frame_count} frames @ {fps:.2f}fps → ~{output_frame_count} frames @ {output_fps:.2f}fps")
     else:
-        vf_tinterlace      = ''
-        output_frame_count = frame_count
-        output_fps         = fps
+        target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        if abs(fps - target_fps) < 0.01:
+            vf_tinterlace      = ''
+            output_frame_count = frame_count
+            output_fps         = fps
+        elif info['is_interlaced']:
+            # Interlaced to another interlaced rate is a field-rate standards
+            # conversion; refused, as progressive to interlaced already is.
+            raise ValueError(
+                f"{os.path.basename(input_path)}: source is interlaced at {fps:.2f}fps and "
+                f"{video_standard} runs at {target_fps:.2f}fps. MacHuna does not convert "
+                f"one interlaced rate to another - convert the source to the target rate first.")
+        else:
+            # Decision A (David, 2026-10-08): convert the rate, dropping or
+            # repeating frames, so the clip keeps its duration and its audio
+            # fits. It used to keep every frame and stamp the standard's rate,
+            # so 25p on a 1080p50 SWS played at double speed.
+            vf_tinterlace      = f'fps={_fps_expr(target_fps)}'
+            output_fps         = target_fps
+            output_frame_count = int(round(frame_count * target_fps / fps))
+            log(f"  Frame rate {fps:.2f} → {target_fps:.2f}fps: {frame_count} frames → "
+                f"~{output_frame_count} frames, duration kept")
 
     has_alpha = info['has_alpha'] and not ignore_alpha
     will_include_audio = include_audio and info['has_audio']
@@ -1116,7 +1144,7 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         same_rate = abs(src_hdr.fps - out_fps) < 0.01
         # The intermediate TGAs carry no rate (ffmpeg's concat assumes 25fps),
         # so any filter that converts the rate is told the source's real one.
-        stamp = f"setpts=N/({src_hdr.fps:g}*TB),"
+        stamp = f"setpts=N/(({_fps_expr(src_hdr.fps)})*TB),"
         src_as_interlaced = False
         if src_interlaced and out_interlaced:
             # Already woven. Weaving again halved the clip and mixed fields from
@@ -1150,7 +1178,7 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             # Decision A (David, 2026-10-08): convert the rate, so the clip keeps
             # its duration and its audio fits. It used to keep every frame and
             # play at the wrong speed.
-            vf = f"{stamp}fps={out_fps:g}"
+            vf = f"{stamp}fps={_fps_expr(out_fps)}"
             log(f"  {stem}: {src_hdr.standard} → {video_standard}"
                 f" (frame rate {src_hdr.fps:g} → {out_fps:g}, duration kept)")
         else:

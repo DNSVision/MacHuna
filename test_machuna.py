@@ -1889,6 +1889,39 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertIn('made is None', body, 'the converter result must be checked')
         self.assertLess(body.index('made is None'), body.index("results.append((out_name, name, 'OK'))"))
 
+    # ── MOV to SWS at another frame rate (decision A, 2026-10-08) ──────────
+    def _clip_sws(self, src, std, out_dir):
+        d = self._dir(out_dir)
+        m.convert_clip(self.src[src], 1, d, video_standard=std, include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        return os.path.join(d, '1.SWS')
+
+    def test_a_progressive_clip_at_another_rate_keeps_its_duration_and_audio(self):
+        """It kept every frame and stamped the standard's rate, so 25p on a
+        1080p50 SWS played at double speed with audio sized for 25fps."""
+        import numpy as np
+        for src, std, src_dur in (('stereo16', '1080p50', 0.24), ('stereo24_50', '1080p25', 0.12),
+                                  ('stereo16', '1080p5994', 0.24)):
+            out = self._clip_sws(src, std, f'rate_{src}_{std}')
+            h = m.HulaSWSHeader(out)
+            a = _sws_audio(out)
+            with self.subTest(src=src, std=std):
+                self.assertAlmostEqual(h.frame_count / h.fps, src_dur, delta=1.0 / h.fps)
+                self.assertEqual(len(a), h.frame_count * int(round(48000 / h.fps)))
+                ref = self.L16 if src == 'stereo16' else (self.L[:6 * 960] >> 8)
+                n = min(len(ref), len(a))
+                self.assertTrue(np.array_equal(a[:n, 0], ref[:n]))
+
+    def test_an_interlaced_clip_at_another_interlaced_rate_is_refused(self):
+        import subprocess
+        src = os.path.join(self.tmp, 'i25.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.24', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=25', '-vf', 'setfield=tff',
+                        '-flags', '+ilme+ildct', '-c:v', 'prores_ks', src], check=True)
+        with self.assertRaises(ValueError):
+            m.convert_clip(src, 1, self._dir('i25_to_i5994'), video_standard='1080i5994',
+                           include_audio=False, split_fat32=False, log=lambda *a: None)
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
