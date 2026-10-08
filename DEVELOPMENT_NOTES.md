@@ -245,6 +245,31 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     MOV-to-SWS kept the source size, and widths that were not a multiple of 48
     (1280-wide 720p) produced a broken SWS (wrong line size, so frame count and
     audio position wrong). Full-HD sources must stay byte-identical.
+  - **Fable black-box pass decisions (David, 2026-10-08):**
+    - **C REVERTED: always retain an alpha if there is one.** An EIF always stores
+      a key, so an opaque-throughout EIF key may be an intended full-frame key;
+      dropping it turned a CK clip into a C clip. David: "some clips might need a
+      solid key throughout... that would seem intentional." Same for a source
+      whose alpha channel is fully opaque (J withdrawn). "No key in, no key out"
+      applies only where there is NO alpha channel at all (the 18 September
+      Kahuna finding).
+    - **H. One frame-selection rule everywhere**: output frame k shows source
+      frame floor(k x source_rate / output_rate), so the first frame is always
+      shown (ffmpeg's fps filter on the video routes picked differently).
+    - **I. K-Frame and Sony TGA from a MOV are 1920x1080 32-bit RGBA**, as from
+      SWS/EIF (they kept the source size, and were 24-bit without alpha).
+    - **K. SWS to SWS stays 10-bit throughout**, lossless where no processing is
+      needed (it went through an 8-bit TGA intermediate).
+    - **L. EIF writes are atomic**: written to a temporary file and renamed into
+      place on success, so a cancel or failure leaves the previous pair intact
+      and never a half-written file.
+    - **M. Sony TGA clip names must be exactly 4 characters** (shorter names were
+      padded with spaces in the filenames).
+    - Fixes, no decision: untagged HD treated as BT.709 (MacHuna made the same
+      SD-colour shift as the K-Frame on untagged ProRes; the claim that MacHuna
+      was right "in every case" was never measured for untagged files and was
+      false); 24-bit TGA to SWS; zero-frame SWS outputs; engine refuses stills
+      to EIF; key range clamped after scaling; 59.94p to 1080i60 refused.
   - Plus, no decision needed: the SWS-to-SWS i-to-i double weave, the EIF+SWS
     folder scan crash on unreadable `.sws` (my v1.12.0 fault), the SWS header
     total size with audio (my v1.12.0 fault), the Tk app marking a cancelled EIF
