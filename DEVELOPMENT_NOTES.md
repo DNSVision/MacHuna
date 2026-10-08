@@ -190,6 +190,15 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   2026-10-08 at David's instruction**, same rule as K-Frame TGA: only a
   progressive source at 50fps or more is woven. TNTS 50i to Sony at 1080i50 now
   30 frames (was 15). Sony output itself is still unconfirmed on a Sony desk.
+- **The full conversion matrix lives in `MacHuna-Swift/testmedia/matrix/`**
+  (`matrix.py`, `analyse.py`). It drives MacHuna 2.0's bridge with the engine and
+  checks every result from disk (duration, rate, standard, key, audio presence,
+  channels, length and content against an independent decode). Re-run it after
+  any engine change: `python3.12 matrix.py && python3.12 analyse.py` (about 30s).
+  On 2026-10-08 after the v1.12.1 fixes: 254 cases, 215 pass every rule, 0 break
+  a rule, 39 deliberate refusals. `bridge_planned.py` there is the bridge WITH the
+  engine-move changes below already applied and matrix-tested - start the Swift
+  stage from it.
 - **Swift bridge changes that MUST land with the engine pin move (2026-10-08),
   not before** - the pinned v1.11.0 engine does not have these arguments or
   functions, so adding them early would break every conversion they touch:
@@ -200,6 +209,11 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     drops audio) with one call to `m.convert_sws_to_sws(...,
     include_audio=...)`.
   - Run `--selftest` after the move: it pins some behaviour against the engine.
+  - `_to_eif`: a cancelled conversion now returns None (and the partial file is
+    deleted); report the row as cancelled, not done with an empty path.
+  - A still sent to K-Frame TGA should be refused cleanly ("stills convert to
+    Kahuna SWS only"); today it is routed as an extraction, fails, and leaves an
+    empty folder.
   - **Update MacHuna 2.0's own manual** (`MacHuna-Swift/USER_MANUAL.md`) to tell the same story as the engine manual's v1.12.0 changes: EIF audio, no hardware warnings, interlaced TGA to EIF, mono, SWS-to-SWS audio, ProRes colour advice, K-Frame Sequence import.
 - **Swift side of fix 5 (do with the engine pin move):** `Sources/MacHuna/Item.swift`
   `unverifiedNote` has its own copy of the hardware warnings (K-Frame EIF,

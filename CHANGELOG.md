@@ -4,10 +4,21 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased — found by the full conversion matrix (to become v1.12.1)
+## Unreleased — the full conversion matrix and an independent review (to become v1.12.1)
+
+After v1.12.0, every input was converted to every output - 254 conversions, with and without audio, driven through MacHuna 2.0's own bridge - and each result read back from disk and checked against the source. Separately, a fresh agent reviewed every v1.12.0 change looking for faults. Both found real problems, some old and some new in v1.12.0. After these fixes, all 215 conversions that go ahead pass every check (duration, frame rate, standard, key, audio presence, audio channels, audio length and content); the 39 that are refused are refused on purpose. Decisions A-F were made by David on 8 October.
 
 ### Fixed
-- **A keyed clip that was not already 1920×1080 crashed on the way to K-Frame EIF.** The picture was scaled to 1920×1080 but the key was extracted at the source's own size, so the key ran out a few lines in. Present since EIF output began; never seen because every desk and test file had been full HD. The key is now scaled exactly as the picture. Full-HD sources are unchanged (KNOCKOUT_WIPE's EIF is identical to the desk-proven one apart from the audio flag).
+- **SWS to SWS between interlaced standards wove the fields a second time.** 1080i50 to 1080i50 came out at half length (3 frames became 1 in testing) with fields from different frames mixed, and half its audio. Present since this routing lived in the v1.11.0 app. Same rate now passes straight through; another interlaced rate is refused.
+- **Progressive material at a different frame rate played at the wrong speed** (decision A). 25p into a 1080p50 SWS, 50p into 1080p25, 59.94p into a 50fps EIF and similar kept every frame and stamped the new rate, so the clip ran fast or slow and its audio no longer fitted. The rate is now converted - frames dropped or repeated - on MOV to SWS, SWS to SWS and SWS to EIF, as EIF output already did, so duration and audio hold. Interlaced to a different interlaced rate is refused, as progressive to interlaced already was. 29.97 and 59.94 use the exact NTSC fractions, so long clips do not drift.
+- **A keyed clip that was not already 1920×1080 crashed on the way to K-Frame EIF.** The key was extracted at the source size under a picture scaled to 1920×1080. Present since EIF output began. Full-HD sources unchanged.
+- **An interlaced TGA sequence to a 25p (or 29.97/30p) SWS doubled its frames** and played at half speed (decision B). It now gets one deinterlaced frame per interlaced frame; 50p and above unchanged.
+- **EIF to SWS ignored the chosen standard** (decision D): a 25fps EIF, usually woven 50i on a K-Frame, always became 1080p25. Now a 25fps EIF can be 1080p25 or 1080i50, a 50fps EIF 1080p50 or 1080i50 (woven in pairs, losslessly), other progressive rates are converted, other interlaced rates refused.
+- **A keyless EIF gained a solid key plane in the SWS** (decision C). An EIF whose key is opaque throughout now gives an SWS with no key plane - "no key in, no key out".
+- **Dual-mono MOVs lost their right channel** (decision E). With two mono audio tracks - common in broadcast ProRes - track 1 went to both sides and track 2 was dropped. Track 1 is now left and track 2 right, in SWS and EIF. Stereo, multichannel and plain mono output are byte-identical to before.
+- **A split SWS (over 4GB) claimed audio it did not contain** (decision F). The split layout cannot carry audio; the clip is now written without, the log says so, and the header no longer claims it.
+- **A failed EIF conversion left a half-written `.eif`** with a valid slot name, and any old `.eaf` beside it. Both are now removed, as for a cancel, and the error reported.
+- **New in v1.12.0, fixed:** a folder of EIFs with an unreadable `.sws` in it (macOS's hidden `._` files on FAT32 sticks) failed to load at all; SWS to SWS with audio wrote the wrong total file size into the header for most rates; a cancelled EIF row in the Tk app showed "done", so a re-run skipped it.
 
 ### Corrected
 - The v1.12.0 entry on Sony TGA overstated the fix for video clips; see the corrected wording there.
