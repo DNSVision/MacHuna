@@ -1,4 +1,4 @@
-# MacHuna v1.12.0 — User Manual
+# MacHuna v1.12.1 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -243,7 +243,7 @@ When outputting to Kahuna SWS, the following options are available:
 
 | Option | Description |
 |---|---|
-| **Standard** | Target video standard. 1080p/50 is most common for UK/European broadcast. |
+| **Standard** | Target video standard. 1080p/50 is most common for UK/European broadcast. Every SWS is written at 1920×1080: sources of other sizes are scaled (v1.12.1), interlaced material one field at a time. |
 | **Split >4GB** | On by default. Files over 4GB are split into 2GB FAT32-safe chunks. See Section 12. |
 | **Ignore alpha** | No key plane is written. Output is fill-only, matching K-Watch no-alpha behaviour. Use for fill-only content or when the Kahuna output does not use a downstream keyer. |
 | **Auto play** | Sets the Auto Play flag in the SWS header. The Kahuna begins playback when the clip is loaded. |
@@ -251,7 +251,7 @@ When outputting to Kahuna SWS, the following options are available:
 | **TGA source interlaced** | See Section 8.2. |
 | **Include audio** | Embeds audio from the source into the .SWS file. Shown only when audio is detected in the source. See Section 9. |
 
-> **SWS → SWS standards conversion:** when the source is itself an SWS file, the output header's clip name follows the source SWS's name, and the output key state follows the source (a keyless source produces keyless output). **Audio is carried through** (from v1.12.0; earlier versions dropped it). The duration does not change when the standard does, so the sound comes across unchanged at the new frame rate. Untick **Include audio** to leave it out.
+> **SWS → SWS standards conversion:** when the source is itself an SWS file, the output header's clip name follows the source SWS's name, and the output key state follows the source (a keyless source produces keyless output). **Audio is carried through** (from v1.12.0; earlier versions dropped it). The duration does not change when the standard does, so the sound comes across unchanged at the new frame rate. Untick **Include audio** to leave it out. An interlaced SWS going to the same interlaced standard passes straight through (before v1.12.1 its fields were woven a second time, halving the clip); to a different interlaced rate it is refused.
 
 ### 5.1 Progressive to Interlaced (P→I)
 
@@ -286,6 +286,8 @@ Example: 50 frames of 1080i/50 source → 100 frames of 1080p/50 output.
 | 1080i/50 | 1080p/60 | ran fast | correct |
 | 1080i/59.94 | 1080p/50 | ran fast | correct |
 | 1080i/59.94 | 1080p/25 | ran 20% slow | correct |
+
+**Progressive to progressive at a different rate (v1.12.1).** A 25p clip going to 1080p/50, a 50p clip to 1080p/25, or 59.94p going to a 50fps EIF, is converted to the new rate - frames repeated or dropped - so it keeps its duration and its sound still fits. Earlier versions kept every frame and stamped the new rate, so the clip played fast or slow. **Interlaced to a different interlaced rate** (1080i/50 material to 1080i/59.94) is refused, as progressive to interlaced already is: changing a field rate needs a proper standards converter.
 
 This applies to video clips, SWS→SWS, and TGA outputs. **A loose TGA image sequence is the exception:** it carries no frame rate anywhere, so MacHuna assumes the source standard matches the output family you pick (an interlaced pile aimed at 1080p/50 is treated as 1080i/50 material). That assumption is right for normal use. If you are converting a TGA sequence across families — interlaced 50Hz frames aimed at a 60Hz progressive standard — convert via a video clip or SWS instead, so MacHuna has a real frame rate to work from.
 
@@ -331,7 +333,7 @@ EIF files can be converted to the following outputs:
 
 | Output | Notes |
 |---|---|
-| **Kahuna SWS** | Lossless direct YCbCr repack. Output standard auto-derived from EIF frame rate (25fps → 1080p/25, 50fps → 1080p/50). The clip's `.eaf` audio is carried into the SWS on the Kahuna's channels (left 1, right 3); untick **Include audio** to leave it out. |
+| **Kahuna SWS** | Lossless direct YCbCr repack, to the **Standard** you choose (v1.12.1): a 25fps EIF can be 1080p/25 or 1080i/50 (choose 1080i/50 for 50i material, which is what a 25fps EIF usually is); a 50fps EIF can be 1080p/50, or 1080i/50 by weaving pairs of frames; other progressive standards are converted to the new rate; 59.94Hz and 60Hz interlaced are refused. An EIF with no real key (opaque throughout) gives an SWS with no key plane. The clip's `.eaf` audio is carried into the SWS on the Kahuna's channels (left 1, right 3); untick **Include audio** to leave it out. |
 | **K-Frame TGA** | Full-resolution 1920×1080 32-bit RGBA TGA sequence. Frames numbered `0001.tga` onwards. |
 | **Sony TGA** | 32-bit RGBA TGA sequence with 4-character clip name prefix. |
 
@@ -502,7 +504,7 @@ MacHuna extracts audio from source files and embeds it in the `.SWS` file in K-W
 
 The channel mapping (L=Ch1, R=Ch3) matches the K-Watch convention, confirmed by hex analysis of K-Watch reference files. MacHuna uses an explicit ffmpeg pan filter - a straight `-ac 16` upmix does not produce the correct layout.
 
-**Mono goes to both channels** (from v1.12.0). Earlier versions put a mono source on the left only. Stereo and multichannel sources are unchanged: the first two channels are left and right.
+**Mono goes to both channels** (from v1.12.0). Earlier versions put a mono source on the left only. Stereo and multichannel sources are unchanged: the first two channels are left and right. **Dual mono** - two separate mono tracks, common in broadcast ProRes - is track 1 left, track 2 right (v1.12.1; before, track 2 was dropped).
 
 ### 9.3 K-Frame audio (`.eaf`)
 
@@ -765,8 +767,8 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 - **Split .SWS files** cannot be previewed in the Video Player
 - **TGA sequence audio** is not supported
 - **HLG Rec.2020** colour space is not implemented (requires a reference HLG .SWS file to reverse-engineer the header values)
-- **SWS files over 4GB carry no audio.** A split SWS never includes audio, though its header still says it has some. Keep clips with sound under the split size
-- **EIF to SWS labels a 25fps EIF as 1080p25.** An EIF does not record whether its frames are interlaced, so a 50i clip arrives as 1080p25. Re-convert to 1080i50 SWS if you need it marked interlaced
+- **SWS files over 4GB carry no audio.** A split SWS cannot include audio; MacHuna writes it without and says so in the log. Keep clips with sound under the split size
+- **An EIF does not record whether it is interlaced.** When converting a 25fps EIF to SWS, choose 1080i/50 for 50i material and 1080p/25 for progressive
 
 ---
 

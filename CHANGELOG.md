@@ -20,6 +20,9 @@ After v1.12.0, every input was converted to every output - 254 conversions, with
 - **A failed EIF conversion left a half-written `.eif`** with a valid slot name, and any old `.eaf` beside it. Both are now removed, as for a cancel, and the error reported.
 - **New in v1.12.0, fixed:** a folder of EIFs with an unreadable `.sws` in it (macOS's hidden `._` files on FAT32 sticks) failed to load at all; SWS to SWS with audio wrote the wrong total file size into the header for most rates; a cancelled EIF row in the Tk app showed "done", so a re-run skipped it.
 
+- **Every SWS is now 1920×1080** (decision G). Video clips, TGA sequences and stills kept their own size, and a width that was not a multiple of 48 - a 1280-wide 720p clip, for example - gave a broken SWS whose frame count and audio position were wrong. Other sizes are now scaled to 1920×1080, the key with the picture, and interlaced material one field at a time so the fields never blend (also for interlaced non-HD clips going to EIF). Full-HD output is byte-identical to v1.12.0.
+- **Found by a second independent review of these fixes, and fixed:** dual mono went wrong when the second track was stereo or carried certain channel labels (track 1 lost, or left and right swapped, or an EIF with no audio), and a shorter second track cut track 1 short - each track is now decoded on its own; a one-frame 50fps EIF to 1080i50 made an SWS with no frames; a failure before the EIF output was even opened deleted the previous good `.eif` and `.eaf`; a cancelled EIF-to-SWS row in the Tk app showed "done"; SWS-to-SWS rate conversion kept different frames from every other route (it now picks frames by time like the rest); and an interlaced H.264 file that reports its field rate is now read at its frame rate.
+
 ### Corrected
 - The v1.12.0 entry on Sony TGA overstated the fix for video clips; see the corrected wording there.
 

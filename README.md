@@ -186,7 +186,7 @@ MacHuna can extract `.SWS` files back to standard formats, and also convert `.ei
 
 ### From SWS
 
-- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF) and requires a double-rate source — a same-rate source SWS (e.g. 1080p/25 → 1080i/50) is blocked with an error rather than doubled in speed; I→P uses `yadif`. The output clip name and key state follow the source SWS, and its audio is carried through (v1.12.0).
+- **Kahuna SWS** -- re-encode to a different standard within the SWS format; useful for interlaced↔progressive conversion (e.g. 1080p50 SWS → 1080i50 SWS, or vice versa). Source interlace state is auto-detected from the SWS header. P→I uses `tinterlace=mode=interleave_top` (TFF) and requires a double-rate source — a same-rate source SWS (e.g. 1080p/25 → 1080i/50) is blocked with an error rather than doubled in speed; I→P uses `yadif`. The output clip name and key state follow the source SWS, and its audio is carried through (v1.12.0). Interlaced to the same interlaced standard passes straight through; progressive to a different progressive rate is rate-converted, keeping duration and audio; interlaced to a different interlaced rate is refused (v1.12.1).
 - **K-Frame TGA** -- 32-bit RGBA TGA sequence, for Grass Valley K-Frame Image Store; confirmed on a live K-Frame (import via Image Store > Library with "Sequence" selected)
 - **Sony TGA** -- 32-bit RGBA TGA sequence, for Sony MVS Image Store
 
@@ -196,7 +196,7 @@ For Kahuna SWS output, the Standard dropdown controls the output standard and co
 
 ### From EIF
 
-- **K-Frame EIF → Kahuna SWS** -- lossless direct YCbCr repack; no RGB round-trip; output standard auto-derived from EIF fps; `.eaf` audio carried into the SWS
+- **K-Frame EIF → Kahuna SWS** -- lossless direct YCbCr repack; no RGB round-trip; honours the chosen standard (25fps EIF to 1080p25 or 1080i50, 50fps EIF to 1080p50 or woven 1080i50, other progressive rates rate-converted, 60Hz-family interlaced refused); a keyless EIF writes no key plane; `.eaf` audio carried into the SWS
 - **K-Frame EIF → K-Frame TGA** -- full-resolution 1920×1080 RGBA TGA sequence, progressive or interlaced
 - **K-Frame EIF → Sony TGA** -- 32-bit RGBA with 4-char clip name prefix, progressive or interlaced
 
@@ -212,7 +212,8 @@ The authoritative roadmap lives in [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md
 
 - **The K-Frame desk session happened on 2026-10-07** and its fixes are in v1.12.0. K-Frame EIF (with audio) and K-Frame TGA are confirmed on hardware.
 - **The one hardware question left** is P→I field order on a genuine 1080i Kahuna.
-- Known engine limitations are listed in the roadmap (for example, split SWS files over 4GB carry no audio).
+- Known engine limitations are listed in the roadmap (for example, split SWS files over 4GB carry no audio; MacHuna says so when it happens).
+- **Every input-output pair is checked by a full conversion matrix** (`MacHuna-Swift/testmedia/matrix/`): 254 conversions read back from disk, 0 rule breaks as of v1.12.1.
 
 See `DEVELOPMENT_NOTES.md` for the full status list.
 
