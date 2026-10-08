@@ -1099,7 +1099,8 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
     bridge - and both dropped the audio. It lives here now, once (2026-10-08).
     Frames go out through a TGA intermediate exactly as before; the source's
     programme audio (channels 1 and 3) goes straight into the new SWS at the
-    output's frame rate. The duration does not change, so neither does it.
+    output's frame rate. The duration is kept on every route (a rate change is
+    converted, decision A), so the audio carries across unchanged.
     """
     src_hdr = HulaSWSHeader(sws_path)
     src_interlaced = 'i' in src_hdr.standard
@@ -1111,11 +1112,32 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         frames = sorted(str(p) for p in Path(tga_dir).glob('*.tga'))
         if not frames:
             raise ValueError(f"No frames extracted from {Path(sws_path).name}")
-        if src_interlaced and not out_interlaced:
+        out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        same_rate = abs(src_hdr.fps - out_fps) < 0.01
+        # The intermediate TGAs carry no rate (ffmpeg's concat assumes 25fps),
+        # so any filter that converts the rate is told the source's real one.
+        stamp = f"setpts=N/({src_hdr.fps:g}*TB),"
+        src_as_interlaced = False
+        if src_interlaced and out_interlaced:
+            # Already woven. Weaving again halved the clip and mixed fields from
+            # different frames (matrix + review, 2026-10-08). Same rate passes
+            # through; another interlaced rate is a field-rate standards
+            # conversion, refused as progressive-to-interlaced is.
+            if not same_rate:
+                raise ValueError(
+                    f"{Path(sws_path).name} is {src_hdr.standard} and cannot become "
+                    f"{video_standard}: MacHuna does not convert one interlaced rate "
+                    f"to another. Convert the source to the target rate first.")
+            vf = None
+            src_as_interlaced = True
+            log(f"  {stem}: {src_hdr.standard} → {video_standard} (interlaced, passed through)")
+        elif src_interlaced and not out_interlaced:
             # Source SWS's own header fps drives the rate decision, so a
             # cross-rate target (i50 to p60, i5994 to p25) gets the fps resample
             # it needs instead of playing at the wrong speed.
             vf = _i_to_p_filter(src_hdr.fps, video_standard, parity='tff')
+            if 'fps=' in vf:
+                vf = stamp + vf
             log(f"  {stem}: {src_hdr.standard} → {video_standard}"
                 f" (interlaced→progressive via yadif)")
         elif not src_interlaced and out_interlaced:
@@ -1124,6 +1146,13 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             vf = _p_to_i_field_map(src_hdr.fps, video_standard)
             log(f"  {stem}: {src_hdr.standard} → {video_standard}"
                 f" (progressive→interlaced TFF)")
+        elif not same_rate:
+            # Decision A (David, 2026-10-08): convert the rate, so the clip keeps
+            # its duration and its audio fits. It used to keep every frame and
+            # play at the wrong speed.
+            vf = f"{stamp}fps={out_fps:g}"
+            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
+                f" (frame rate {src_hdr.fps:g} → {out_fps:g}, duration kept)")
         else:
             vf = None
             log(f"  {stem}: {src_hdr.standard} → {video_standard} (passthrough)")
@@ -1135,7 +1164,7 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             # opaque alpha, so a keyless source must not gain a key here.
             ignore_alpha=ignore_alpha or not src_hdr.has_key,
             auto_play=auto_play, loop_play=loop_play, write_log=False,
-            source_interlaced=False, _vf_override=vf, clip_name_override=stem,
+            source_interlaced=src_as_interlaced, _vf_override=vf, clip_name_override=stem,
             _audio_stereo24=stereo)
 
 

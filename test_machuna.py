@@ -1625,6 +1625,10 @@ class TestAudioRoutes(unittest.TestCase):
         os.makedirs(d)
         return d
 
+    def _dir_path(self, name):
+        """The SWS that _sws() wrote into this folder."""
+        return os.path.join(self.tmp, name, '1.SWS')
+
     def _eif(self, src, out_dir, **kw):
         return m.convert_clip_to_eif(self.src[src], self._dir(out_dir), log=lambda *a: None,
                                      out_name='0001', **kw)
@@ -1797,6 +1801,42 @@ class TestAudioRoutes(unittest.TestCase):
             declared = struct.unpack_from('>I', Path(out).read_bytes()[:0x200], 0x1CC)[0]
             with self.subTest(src=src_std, out=out_std):
                 self.assertEqual(declared, os.path.getsize(out))
+
+    def test_sws_to_sws_interlaced_to_interlaced_is_not_woven_again(self):
+        """Independent review + matrix, 2026-10-08: i50 to i50 wove the
+        already-woven frames again - half the length, fields mixed, half the
+        audio. Present since the routing lived in the GUI."""
+        import numpy as np
+        a, out = self._sws_to_sws('1080i50', '1080i50')
+        src = m.HulaSWSHeader(self._dir_path('s2s_src_1080i50'))
+        h = m.HulaSWSHeader(out)
+        self.assertEqual(h.frame_count, src.frame_count)
+        b = _sws_audio(out)
+        self.assertEqual(len(b), len(a))
+        self.assertTrue(np.array_equal(b[:, 0], a[:, 0]))
+
+    def test_sws_to_sws_interlaced_at_another_rate_is_refused(self):
+        src = self._sws('stereo24_50', 's2s_ref_i', std='1080i50')
+        with self.assertRaises(ValueError):
+            m.convert_sws_to_sws(src, 4, self._dir('s2s_ref_i_out'), '1080i5994',
+                                 split_fat32=False, log=lambda *a: None)
+
+    def test_sws_to_sws_progressive_at_another_rate_keeps_its_duration(self):
+        """Decision A (David, 2026-10-08): convert the rate, so the clip plays
+        at the right speed and its audio fits."""
+        import numpy as np
+        for src_std, out_std in (('1080p50', '1080p25'), ('1080p25', '1080p50'),
+                                 ('1080p50', '1080p5994')):
+            a, out = self._sws_to_sws(src_std, out_std)
+            src_h = m.HulaSWSHeader(self._dir_path(f's2s_src_{src_std}'))
+            h = m.HulaSWSHeader(out)
+            src_dur = src_h.frame_count / src_h.fps
+            with self.subTest(src=src_std, out=out_std):
+                self.assertAlmostEqual(h.frame_count / h.fps, src_dur, delta=1.0 / h.fps)
+                b = _sws_audio(out)
+                n = min(len(a), len(b))
+                self.assertTrue(np.array_equal(b[:n, 0], a[:n, 0]))
+                self.assertEqual(len(b), h.frame_count * int(round(48000 / h.fps)))
 
     def test_sws_to_sws_include_audio_off_writes_none(self):
         _a, out = self._sws_to_sws('1080p25', '1080p25', include_audio=False)
