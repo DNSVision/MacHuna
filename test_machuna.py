@@ -2877,6 +2877,68 @@ class TestTgaAlphaIsReadNotAssumed(unittest.TestCase):
         self.assertTrue(self._sws(self._seq('RGBA', 128)).has_key)
 
 
+class TestNoEmptySws(unittest.TestCase):
+    """Fable black-box pass, 2026-10-08: some conversions wrote an SWS with no
+    frames (and one claimed audio it did not have), reported as done."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _consistent(self, sws, frames):
+        h = m.HulaSWSHeader(sws)
+        self.assertEqual(h.frame_count, frames)
+        declared = struct.unpack_from('>I', Path(sws).read_bytes()[:0x200], 0x1CC)[0]
+        self.assertEqual(declared, os.path.getsize(sws))
+
+    def test_one_50p_frame_to_1080i50_keeps_its_frame(self):
+        import subprocess
+        src = os.path.join(self.tmp, 'one.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'testsrc=size=192x108:rate=50', '-f', 'lavfi', '-i', 'sine=sample_rate=48000',
+                        '-frames:v', '1', '-t', '0.02', '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', src], check=True)
+        d = os.path.join(self.tmp, 'a'); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080i50', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        self._consistent(os.path.join(d, '1.SWS'), 1)
+
+    def test_one_tga_to_1080i50_keeps_its_frame(self):
+        from PIL import Image
+        p = os.path.join(self.tmp, 'one_0000.tga'); Image.new('RGBA', (1920, 1080), (9, 9, 9, 255)).save(p)
+        d = os.path.join(self.tmp, 'b'); os.makedirs(d)
+        out = m.convert_tga_sequence([p], 2, d, '1080i50', False, False, lambda *a: None, write_log=False)
+        self._consistent(out, 1)
+
+    def test_a_dark_grey_first_frame_is_still_read_as_a_tga(self):
+        """2026-10-08: a TGA filled with the byte 9 was read by ffmpeg as CD+G
+        karaoke graphics, 300x216 - wipes often start on a near-black frame."""
+        from PIL import Image
+        files = []
+        for i, colour in enumerate(((9, 9, 9, 255), (200, 30, 30, 255), (9, 9, 9, 255))):
+            p = os.path.join(self.tmp, f'dark_{i:04d}.tga'); Image.new('RGBA', (1920, 1080), colour).save(p)
+            files.append(p)
+        self.assertEqual((m.get_video_info(files[0])['width'], m.get_video_info(files[0])['height']), (1920, 1080))
+        d = os.path.join(self.tmp, 'dk'); os.makedirs(d)
+        out = m.convert_tga_sequence(files, 5, d, '1080p25', False, False, lambda *a: None, write_log=False)
+        self._consistent(out, 3)
+        h = m.HulaSWSHeader(out)
+        rgb, _ = m._hula_decode_frame(Path(out).read_bytes()[h.data_offset:h.data_offset + h.plane_size],
+                                      None, h.width, h.height)
+        self.assertLess(int(rgb[540, 960, 0]), 20, 'the dark frame was not read as dark grey')
+
+    def test_a_tga_list_of_mixed_sizes_is_scaled_throughout(self):
+        from PIL import Image
+        files = []
+        for i, size in enumerate(((1920, 1080), (1920, 1080), (192, 108), (192, 108))):
+            p = os.path.join(self.tmp, f'mix_{i:04d}.tga'); Image.new('RGBA', size, (30 * i, 9, 9, 255)).save(p)
+            files.append(p)
+        d = os.path.join(self.tmp, 'c'); os.makedirs(d)
+        out = m.convert_tga_sequence(files, 3, d, '1080p25', False, False, lambda *a: None, write_log=False)
+        self._consistent(out, 4)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

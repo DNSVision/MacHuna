@@ -401,6 +401,15 @@ def check_ffmpeg():
 
 def get_video_info(input_path: str) -> dict:
     """Return dict with width, height, fps, frame_count, has_alpha."""
+    if input_path.lower().endswith('.tga'):
+        # A TGA has no signature, so ffprobe guesses its format from the
+        # contents - and a frame filled with the byte 9 reads as CD+G karaoke
+        # graphics, 300x216 (found 2026-10-08). PIL reads TGA headers directly.
+        with Image.open(input_path) as img:
+            alpha = img.mode in ('RGBA', 'LA') or 'transparency' in img.info
+            return {'width': img.width, 'height': img.height, 'fps': 25.0,
+                    'frame_count': 1, 'has_alpha': alpha, 'has_audio': False,
+                    'is_interlaced': False, 'color_space': 'unknown'}
     cmd = [
         _get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
         '-show_streams', '-show_format', input_path
@@ -950,6 +959,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         vf_tinterlace      = _p_to_i_field_map(fps, video_standard)
         output_fps         = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
         output_frame_count = frame_count // 2
+        if frame_count < 2:
+            # One frame cannot make a pair; weaving gave an SWS with no frames
+            # (Fable black-box pass, 2026-10-08). Keep it as it is, as EIF to
+            # SWS does.
+            vf_tinterlace, output_frame_count = '', 1
+            log("  A single frame - kept as it is (nothing to weave)")
         log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
     elif do_i_to_p:
         # Deinterlace interlaced source to progressive output.
@@ -1026,6 +1041,9 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # especially after tinterlace which may output a different count than frame_count//2.
         plane_size         = _v210_plane_size(w, h)
         output_frame_count = os.path.getsize(fill_raw) // plane_size
+        if output_frame_count == 0:
+            raise ValueError(f"{os.path.basename(input_path)}: the conversion produced no "
+                             f"frames, so nothing was written.")
 
         # Extract audio if requested and present
         if will_include_audio:
@@ -1064,6 +1082,20 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
 
     log(f"  Done → {dest_path}")
     return dest_path
+
+
+def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
+    """ffmpeg input arguments for a list of TGA frames, IN THE ORDER GIVEN,
+    read explicitly as TGA. A TGA has no signature, so letting ffmpeg probe
+    each file (the concat demuxer did) let a frame of solid dark grey (byte 9)
+    be read as CD+G karaoke graphics (2026-10-08). Numbered links in `tmp`
+    feed the image2 demuxer with the targa decoder forced."""
+    seq_dir = os.path.join(tmp, 'seq')
+    os.makedirs(seq_dir, exist_ok=True)
+    for n, tga in enumerate(tga_files):
+        os.symlink(os.path.abspath(tga), os.path.join(seq_dir, f'{n:06d}.tga'))
+    return ['-f', 'image2', '-framerate', str(framerate), '-start_number', '0',
+            '-c:v', 'targa', '-i', os.path.join(seq_dir, '%06d.tga')]
 
 
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
@@ -1116,6 +1148,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         # already rate-checked against the source SWS header's fps.
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+        if frame_count < 2:
+            vf_tinterlace = None
+            log("  A single frame - kept as it is (nothing to weave)")
     elif do_i_to_p and FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]] <= 30.0:
         # Decision B (David, 2026-10-08): a progressive standard at the FRAME rate
         # (25/29.97/30p) gets one deinterlaced frame per interlaced frame. Splitting
@@ -1137,11 +1172,10 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         vf_tinterlace = None
 
     with tempfile.TemporaryDirectory() as tmp:
-        # Build a concat demuxer file — one entry per frame (yadif handles i→p doubling)
-        concat_file = os.path.join(tmp, 'concat.txt')
-        with open(concat_file, 'w') as f:
-            for tga in sorted(tga_files):
-                f.write(f"file '{tga}'\n")
+        # Numbered links to the frames, read as TGA explicitly. Letting ffmpeg
+        # probe each file let a frame of solid dark grey (byte 9) be read as
+        # CD+G graphics (2026-10-08). Same order and 25fps timing as before.
+        tga_input = _tga_input_args(sorted(tga_files), tmp)
 
         fill_raw = os.path.join(tmp, 'fill.v210')
         ffmpeg = _get_ffmpeg_path('ffmpeg')
@@ -1152,7 +1186,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             scale_vf = 'scale=1920:1080' + (':interl=1' if source_interlaced else '')
             log(f"  Scaling {w}×{h} → 1920×1080")
         fill_vf = ','.join(f for f in (scale_vf, vf_tinterlace) if f)
-        cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file]
+        cmd = [ffmpeg, '-y'] + tga_input
         if fill_vf:
             cmd += ['-vf', fill_vf]
         if not vf_tinterlace and not do_i_to_p:
@@ -1175,14 +1209,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             if vf_tinterlace:
                 vf_key1 += f',{vf_tinterlace}'
                 vf_key2 += f',{vf_tinterlace}'
-            cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
-                       '-i', concat_file,
+            cmd_key = [ffmpeg, '-y'] + tga_input + [
                        '-vf', vf_key1,
                        '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
             result = _run_ffmpeg(cmd_key)
             if result.returncode != 0 or not os.path.exists(key_raw) or os.path.getsize(key_raw) == 0:
-                cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
-                           '-i', concat_file,
+                cmd_key = [ffmpeg, '-y'] + tga_input + [
                            '-vf', vf_key2,
                            '-f', 'rawvideo', '-vcodec', 'v210', key_raw]
                 _run_ffmpeg(cmd_key, check=True)
@@ -1204,6 +1236,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             w, h = 1920, 1080
         plane_size         = _v210_plane_size(w, h)
         output_frame_count = os.path.getsize(fill_raw) // plane_size
+        if output_frame_count == 0:
+            raise ValueError("The TGA sequence produced no frames, so nothing was written.")
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
         src_name  = os.path.basename(tga_files[0])
         clip_name = clip_name_override or Path(tga_files[0]).stem
@@ -4114,12 +4148,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
     log(f"  {len(tga_files)} frame(s) @ {fps:g}fps → ProRes 4444"
         + (f" (out {out_fps:g}fps)" if out_fps != fps else ""))
     with tempfile.TemporaryDirectory() as tmp:
-        concat_file = os.path.join(tmp, 'concat.txt')
-        with open(concat_file, 'w') as cf:
-            for f in tga_files:
-                cf.write(f"file '{f}'\n")
-        cmd = [ffmpeg, '-y', '-r', f"{fps:g}",
-               '-f', 'concat', '-safe', '0', '-i', concat_file]
+        cmd = [ffmpeg, '-y'] + _tga_input_args(tga_files, tmp, _fps_expr(fps))
         if vf:
             cmd += ['-vf', vf]
         cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
@@ -6064,13 +6093,8 @@ def launch_gui():
                             out_dir = os.path.join(d, cn_i if is_sony else base)
                             os.makedirs(out_dir, exist_ok=True)
                             with tempfile.TemporaryDirectory() as tmp:
-                                concat_file = os.path.join(tmp, 'concat.txt')
-                                with open(concat_file, 'w') as cf:
-                                    for f in tga_files:
-                                        cf.write(f"file '{f}'\n")
                                 out_pattern = os.path.join(out_dir, f'{cn_i}%04d.tga' if is_sony else '%04d.tga')
-                                cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0',
-                                       '-i', concat_file]
+                                cmd = [ffmpeg, '-y'] + _tga_input_args(tga_files, tmp)
                                 if vf:
                                     cmd += ['-vf', vf]
                                 cmd += ['-start_number', '0' if is_sony else '1', out_pattern]
