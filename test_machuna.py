@@ -2786,6 +2786,60 @@ class TestSwsIsAlways1080(unittest.TestCase):
         self.assertGreater(abs(int(col[0]) - int(col[1])), 100, f'fields blended: {col[:6]}')
 
 
+class TestUntaggedHdColour(unittest.TestCase):
+    """Fable black-box pass, 2026-10-08: an HD clip with no colour label was
+    taken as SD colour (BT.601) and converted, shifting saturated colours -
+    exactly the fault MacHuna had been credited with avoiding on the K-Frame.
+    Untagged HD is now BT.709 (industry convention); untagged SD stays SD."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _clip(self, name, size):
+        import subprocess, json
+        out = os.path.join(self.tmp, name + '.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-t', '0.08', '-f', 'lavfi', '-i',
+                        f"color=c=black:size={size}:rate=25", '-vf',
+                        "format=yuv444p10le,geq=lum='300':cb='if(lt(X,W/2),800,300)':cr='if(lt(X,W/2),320,760)'",
+                        '-c:v', 'prores_ks', '-profile:v', '3', out], check=True)
+        cs = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                                        'stream=color_space', '-of', 'json', out],
+                                       capture_output=True, text=True).stdout)['streams'][0].get('color_space', 'unknown')
+        self.assertIn(cs, ('unknown', None), f'test source must be untagged, got {cs}')
+        return out
+
+    def _src_ycbcr(self, path, w, h):
+        import subprocess, numpy as np
+        raw = subprocess.run([self.ff, '-v', 'error', '-i', path, '-frames:v', '1', '-f', 'rawvideo',
+                              '-pix_fmt', 'yuv444p10le', '-'], capture_output=True).stdout
+        return np.frombuffer(raw, dtype='<u2').reshape(3, h, w).astype(int)
+
+    def test_untagged_hd_keeps_its_colour_to_eif_and_sws(self):
+        import numpy as np
+        src = self._clip('hd', '1920x1080')
+        ref = self._src_ycbcr(src, 1920, 1080)
+        eif = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0001')
+        h = m.EIFHeader(eif)
+        with open(eif, 'rb') as f:
+            f.seek(h.video_start)
+            w = np.frombuffer(f.read(3 * m._EIF_UNIT_BYTES), dtype='<u4').reshape(1080, 1920)
+        cb, cr = (w & 0x3FF)[540, 400], (w & 0x3FF)[540, 401]
+        self.assertLessEqual(abs(int(cb) - int(ref[1, 540, 400])), 2, 'EIF Cb shifted')
+        self.assertLessEqual(abs(int(cr) - int(ref[2, 540, 401])), 2, 'EIF Cr shifted')
+        d = os.path.join(self.tmp, 's'); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        hs = m.HulaSWSHeader(os.path.join(d, '1.SWS'))
+        yuv = m._v210_plane_to_yuv(Path(d, '1.SWS').read_bytes()[hs.data_offset:hs.data_offset + hs.plane_size],
+                                   1920, 1080, 1)[0]
+        self.assertLessEqual(abs(float(yuv[540, 400, 1]) - ref[1, 540, 400]), 2, 'SWS Cb shifted')
+        self.assertLessEqual(abs(float(yuv[540, 1500, 2]) - ref[2, 540, 1500]), 2, 'SWS Cr shifted')
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

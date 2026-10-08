@@ -438,6 +438,9 @@ def get_video_info(input_path: str) -> dict:
                 'rgba', 'bgra', 'yuva420p', 'yuva422p', 'yuva444p'
             )
 
+            # Colour matrix label, as written in the file ('unknown' if none)
+            info['color_space'] = stream.get('color_space') or 'unknown'
+
             # Interlace detection
             field_order = stream.get('field_order', 'progressive')
             info['is_interlaced'] = field_order not in ('progressive', 'unknown', '')
@@ -473,7 +476,8 @@ def get_video_info(input_path: str) -> dict:
 def convert_to_v210(input_path: str, output_path: str,
                     extract_alpha: bool = False,
                     width: int = 0, height: int = 0,
-                    vf_extra: str = '', interlaced: bool = False):
+                    vf_extra: str = '', interlaced: bool = False,
+                    assume_709: bool = False):
     """Convert input to raw v210 using ffmpeg, then byte-swap to big-endian.
 
     ffmpeg outputs v210 as little-endian 32-bit words.
@@ -485,7 +489,9 @@ def convert_to_v210(input_path: str, output_path: str,
 
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     cmd_fill = [ffmpeg, '-y', '-i', input_path]
-    vf_parts = []
+    # An untagged HD source is labelled BT.709 first, so it is not converted as
+    # if it were SD colour (fill only: a key carries no colour).
+    vf_parts = [_UNTAGGED_HD_AS_709] if assume_709 else []
     # interlaced: scale each field on its own, or resizing blends the two
     # moments in time together (2026-10-08).
     scale = f'scale={width}:{height}' + (':interl=1' if interlaced else '')
@@ -884,6 +890,20 @@ def _dual_mono_stereo24(input_path: str):
     return out
 
 
+_UNTAGGED_HD_AS_709 = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709'
+
+
+def _assume_709(info: dict) -> bool:
+    """An HD video clip with no colour label is BT.709 - the industry
+    convention. Left unlabelled, ffmpeg took it as SD colour (BT.601) and
+    converted it, shifting saturated colours exactly as the K-Frame's own
+    import does (Fable black-box pass, 2026-10-08). Untagged SD stays SD, and
+    is properly converted when scaled up. Labelled files are taken at their
+    label."""
+    return (info.get('color_space', 'unknown') in ('unknown', 'unspecified', '')
+            and info.get('height', 0) >= 720)
+
+
 def _v210_plane_size(width: int, height: int) -> int:
     """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
     multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when
@@ -981,7 +1001,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         rescale = (w, h) != (1920, 1080)
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0,
-                                  interlaced=rescale and info.get('is_interlaced', False))
+                                  interlaced=rescale and info.get('is_interlaced', False),
+                                  assume_709=_assume_709(info))
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -1564,7 +1585,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     extract_alpha=info['has_alpha'],
                                     vf_extra=f'fps={fps:g}',
                                     interlaced=info.get('is_interlaced', False) and
-                                    (info['width'], info['height']) != (1920, 1080))
+                                    (info['width'], info['height']) != (1920, 1080),
+                                    assume_709=_assume_709(info))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if frame_count == 0:
             raise ValueError("No complete frames extracted from source.")
