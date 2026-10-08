@@ -238,6 +238,11 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   - **E. Dual-mono MOVs** (two mono audio tracks): track 1 is left, track 2 right.
   - **F. A split SWS (over 4GB) is written without audio**, says so in the log,
     and its header tells the truth (no audio claimed).
+  - **G. Every SWS output is scaled to 1920x1080** (second review, 2026-10-08):
+    every standard MacHuna offers is 1080, as EIF output already assumed. Before,
+    MOV-to-SWS kept the source size, and widths that were not a multiple of 48
+    (1280-wide 720p) produced a broken SWS (wrong line size, so frame count and
+    audio position wrong). Full-HD sources must stay byte-identical.
   - Plus, no decision needed: the SWS-to-SWS i-to-i double weave, the EIF+SWS
     folder scan crash on unreadable `.sws` (my v1.12.0 fault), the SWS header
     total size with audio (my v1.12.0 fault), the Tk app marking a cancelled EIF
