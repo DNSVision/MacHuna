@@ -2564,11 +2564,25 @@ class TestEifToSwsHonoursTheStandard(unittest.TestCase):
         out = self._sws(self._eif(50, 4, True), '1080i50')
         h = m.HulaSWSHeader(out)
         self.assertEqual((h.standard.replace('/', ''), h.frame_count), ('1080i50', 2))
-        # Lines alternate between the two source frames (different red levels).
-        rgb, _a = m._hula_decode_frame(Path(out).read_bytes()[h.data_offset:h.data_offset + h.plane_size],
-                                       None, h.width, h.height)
-        self.assertNotEqual(int(rgb[100, 100, 0]), int(rgb[101, 100, 0]))
-        self.assertEqual(int(rgb[100, 100, 0]), int(rgb[102, 100, 0]))
+        # TFF: even lines (top field) from the first frame of each pair, odd
+        # lines from the second. Source frame i has red = 20 * i, so in output
+        # frame 1 (source frames 2 and 3) even lines read 40 and odd lines 60.
+        # A swapped or misaligned weave fails here (second review: the old
+        # check could not tell field order).
+        data = Path(out).read_bytes()
+        for k, (top, bottom) in enumerate(((0, 20), (40, 60))):
+            off = h.data_offset + k * h.plane_size
+            rgb, _a = m._hula_decode_frame(data[off:off + h.plane_size], None, h.width, h.height)
+            with self.subTest(output_frame=k):
+                self.assertAlmostEqual(int(rgb[100, 100, 0]), top, delta=3)
+                self.assertAlmostEqual(int(rgb[101, 100, 0]), bottom, delta=3)
+
+    def test_a_one_frame_50fps_eif_to_1080i50_is_not_empty(self):
+        """Second review: weaving needs pairs, so a one-frame 50fps EIF made an
+        SWS with no frames at all, reported as done. Found on a real desk file."""
+        h = m.HulaSWSHeader(self._sws(self._eif(50, 1, True), '1080i50'))
+        self.assertEqual(h.frame_count, 1)
+        self.assertTrue(h.has_key)
 
     def test_other_progressive_rates_keep_the_duration(self):
         h = m.HulaSWSHeader(self._sws(self._eif(50, 4, True), '1080p25'))

@@ -1753,7 +1753,12 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                 f"{os.path.basename(eif_path)} is a {eif_fps:.0f}fps EIF and cannot become "
                 f"{video_standard}: MacHuna does not convert between 50Hz and 60Hz "
                 f"interlaced standards. Choose 1080i50 or a progressive standard.")
-        if eif_fps == 50.0:
+        if eif_fps == 50.0 and n == 1:
+            # One frame cannot make a pair; weaving gave an SWS with no frames
+            # at all (second review, 2026-10-08). Keep it as it is.
+            plan = [(0,)]
+            how = "a single frame, kept as it is (nothing to weave)"
+        elif eif_fps == 50.0:
             plan = [(2 * k, 2 * k + 1) for k in range(n // 2)]
             how = "woven in pairs (TFF)"
             if n % 2:
