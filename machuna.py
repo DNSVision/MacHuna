@@ -1288,26 +1288,40 @@ def _encode_eif_frame_from_yuv(yuv, key_yuv=None) -> tuple:
 def _encode_eif_frame_from_rgba(rgba) -> tuple:
     """Encode 1080×1920 RGBA (or RGB) uint8 to EIF unit bytes via BT.709 encoding.
 
+    Values are ROUNDED, and colour is halved to 4:2:2 with a [1,2,1]/4 filter
+    centred on the sample kept (co-sited, as BT.709 4:2:2 is). Until 2026-10-08
+    this truncated and simply picked every other pixel's colour: every
+    RGB-sourced EIF was about half a level dark, and colour aliased at sharp
+    edges. Measured against the desk-proven MOV route on the same picture, the
+    brightness error fell about sevenfold and the edge colour error halved.
+
     Returns: (unit0_bytes, unit1_bytes, unit2_bytes) each _EIF_UNIT_BYTES long
     """
     H, W = 1080, 1920
-    r = rgba[:, :, 0].astype(np.float32) / 255.0
-    g = rgba[:, :, 1].astype(np.float32) / 255.0
-    b = rgba[:, :, 2].astype(np.float32) / 255.0
+    r = rgba[:, :, 0].astype(np.float64) / 255.0
+    g = rgba[:, :, 1].astype(np.float64) / 255.0
+    b = rgba[:, :, 2].astype(np.float64) / 255.0
     yn  = 0.2126 * r + 0.7152 * g + 0.0722 * b
     cbn = (b - yn) / 1.8556
     crn = (r - yn) / 1.5748
-    Y  = np.clip(yn  * 876.0 + 64.0, 64, 940).astype(np.int32)
-    Cb = np.clip(cbn * 896.0 + 512.0, 64, 960).astype(np.int32)
-    Cr = np.clip(crn * 896.0 + 512.0, 64, 960).astype(np.int32)
+    Y  = np.clip(np.rint(yn * 876.0 + 64.0), 64, 940).astype(np.int32)
+
+    def _cosited(c):
+        """[1,2,1]/4 along each row, edges repeated, keeping the even samples."""
+        left  = np.concatenate([c[:, :1], c[:, :-1]], axis=1)
+        right = np.concatenate([c[:, 1:], c[:, -1:]], axis=1)
+        return ((left + 2.0 * c + right) / 4.0)[:, 0::2]
+
+    Cb = np.clip(np.rint(_cosited(cbn * 896.0 + 512.0)), 64, 960).astype(np.int32)
+    Cr = np.clip(np.rint(_cosited(crn * 896.0 + 512.0)), 64, 960).astype(np.int32)
     if rgba.shape[2] == 4:
-        K = np.clip(rgba[:, :, 3].astype(np.float32) / 255.0 * 876.0 + 64.0,
+        K = np.clip(np.rint(rgba[:, :, 3].astype(np.float64) / 255.0 * 876.0 + 64.0),
                     64, 940).astype(np.int32)
     else:
         K = np.full((H, W), 940, dtype=np.int32)
     C  = np.empty((H, W), dtype=np.int32)
-    C[:, 0::2] = Cb[:, 0::2]
-    C[:, 1::2] = Cr[:, 0::2]
+    C[:, 0::2] = Cb
+    C[:, 1::2] = Cr
     words = ((K << 20) | (Y << 10) | C).astype(np.dtype('<u4'))
     data  = words.tobytes()
     u     = _EIF_UNIT_BYTES

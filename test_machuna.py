@@ -2094,6 +2094,65 @@ class TestTkPlayerEifAudio(unittest.TestCase):
         self.assertIn('_player_audio_for_eif(', body)
 
 
+class TestEifEncodingFromRgb(unittest.TestCase):
+    """The RGB-to-EIF encoder (TGA sequences, and SWS that needs scaling)
+    picked every other pixel's colour and truncated instead of rounding, so
+    every such EIF was slightly dark and its colour aliased at sharp edges.
+    Adopted 2026-10-08: round, and filter the colour [1,2,1] centred on the
+    sample that is kept, which brought the TGA route much closer to the
+    desk-proven MOV route."""
+
+    def _planes(self, rgba):
+        import numpy as np
+        u0, u1, u2 = m._encode_eif_frame_from_rgba(rgba)
+        w = np.frombuffer(u0 + u1 + u2, dtype='<u4').reshape(1080, 1920)
+        C = (w & 0x3FF).astype(int)
+        return ((w >> 10) & 0x3FF).astype(int), C[:, 0::2], C[:, 1::2], ((w >> 20) & 0x3FF).astype(int)
+
+    def test_values_are_rounded_not_truncated(self):
+        import numpy as np
+        rgba = np.full((1080, 1920, 4), (128, 128, 128, 128), dtype=np.uint8)
+        Y, Cb, Cr, K = self._planes(rgba)
+        # 128/255 * 876 + 64 = 503.72: rounds to 504, truncation gave 503.
+        self.assertEqual(int(Y[0, 0]), 504)
+        self.assertEqual(int(K[0, 0]), 504)
+        self.assertEqual((int(Cb[0, 0]), int(Cr[0, 0])), (512, 512))
+
+    def test_colour_at_a_sharp_edge_is_filtered_not_picked(self):
+        import numpy as np
+        rgba = np.zeros((1080, 1920, 4), dtype=np.uint8); rgba[..., 3] = 255
+        rgba[:, :1001] = (255, 0, 0, 255)     # red up to and including column 1000
+        rgba[:, 1001:] = (0, 0, 255, 255)     # blue from column 1001
+        _Y, Cb, _Cr, _K = self._planes(rgba)
+        cb = lambda rgb: (rgb[2] / 255 - (0.2126 * rgb[0] + 0.0722 * rgb[2]) / 255) / 1.8556 * 896 + 512
+        red, blue = cb((255, 0, 0)), cb((0, 0, 255))
+        self.assertEqual(int(Cb[0, 499]), int(np.rint(red)))                     # column 998: all red
+        # Column 1000 is red, its neighbours 999 (red) and 1001 (blue):
+        # (red + 2*red + blue) / 4. Picking would have given pure red.
+        self.assertEqual(int(Cb[0, 500]), int(np.rint((red * 3 + blue) / 4)))    # column 1000: blended
+        self.assertEqual(int(Cb[0, 501]), int(np.rint(blue)))                    # column 1002: all blue
+
+    @unittest.skipUnless((DESK_2026_10_07 / '0912.eif').exists(),
+                         'desk-session files not on this machine')
+    def test_tga_route_sits_close_to_the_desk_proven_mov_route(self):
+        """TNTS's own TGAs (which loaded correctly on the K-Frame) against
+        0912, the desk-proven EIF of the same picture from the 12-bit MOV."""
+        import numpy as np
+        from PIL import Image
+        tgas = sorted((DESK_2026_10_07 / 'tga' / 'as_1080p50' / 'TNTS 50i').glob('*.tga'))
+        if not tgas:
+            self.skipTest('TNTS TGAs not present')
+        ref = (DESK_2026_10_07 / '0912.eif').read_bytes()
+        U, H = m._EIF_UNIT_BYTES, 18260
+        for n in (12, 20):
+            Y, _cb, _cr, _k = self._planes(np.array(Image.open(tgas[n]).convert('RGBA')))
+            w = np.frombuffer(ref[H + n * 3 * U:H + (n + 1) * 3 * U], dtype='<u4').reshape(1080, 1920)
+            ry = ((w >> 10) & 0x3FF).astype(int)
+            with self.subTest(frame=n):
+                self.assertLess(abs(float(np.mean(Y - ry))), 0.1, 'brightness is biased')
+                self.assertLess(float(np.abs(Y - ry).mean()), 0.2)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
