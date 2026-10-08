@@ -1090,7 +1090,8 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float,
                        has_audio: bool = False) -> bytes:
     """Build 18260-byte EIF file header (Grass Valley K-Frame format).
 
-    [UNCONFIRMED: generated EIF output pending hardware verification on a live K-Frame desk]
+    Confirmed on a live K-Frame on 2026-10-07, at 50fps and (with the 0x064
+    rate-code fix) at 25fps/50i, with and without an .eaf.
     """
     is_25  = abs(fps - 25.0) <= abs(fps - 50.0)
     dur_us = 40000 if is_25 else 20000
@@ -1259,9 +1260,9 @@ def _eif_tail(fps: float) -> bytes:
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          cancel_event=None, out_name: str = None,
                          include_audio: bool = True) -> str:
-    """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format.
-
-    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
+    """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format, with its
+    .eaf audio when the source has sound. Confirmed on a live K-Frame,
+    2026-10-07.
     """
     log(f"Converting to EIF: {os.path.basename(input_path)}")
     info   = get_video_info(input_path)
@@ -1383,9 +1384,9 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None,
                         include_audio: bool = True) -> str:
-    """Convert a Kahuna SWS clip to K-Frame EIF format.
-
-    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
+    """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
+    into an .eaf. Same header and picture encoder as the desk-confirmed MOV
+    route.
     """
     h    = HulaSWSHeader(sws_path)
     log(f"  {h}")
@@ -2989,26 +2990,16 @@ class SWSPlayer(tk.Toplevel):
 #  Hula — SWS / MOV Extractor (integrated from DNSVision/Hula)
 #  Converts .SWS, .EIF or .MOV files to QuickTime MOV, K-Frame TGA,
 #  or Sony TGA format.
-#  NOTE: K-Frame TGA output parameters are UNCONFIRMED pending hardware
-#  verification. Sony TGA parameters are confirmed for Sony MVS.
+#  K-Frame TGA confirmed on a live K-Frame on 2026-10-07 from MOV, EIF and
+#  SWS sources (Image Store > Library, import as Sequence). Sony TGA warning
+#  lifted by David on 2026-10-08; not yet loaded on a Sony desk in testing.
 # ─────────────────────────────────────────────────────────────
 
-# Outputs that are written to spec but have never been loaded on the desk they
-# are for. The app said nothing about this until v1.7.1: the UNCONFIRMED notes
-# lived in docstrings and the README, where someone converting a clip at 2am
-# will never see them. Stated once per batch, factually, in the log.
-UNVERIFIED_OUTPUT_NOTES = {
-    "K-Frame EIF":  "K-Frame EIF output has not yet been confirmed on a live K-Frame desk. "
-                    "The format is built from analysis of real Kayenne clips and is believed "
-                    "correct, but no file from MacHuna has been loaded on one. Check the result "
-                    "before relying on it.",
-    "K-Frame TGA":  "K-Frame TGA output has not yet been confirmed on a live K-Frame desk. "
-                    "Frame naming and format are assumed from documentation. Check the result "
-                    "before relying on it.",
-    "Sony TGA":     "Sony MVS TGA output has not yet been confirmed on a live Sony MVS. The "
-                    "4-character clip naming is assumed from documentation, and 25i field order "
-                    "defaults to TFF with a toggle in the UI if motion looks wrong.",
-}
+# Outputs written to spec but never loaded on the desk they are for, stated
+# once per batch in the log. EMPTIED 2026-10-08: K-Frame EIF and K-Frame TGA
+# were confirmed on a live K-Frame on 2026-10-07, and David lifted the Sony
+# TGA warning on his own judgement. The mechanism stays for the next output.
+UNVERIFIED_OUTPUT_NOTES = {}
 
 
 # Not "unverified" but "not written yet": features known to be absent, kept
@@ -3033,7 +3024,7 @@ def unverified_output_note(output_name):
 
 
 HULA_TARGET_QUICKTIME_MOV = "QuickTime MOV"
-HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # UNCONFIRMED — awaiting hardware verification
+HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # confirmed on a live K-Frame, 2026-10-07
 HULA_TARGET_SONY_TGA    = "Sony TGA"
 _HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA}
 
@@ -3267,7 +3258,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
 
     Each pair of consecutive source frames is woven into one interlaced frame.
     field_order: 'BFF' or 'TFF'.  Output frame count = input frame count // 2.
-    [UNCONFIRMED: K-Frame TGA output parameters pending hardware verification]
+    K-Frame TGA confirmed on a live K-Frame, 2026-10-07.
     """
     stem     = Path(sws_path).stem
     folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
@@ -3361,7 +3352,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
 
     Progressive standards → direct frame extraction.
     Interlaced standards → frame pairs field-woven into interlaced output.
-    [UNCONFIRMED: K-Frame TGA output parameters pending hardware verification]
+    K-Frame TGA confirmed on a live K-Frame, 2026-10-07.
     """
     stem      = Path(mov_path).stem
     is_sony   = target == HULA_TARGET_SONY_TGA
@@ -3829,29 +3820,6 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
 # ─────────────────────────────────────────────────────────────
 #  Simple Tkinter GUI
 # ─────────────────────────────────────────────────────────────
-
-def _ask_confirm(parent, message: str) -> bool:
-    """Simple OK/Cancel dialog with no app icon."""
-    result = [False]
-    dlg = tk.Toplevel(parent)
-    dlg.title("")
-    dlg.resizable(False, False)
-    dlg.grab_set()
-    tk.Label(dlg, text=message, padx=20, pady=16).pack()
-    btn_frame = tk.Frame(dlg)
-    btn_frame.pack(pady=(0, 12))
-    ttk.Button(btn_frame, text="Cancel",
-               command=lambda: dlg.destroy()).pack(side='left', padx=8)
-    ttk.Button(btn_frame, text="OK",
-               command=lambda: (result.__setitem__(0, True), dlg.destroy())
-               ).pack(side='left', padx=8)
-    dlg.update_idletasks()
-    px = parent.winfo_x() + (parent.winfo_width()  - dlg.winfo_width())  // 2
-    py = parent.winfo_y() + (parent.winfo_height() - dlg.winfo_height()) // 2
-    dlg.geometry(f"+{px}+{py}")
-    parent.wait_window(dlg)
-    return result[0]
-
 
 def _scan_folder_unified(folder: str) -> tuple:
     """Scan a folder for all supported files.
@@ -5358,21 +5326,9 @@ def launch_gui():
                     parent=root)
                 return
 
-        # Warning for unconfirmed MOV→TGA path
-        if itype == 'mov_only' and out in (OUTPUT_KFRAME_TGA, OUTPUT_SONY_TGA):
-            if not _ask_confirm(root,
-                    "MOV → TGA has not been tested on hardware.\n\n"
-                    "The output may not load correctly on a K-Frame\n"
-                    "or Sony MVS desk.\n\nProceed anyway?"):
-                return
-
-        # Warning for unconfirmed EIF output
-        if out == OUTPUT_KFRAME_EIF:
-            if not _ask_confirm(root,
-                    "K-Frame EIF output has not been tested on hardware.\n\n"
-                    "The output may not load correctly on a live K-Frame desk.\n\n"
-                    "Proceed anyway?"):
-                return
+        # The "not tested on hardware - proceed anyway?" dialogs for MOV to TGA
+        # and EIF output were removed on 2026-10-08: K-Frame EIF and TGA were
+        # confirmed on a live K-Frame, and David lifted the Sony warning.
 
         # Every row is validated before anything is written. Nothing here
         # offers an overwrite - a clash has to be corrected.

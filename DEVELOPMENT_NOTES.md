@@ -86,10 +86,10 @@ git push
 
 > **This is the single authoritative list of open work.** `README.md` and `HANDOVER_NOTES.md` point here rather than keeping their own copies. The detailed sections lower down (EIF Roadmap, Outstanding review items, Extraction output hardware unknowns, Future Considerations) hold the specifics; this is the index. Reconcile it against git and the code when resuming - see the Session Anchor in `HANDOVER_NOTES.md`.
 
-**Blocked on hardware (the gate before "feature-complete"):**
-- **EIF hardware-test session** - the single most important item. Full checklist under "EIF Roadmap - hardware verification first" below. **Top two items: the `0x60` audio-flag test and the KNOCKOUT_WIPE round trip.** Unblocks: EIF write confirmation, 25fps movi tag, tail length, clip-name/slot rules, interlaced-EIF storage. **`.eaf` audio is no longer on this list** - the format was decoded on 2026-09-09 from David's own test files (see below), and **reading it shipped in v1.10.0**. Only *writing* an `.eaf` still needs the desk, because which channels a K-Frame expects is unknown - as is the `0x60` bit 2 audio flag, which is agenda item one.
-- **Extraction outputs on real desks** - K-Frame TGA, Sony TGA clip naming, Sony MVS 25i field order, MOV to TGA. See "Extraction output hardware unknowns" below. **QuickTime MOV is not on this list**: since v1.10.0 it is an ordinary ProRes 4444 file for an edit suite, verified by opening it, not a desk format.
-- **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong).
+**Blocked on hardware:**
+- ~~**EIF hardware-test session**~~ - **DONE 2026-10-07** on a live K-Frame. EIF write confirmed at 50fps and 25fps/50i, K-Frame TGA from MOV/EIF/SWS, `.eaf` writing, the `0x60` flag (harmless), the KNOCKOUT_WIPE round trip. Results under "KNOCKOUT_WIPE round-trip RESULTS"; fixes in `CHANGELOG.md` "Unreleased".
+- ~~**Extraction outputs on real desks**~~ - K-Frame TGA and MOV to TGA **confirmed 2026-10-07**. **Sony TGA warning lifted by David on 2026-10-08 on his own judgement**; its naming and 25i field order have still never been loaded on a Sony desk in testing (engineering note only, not shown to users).
+- **P->I field order on a genuine 1080i Kahuna** - TFF assumed correct; confirm on hardware (one-word flip to `interleave_bottom` if wrong). The only hardware question left. Files waiting in `~/Documents/DNS Vision/Wipes/MacHuna/DESK TESTS/`.
 
 **Open code work (no hardware needed):**
 - ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
@@ -190,6 +190,11 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   2026-10-08 at David's instruction**, same rule as K-Frame TGA: only a
   progressive source at 50fps or more is woven. TNTS 50i to Sony at 1080i50 now
   30 frames (was 15). Sony output itself is still unconfirmed on a Sony desk.
+- **Swift side of fix 5 (do with the engine pin move):** `Sources/MacHuna/Item.swift`
+  `unverifiedNote` has its own copy of the hardware warnings (K-Frame EIF,
+  K-Frame TGA, Sony TGA). All three must go, to match the engine (lifted
+  2026-10-08). The Swift app never used the engine's notes.
+
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour
@@ -512,18 +517,18 @@ The extraction code lives in a clearly marked section just above `launch_gui()`:
 
 Interlaced TGA output was implemented in v1.5.20 via field-weaving (pairs of progressive frames interleaved by line). Available for all interlaced standards via the Standard dropdown. Field order toggle (BFF/TFF) present; BFF assumed for PAL/50Hz, unconfirmed on hardware.
 
-### Extraction output hardware unknowns (as of v1.5.33)
+### Extraction output hardware unknowns (updated 2026-10-08)
 
-A thorough code review (May 2026) identified the following items that are coded but unconfirmed on real hardware. Each needs a live desk test before being marked confirmed.
+**All user-facing hardware warnings were lifted on 2026-10-08.** The table keeps the engineering record.
 
 | Item | Status | Notes |
 |------|--------|-------|
-| **K-Frame TGA output** | UNCONFIRMED | 32-bit RGBA, correct naming (0001.tga onwards). Marked UNCONFIRMED in code since v1.5.22. |
-| **Sony MVS TGA clip naming** | UNCONFIRMED | 4-char clip prefix + 4-digit frame number (e.g. `WIPE0000.tga`). Naming convention assumed from desk documentation; not verified by importing onto a live Sony MVS. |
-| **Interlaced source → MOV: interlace metadata** | KNOWN LIMITATION | A 1080i/50 source converted to QuickTime MOV produces a 25fps ProRes file with correctly decoded interlaced frames, but ffmpeg writes no field-order flag into the container, so a downstream NLE may not identify the frames as interlaced. Fix if it ever matters: add `-field_order tb` (TFF) or `bb` (BFF) to `_prores_cmd`. No longer a hardware question - MOV is not a desk format. |
-| **Interlaced SWS → TGA (progressive target)** | POTENTIAL CONFUSION | If an interlaced SWS is converted to TGA with a progressive standard selected, MacHuna does a straight frame dump (correct — it doesn't try to deinterlace). The resulting TGAs contain interlaced frames, which will show comb artefacts if treated as progressive. This is an edge case but worth documenting. |
-| **Sony MVS 25i field order** | UNCONFIRMED | TFF is now the default (changed from BFF in v1.6.3 on engineer advice). A TFF/BFF toggle is present in the UI. Needs live desk test — if motion artefacts appear, flip the toggle. |
-| **MOV → TGA** | UNCONFIRMED | Full path (MOV input + TGA target) is coded and routes correctly, but has never been tested on hardware. |
+| **K-Frame TGA output** | **CONFIRMED 2026-10-07** | From MOV, EIF and SWS on a live K-Frame at 1080i 25Hz: imported via Image Store > Library with "Sequence" selected, all frames, right way up (bottom-up and top-down both honoured), RLE and uncompressed both accepted. Naming `0001.tga` onwards. |
+| **MOV → TGA** | **CONFIRMED 2026-10-07** (K-Frame) | The TNTS 50i MOV route. Its 1080i50 double-weave bug was fixed 2026-10-08 (source-aware weaving). |
+| **Sony MVS TGA clip naming** | **Warning lifted by David, 2026-10-08** | 4-char clip prefix + 4-digit frame number (e.g. `WIPE0000.tga`). Never imported onto a Sony MVS in testing; David is confident it works. |
+| **Sony MVS 25i field order** | **Warning lifted by David, 2026-10-08** | TFF default (v1.6.3, engineer advice), BFF toggle in the UI. An interlaced source is no longer woven again (2026-10-08). Never loaded on a Sony desk in testing. |
+| **Interlaced source → MOV: interlace metadata** | KNOWN LIMITATION | A 1080i/50 source converted to QuickTime MOV produces a 25fps ProRes file with correctly decoded interlaced frames, but ffmpeg writes no field-order flag into the container, so a downstream NLE may not identify the frames as interlaced. Fix if it ever matters: add `-field_order tb` (TFF) or `bb` (BFF) to `_prores_cmd`. Not a hardware question. |
+| **Interlaced SWS → TGA (progressive target)** | POTENTIAL CONFUSION | A straight frame dump (correct); the TGAs contain interlaced frames, which show comb artefacts if treated as progressive. |
 
 **How to hardware-test:** Convert a known clip in MacHuna to SWS, then round-trip it back through MacHuna's extraction outputs. Load the result onto the target desk and verify correct playback, frame count, and field order. The K-Frame and Sony tests are independent — access to each desk is needed separately.
 

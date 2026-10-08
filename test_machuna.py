@@ -874,34 +874,38 @@ class TestContactEmail(unittest.TestCase):
 # ── unverified-output notices (v1.7.1) ────────────────────────────────────────
 
 class TestUnverifiedOutputNotes(unittest.TestCase):
+    """The mechanism for warning that an output has never been loaded on its
+    desk. Emptied on 2026-10-08: K-Frame EIF and K-Frame TGA were confirmed on
+    a live K-Frame on 2026-10-07, and David lifted the Sony TGA warning on his
+    own judgement the same day. The mechanism stays for the next new output."""
 
     def test_kahuna_sws_is_never_warned_about(self):
-        # confirmed on a live Kahuna across all seven standards - warning about
-        # it would be false caution, and would undermine the notices that matter
         self.assertIsNone(m.unverified_output_note('Kahuna SWS'))
 
-    def test_untested_desk_outputs_are_warned_about(self):
-        for out in ('K-Frame EIF', 'K-Frame TGA', 'Sony TGA'):
+    def test_no_desk_output_carries_a_hardware_warning(self):
+        for out in ('Kahuna SWS', 'K-Frame EIF', 'K-Frame TGA', 'Sony TGA',
+                    'TGA Sequence', 'QuickTime MOV'):
             with self.subTest(out=out):
-                note = m.unverified_output_note(out)
-                self.assertIsNotNone(note)
-                self.assertIn('has not yet been confirmed', note)
+                self.assertIsNone(m.unverified_output_note(out))
+        self.assertEqual(m.UNVERIFIED_OUTPUT_NOTES, {})
 
     def test_unknown_output_is_silent(self):
-        self.assertIsNone(m.unverified_output_note('TGA Sequence'))
         self.assertIsNone(m.unverified_output_note('something else'))
         self.assertIsNone(m.unverified_output_note(''))
 
-    def test_every_note_names_the_desk_it_is_about(self):
-        for out, note in m.UNVERIFIED_OUTPUT_NOTES.items():
-            with self.subTest(out=out):
-                self.assertTrue('K-Frame' in note or 'Sony' in note)
+    def test_the_proceed_anyway_dialogs_are_gone(self):
+        """The Tk app asked "has not been tested on hardware... Proceed
+        anyway?" before EIF output and MOV to TGA. Both are now proven."""
+        src = Path(m.__file__).read_text()
+        self.assertFalse('has not been tested on hardware' in src)
+        self.assertFalse('Proceed anyway?' in src)
 
-    def test_notes_cover_exactly_the_documented_unknowns(self):
-        # keep this in step with "Extraction output hardware unknowns" in
-        # DEVELOPMENT_NOTES.md; if a path is hardware-confirmed, remove it here
-        self.assertEqual(set(m.UNVERIFIED_OUTPUT_NOTES),
-                         {'K-Frame EIF', 'K-Frame TGA', 'Sony TGA'})
+    def test_no_unconfirmed_markers_remain_for_lifted_outputs(self):
+        src = Path(m.__file__).read_text()
+        for marker in ('UNCONFIRMED: EIF output', 'UNCONFIRMED: generated EIF',
+                       'UNCONFIRMED: K-Frame TGA', 'UNCONFIRMED — awaiting'):
+            with self.subTest(marker=marker):
+                self.assertFalse(marker in src, f'{marker!r} still in machuna.py')
 
     def test_quicktime_mov_is_not_a_desk_output(self):
         # A ProRes 4444 file is an ordinary video file. There is no desk to

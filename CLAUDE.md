@@ -122,16 +122,13 @@ Four rules, in order of value:
 
 **None of this makes the suite infallible.** The same person writes the code and the test, so they agree with each other perfectly when the misunderstanding is upstream. David found the misaligned scrollbar by looking at the app. That remains the backstop.
 
-## The Kayenne/K-Frame desk session (booked)
+## The K-Frame desk session - DONE 2026-10-07
 
-When this session happens, work from the checklist in `DEVELOPMENT_NOTES.md` under "EIF Roadmap - hardware verification first". David will have the laptop beside the desk with Claude in the loop, so **run from source (`python3.12 machuna.py --gui`), not from `dist/`** - a PyInstaller build is 90 seconds and iteration speed is the whole point.
+Results are in `DEVELOPMENT_NOTES.md` from "KNOCKOUT_WIPE round-trip RESULTS" onwards; test files and desk exports in `MacHuna-Swift/testmedia/desk/2026-10-07-kframe/`. Confirmed on a live K-Frame: EIF at 50fps and 25fps/50i (the latter needed the `0x064` rate-code fix), K-Frame TGA from MOV, EIF and SWS, and a MacHuna-written `.eaf`. The `.eaf` format was settled there (4ch 24-bit-in-32-bit LE, not 8ch 16-bit BE). The fixes are in the "Unreleased" section of `CHANGELOG.md`.
 
-**The two items at the top of that list, in order:**
+**Lessons for the next desk session:** run from source, not `dist/`. Check the desk's format before planning tests; after changing it, switch back and forth until a known-good clip plays correctly (until then every 25fps clip played double speed with a green bar). Image Store sequence import needs "Sequence" selected. A desk's own export is the best reference there is - get one from a known source first.
 
-1. **The `.eif` `0x60` bit 2 audio-flag test.** MacHuna sets that bit on every file it writes, announcing an `.eaf` companion it never creates. Across 28 real K-Frame files the bit predicts a companion perfectly. Load one file as-is and one patched to `0x03`; see if the desk cares. **Do NOT change that byte beforehand** - David's standing instruction, restated 2026-09-17.
-2. **The KNOCKOUT_WIPE round trip.** Load `~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov` into the desk, let it convert natively, and analyse what comes back against the source. Full baseline with falsifiable predictions is in `DEVELOPMENT_NOTES.md` under "KNOCKOUT_WIPE round-trip baseline". This needs none of MacHuna's output to be correct first, which is why it is worth doing early.
-
-Also on the list: whether a keyless source should get a key plane at all, `.eaf` channel mapping, tail length, clip-name/slot rules, and the untested extraction outputs.
+**Still needs hardware:** P to I field order on a genuine 1080i **Kahuna** (files waiting in `~/Documents/DNS Vision/Wipes/MacHuna/DESK TESTS/`). Sony TGA has never been loaded on a Sony desk in testing; its warning was lifted on David's judgement (2026-10-08).
 
 ## Key constraints
 
@@ -142,12 +139,9 @@ Also on the list: whether a keyless source should get a key plane at all, `.eaf`
 
 ## Extraction output hardware unknowns
 
-MacHuna's extraction logic is correct by code analysis, but the following output paths have never been tested on real hardware. Do not remove the UNCONFIRMED notes in the code or README until these are verified:
+**All user-facing hardware warnings were lifted on 2026-10-08.** K-Frame TGA (from MOV, EIF and SWS, including MOV to TGA) and K-Frame EIF were confirmed on a live K-Frame on 2026-10-07. The Sony TGA warning was lifted by David on his own judgement ("I am confident that Sony works"). What remains is recorded here for engineering, not shown to users:
 
-- **K-Frame TGA output** — frame naming and format unconfirmed
-- **Sony MVS clip naming** — 4-char prefix convention unconfirmed on a live Sony MVS
-- **Interlaced source → QuickTime MOV: interlace metadata** — ProRes has no field-order flag, so a downstream NLE may not see the frames as interlaced. Not a hardware question (MOV is not a desk format); fix if it matters by adding `-field_order tb`/`bb` to `_prores_cmd`
-- **Sony MVS 25i field order** — TFF default (on engineer advice); BFF toggle retained in UI if incorrect on hardware
-- **MOV → TGA** — full path coded, never hardware-tested
+- **Sony MVS clip naming** (4-char prefix) and **Sony 25i field order** (TFF default, BFF toggle) - never loaded on a Sony desk in testing.
+- **Interlaced source to QuickTime MOV: interlace metadata** - ProRes has no field-order flag, so a downstream NLE may not see the frames as interlaced. Not a hardware question; fix if it matters by adding `-field_order tb`/`bb` to `_prores_cmd`.
 
 Full detail in `DEVELOPMENT_NOTES.md` under "Extraction output hardware unknowns".
