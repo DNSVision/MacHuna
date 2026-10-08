@@ -1807,9 +1807,10 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
       50fps EIF -> 1080p50 as they are; 1080i50 by weaving pairs of frames (TFF)
       another progressive rate: frames picked by time, duration kept (decision A)
       another interlaced rate: refused
-    Picture data is repacked losslessly; weaving works on whole lines. An EIF
-    whose key is fully opaque throughout has no real key and gets no key plane
-    (decision C, "no key in, no key out").
+    Picture data is repacked losslessly; weaving works on whole lines. The key
+    is always kept: an EIF always stores one, and a key that is opaque
+    throughout may be an intended full-frame key (decision C, to drop it, was
+    reverted by David the same day: "always retain an alpha if there is one").
     """
     h = EIFHeader(eif_path)
     eif_fps = 50.0 if abs(h.fps - 50.0) < 1.0 else 25.0
@@ -1851,18 +1852,13 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
     with tempfile.TemporaryDirectory() as tmp:
         fill_path = os.path.join(tmp, 'fill.v210')
         key_path  = os.path.join(tmp, 'key.v210')
-        keyed = False
         cache = {}
 
         def frame(idx):
-            nonlocal keyed
             if idx not in cache:
                 cache.clear()
                 eif_fh.seek(h.video_start + idx * 3 * _EIF_UNIT_BYTES)
                 units = eif_fh.read(3 * _EIF_UNIT_BYTES)
-                k = (np.frombuffer(units, dtype='<u4') >> 20) & 0x3FF
-                if (k < 940).any():
-                    keyed = True
                 u = _EIF_UNIT_BYTES
                 cache[idx] = _eif_frame_to_v210be(units[:u], units[u:2 * u], units[2 * u:])
             return cache[idx]
@@ -1892,8 +1888,6 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                 if (o + 1) % 10 == 0 or o + 1 == out_count:
                     log(f"  Frame {o + 1}/{out_count}")
 
-        if not keyed:
-            log("  Key is opaque throughout - no key plane (no key in, no key out)")
         clip_name = h.clip_name or Path(eif_path).stem
         audio_raw = None
         if include_audio:
@@ -1911,10 +1905,10 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
             is_still=(out_count == 1),
             fps=out_fps,
             has_audio=audio_raw is not None,
-            has_key=keyed,
+            has_key=True,
         )
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_path, key_path if keyed else None, hdr, split_fat32,
+        write_sws(dest_path, fill_path, key_path, hdr, split_fat32,
                   frame_count=out_count, audio_raw=audio_raw, log=log)
 
     log(f"  Done → {dest_path}")

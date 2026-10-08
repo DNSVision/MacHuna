@@ -2588,10 +2588,10 @@ class TestInterlacedTgaToProgressiveSws(unittest.TestCase):
 
 
 class TestEifToSwsHonoursTheStandard(unittest.TestCase):
-    """Decisions C and D (David, 2026-10-08). EIF to SWS ignored the chosen
-    standard (25fps always became 1080p25, though a 25fps EIF usually holds
-    woven 50i), and a keyless EIF - whose stored key is opaque throughout -
-    gained a solid key plane, against "no key in, no key out"."""
+    """Decision D (David, 2026-10-08): EIF to SWS ignored the chosen standard
+    (25fps always became 1080p25, though a 25fps EIF usually holds woven 50i).
+    Decision C (drop an opaque-throughout key) was made and then reverted the
+    same day: an EIF's key is always kept."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -2656,8 +2656,11 @@ class TestEifToSwsHonoursTheStandard(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._sws(self._eif(25, 2, True), '1080i5994')
 
-    def test_a_keyless_eif_gives_an_sws_without_a_key_plane(self):
-        self.assertFalse(m.HulaSWSHeader(self._sws(self._eif(25, 2, False), '1080p25')).has_key)
+    def test_an_opaque_eif_key_is_kept(self):
+        """Decision C was reverted (David, 2026-10-08): an EIF always stores a
+        key, so one that is opaque throughout may be an intended full-frame key.
+        Always retain an alpha if there is one."""
+        self.assertTrue(m.HulaSWSHeader(self._sws(self._eif(25, 2, False), '1080p25')).has_key)
         self.assertTrue(m.HulaSWSHeader(self._sws(self._eif(25, 2, True), '1080p25')).has_key)
 
 
