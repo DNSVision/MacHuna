@@ -1760,6 +1760,71 @@ class TestAudioRoutes(unittest.TestCase):
                                    log=lambda *a: None)
         self.assertIsNone(_sws_audio(sws))
 
+    # ── SWS to SWS (another standard) keeps its audio ─────────────────────
+    def _sws_to_sws(self, src_std, out_std, **kw):
+        import numpy as np
+        # A 25p source for 1080p25; a 50p source for the 50Hz standards (a 25p
+        # source cannot become 1080i50 - that same-rate weave is blocked).
+        mov = 'stereo16' if src_std == '1080p25' else 'stereo24_50'
+        src = self._sws(mov, f's2s_src_{src_std}', std=src_std)
+        out = m.convert_sws_to_sws(src, 3, self._dir(f's2s_{src_std}_{out_std}'), out_std,
+                                   split_fat32=False, log=lambda *a: None, **kw)
+        return _sws_audio(src), out
+
+    def test_sws_to_sws_keeps_its_audio_through_every_standard_change(self):
+        """Interlaced to progressive doubles the frames and progressive to
+        interlaced halves them; the duration, and so the audio, is the same."""
+        import numpy as np
+        for src_std, out_std in (('1080p25', '1080p25'), ('1080p50', '1080i50'),
+                                 ('1080i50', '1080p50')):
+            a, out = self._sws_to_sws(src_std, out_std)
+            b = _sws_audio(out)
+            with self.subTest(src=src_std, out=out_std):
+                self.assertIsNotNone(b, 'the output SWS must carry the audio')
+                n = min(len(a), len(b))
+                self.assertGreater(n, 0)
+                self.assertTrue(np.array_equal(b[:n, 0], a[:n, 0]))
+                self.assertTrue(np.array_equal(b[:n, 2], a[:n, 2]))
+                h = m.HulaSWSHeader(out)
+                self.assertEqual(len(b), h.frame_count * int(round(48000 / h.fps)))
+
+    def test_sws_to_sws_include_audio_off_writes_none(self):
+        _a, out = self._sws_to_sws('1080p25', '1080p25', include_audio=False)
+        self.assertIsNone(_sws_audio(out))
+
+    def test_the_tk_app_uses_the_engine_sws_to_sws(self):
+        """The routing used to be written out inside the GUI (and again in the
+        Swift bridge), and both copies dropped the audio. One copy now."""
+        src = Path(m.__file__).read_text()
+        gui = src[src.index('def launch_gui'):]
+        self.assertIn('convert_sws_to_sws(', gui)
+        self.assertFalse('does not carry audio through' in src)
+
+    def test_a_cancelled_eif_does_not_leave_a_stale_eaf(self):
+        """Cancelling leaves a half-written picture; the old .eaf beside it
+        must not survive to be paired with it."""
+        import numpy as np, threading
+        from PIL import Image
+        cancel = threading.Event(); cancel.set()
+        d = self._dir('e_cancel')
+        stale = os.path.join(d, '0001.eaf')
+        t = os.path.join(d, 'f0000.tga')
+        Image.new('RGBA', (1920, 1080), (1, 2, 3, 255)).save(t)
+        routes = {
+            'clip': lambda: m.convert_clip_to_eif(self.src['stereo24'], d, log=lambda *a: None,
+                                                  out_name='0001', cancel_event=cancel),
+            'sws': lambda: m.convert_sws_to_eif(self._sws('stereo16', 'e_cancel_sws'), d,
+                                                log=lambda *a: None, out_name='0001',
+                                                cancel_event=cancel),
+            'tga': lambda: m.convert_tga_seq_to_eif([t], d, 'T', 25.0, log=lambda *a: None,
+                                                    out_name='0001', cancel_event=cancel),
+        }
+        for route, run in routes.items():
+            m.write_eaf(stale, np.full((1920, 2), 77, dtype=np.int64), 1, 25.0)
+            run()
+            with self.subTest(route=route):
+                self.assertFalse(os.path.exists(stale))
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np

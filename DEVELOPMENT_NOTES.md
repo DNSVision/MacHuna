@@ -190,6 +190,16 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   2026-10-08 at David's instruction**, same rule as K-Frame TGA: only a
   progressive source at 50fps or more is woven. TNTS 50i to Sony at 1080i50 now
   30 frames (was 15). Sony output itself is still unconfirmed on a Sony desk.
+- **Swift bridge changes that MUST land with the engine pin move (2026-10-08),
+  not before** - the pinned v1.11.0 engine does not have these arguments or
+  functions, so adding them early would break every conversion they touch:
+  - Pass `include_audio=job.get("includeAudio", True)` to `convert_eif_to_sws`,
+    `convert_clip_to_eif` and `convert_sws_to_eif` (bridge ~lines 391, 506,
+    509). Without it the Include audio tickbox is ignored for those routes.
+  - Replace the bridge's own SWS-to-SWS routing (~lines 412-440, which still
+    drops audio) with one call to `m.convert_sws_to_sws(...,
+    include_audio=...)`.
+  - Run `--selftest` after the move: it pins some behaviour against the engine.
 - **Swift side of fix 5 (do with the engine pin move):** `Sources/MacHuna/Item.swift`
   `unverifiedNote` has its own copy of the hardware warnings (K-Frame EIF,
   K-Frame TGA, Sony TGA). All three must go, to match the engine (lifted

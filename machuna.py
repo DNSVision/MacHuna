@@ -916,8 +916,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          write_log: bool = True,
                          source_interlaced: bool = False,
                          _vf_override: str = None,
-                         clip_name_override: str = None):
+                         clip_name_override: str = None,
+                         _audio_stereo24=None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
+
+    _audio_stereo24: internal, for SWS to SWS - the source's programme audio as
+    24-bit left/right, written into the SWS at the output's frame rate. A TGA
+    sequence has none of its own.
 
     clip_name_override: use this as the output header's clip name instead of the
     first frame's stem. Needed for SWS→SWS, where the intermediate frames are named
@@ -1024,6 +1029,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         clip_name = clip_name_override or Path(tga_files[0]).stem
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
+        audio_raw = None
+        if _audio_stereo24 is not None:
+            out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+            audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'), _audio_stereo24,
+                                       output_frame_count, out_fps)
+
         hdr = build_sws_header(
             source_filename=src_name,
             clip_name=clip_name,
@@ -1032,6 +1043,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
+            has_audio=audio_raw is not None,
             has_key=(actual_key is not None),
             auto_play=auto_play,
             loop_play=loop_play,
@@ -1039,7 +1051,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill_raw, actual_key, hdr, split_fat32,
-                  frame_count=output_frame_count, log=log)
+                  frame_count=output_frame_count, audio_raw=audio_raw, log=log)
 
     if delete_source:
         for f in tga_files:
@@ -1066,6 +1078,57 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             log(f"  Could not write log file: {e}")
 
     return dest_path
+
+
+
+def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
+                       video_standard: str, split_fat32: bool = True, log=print,
+                       ignore_alpha: bool = False, auto_play: bool = False,
+                       loop_play: bool = False, include_audio: bool = True) -> str:
+    """Re-encode an SWS to another standard, keeping its audio.
+
+    The routing was written out twice - in the Tk GUI and in MacHuna 2.0's
+    bridge - and both dropped the audio. It lives here now, once (2026-10-08).
+    Frames go out through a TGA intermediate exactly as before; the source's
+    programme audio (channels 1 and 3) goes straight into the new SWS at the
+    output's frame rate. The duration does not change, so neither does it.
+    """
+    src_hdr = HulaSWSHeader(sws_path)
+    src_interlaced = 'i' in src_hdr.standard
+    out_interlaced = 'i' in video_standard
+    stem = Path(sws_path).stem
+    stereo = _sws_stereo24(sws_path) if include_audio else None
+    with tempfile.TemporaryDirectory() as tmp:
+        tga_dir = _hula_convert_tga(sws_path, tmp, target=HULA_TARGET_KFRAME_TGA, log=log)
+        frames = sorted(str(p) for p in Path(tga_dir).glob('*.tga'))
+        if not frames:
+            raise ValueError(f"No frames extracted from {Path(sws_path).name}")
+        if src_interlaced and not out_interlaced:
+            # Source SWS's own header fps drives the rate decision, so a
+            # cross-rate target (i50 to p60, i5994 to p25) gets the fps resample
+            # it needs instead of playing at the wrong speed.
+            vf = _i_to_p_filter(src_hdr.fps, video_standard, parity='tff')
+            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
+                f" (interlaced→progressive via yadif)")
+        elif not src_interlaced and out_interlaced:
+            # Weave only if the source runs at the field rate; a same-rate or
+            # cross-rate source is blocked, not doubled.
+            vf = _p_to_i_field_map(src_hdr.fps, video_standard)
+            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
+                f" (progressive→interlaced TFF)")
+        else:
+            vf = None
+            log(f"  {stem}: {src_hdr.standard} → {video_standard} (passthrough)")
+        if stereo is not None:
+            log(f"  {stem}: audio carried through")
+        return convert_tga_sequence(
+            frames, file_number, dest_dir, video_standard, split_fat32, False, log,
+            # Follow the source's key state: the extractor always writes an
+            # opaque alpha, so a keyless source must not gain a key here.
+            ignore_alpha=ignore_alpha or not src_hdr.has_key,
+            auto_play=auto_play, loop_play=loop_play, write_log=False,
+            source_interlaced=False, _vf_override=vf, clip_name_override=stem,
+            _audio_stereo24=stereo)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1307,6 +1370,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                 for i in range(frame_count):
                     if cancel_event and cancel_event.is_set():
                         log("  Cancelled.")
+                        # The picture is incomplete: no old .eaf may stay beside it.
+                        _settle_eaf(dest_path, None, 0, 25.0, log)
                         return dest_path
                     yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
                     kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
@@ -1354,6 +1419,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         for i, path in enumerate(tga_files):
             if cancel_event and cancel_event.is_set():
                 log("  Cancelled.")
+                # The picture is incomplete: no old .eaf may stay beside it.
+                _settle_eaf(dest_path, None, 0, 25.0, log)
                 return dest_path
             img = Image.open(path)
             if img.size != (1920, 1080):
@@ -1410,6 +1477,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
         for i in range(h.frame_count):
             if cancel_event and cancel_event.is_set():
                 log("  Cancelled.")
+                # The picture is incomplete: no old .eaf may stay beside it.
+                _settle_eaf(dest_path, None, 0, 25.0, log)
                 return dest_path
             sws_fh.seek(fill_off + i * h.plane_size)
             fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
@@ -5419,57 +5488,14 @@ def launch_gui():
                             source_interlaced=source_interlaced_var.get())
                         results.append((fnum, item['base'].rstrip('._- '), 'OK'))
                     elif item['type'] == 'sws':
-                        src_hdr = HulaSWSHeader(item['path'])
-                        src_interlaced = 'i' in src_hdr.standard
-                        out_std = std_var.get()
-                        out_interlaced = 'i' in out_std
                         stem = Path(item['path']).stem
-                        tgt_fps = FORMAT_VARIANT_FPS.get(FORMAT_VARIANTS.get(out_std, 0), 25.0)
-                        with tempfile.TemporaryDirectory() as _tmp_sws:
-                            tga_dir = _hula_convert_tga(
-                                item['path'], _tmp_sws,
-                                target=HULA_TARGET_KFRAME_TGA, log=log)
-                            tga_files_sws = sorted(
-                                str(p) for p in Path(tga_dir).glob('*.tga'))
-                            if not tga_files_sws:
-                                raise ValueError(
-                                    f"No frames extracted from {Path(item['path']).name}")
-                            if src_interlaced and not out_interlaced:
-                                # Source SWS's own header fps drives the rate decision,
-                                # so a cross-rate target (i50→p60, i5994→p25) gets the
-                                # fps resample it needs instead of playing wrong-speed.
-                                vf_sws = _i_to_p_filter(src_hdr.fps, out_std, parity='tff')
-                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
-                                    f" (interlaced→progressive via yadif)")
-                            elif not src_interlaced and out_interlaced:
-                                # Progressive source SWS → interlaced output. Weave only
-                                # if the source runs at the field rate; the source SWS's
-                                # own frame rate (from its header) drives the decision, so
-                                # a same-rate/cross-rate source is blocked, not doubled.
-                                vf_sws = _p_to_i_field_map(src_hdr.fps, out_std)
-                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
-                                    f" (progressive→interlaced TFF)")
-                            else:
-                                vf_sws = None
-                                log(f"  {stem}: {src_hdr.standard} → {out_std}"
-                                    f" (passthrough)")
-                            if src_hdr.has_audio:
-                                log(f"  ⚠ {stem}: source SWS has embedded audio — "
-                                    f"SWS→SWS conversion does not carry audio through; "
-                                    f"audio dropped.")
-                            convert_tga_sequence(
-                                tga_files_sws, fnum, d, out_std,
-                                split_var.get(), False, log,
-                                # Follow the source's key state: if the source SWS had
-                                # no key plane, don't let a key be generated from the
-                                # opaque alpha the extractor always writes.
-                                ignore_alpha=ignore_alpha_var.get() or not src_hdr.has_key,
-                                auto_play=auto_play_var.get(),
-                                loop_play=loop_play_var.get(),
-                                write_log=False,
-                                source_interlaced=False,
-                                _vf_override=vf_sws,
-                                clip_name_override=stem)
+                        convert_sws_to_sws(
+                            item['path'], fnum, d, std_var.get(),
+                            split_fat32=split_var.get(), log=log,
+                            ignore_alpha=ignore_alpha_var.get(),
+                            auto_play=auto_play_var.get(),
+                            loop_play=loop_play_var.get(),
+                            include_audio=include_audio_var.get())
                         results.append((fnum, stem, 'OK'))
                     elif item['type'] == 'clip':
                         convert_clip(
