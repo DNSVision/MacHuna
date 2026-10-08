@@ -122,6 +122,48 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   be opened whenever there is something worth showing.
 - The **full Swift rewrite of the conversion pipeline** is a later phase - see the
   last paragraph of this roadmap.
+- **GUI questions raised by the K-Frame desk session (2026-10-07), to resolve
+  with David before building:**
+  - ~~**EIF audio controls**~~ - **DECIDED 2026-10-08**: one Include audio
+    tickbox exactly as for SWS - shown only when the source has audio, on by
+    default, binary, first two source channels become L/R. Mono to match SWS
+    (to be checked). Spec in `MacHuna-Swift/DESIGN_DECISIONS.md` section 43.
+  - ~~**The Standard control for K-Frame TGA output**~~ - **DECIDED 2026-10-08**:
+    no Standard control; worked out from the source, asking only when there is a
+    real choice (a progressive 50fps source: "Is the desk 50p or 50i?"). An
+    interlaced source is never woven again. K-Frame TGA only for now. Spec in
+    `MacHuna-Swift/DESIGN_DECISIONS.md` section 44; engine fix to
+    `_hula_convert_mov_to_tga` first.
+  - ~~**Dragging an EIF that has an `.eaf`**~~ - **DECIDED 2026-10-08**: the drag
+    carries both files, the row shows audio is present, clashes are left to the
+    Finder, and a missing `.eaf` counts as a vanished output. Spec in
+    `MacHuna-Swift/DESIGN_DECISIONS.md` section 42; built once `.eaf` writing
+    exists.
+
+- **AUDIO MUST MATCH THE TARGET, WHATEVER THE SOURCE (David, 2026-10-08).**
+  Every route that carries audio must write exactly what the target desk expects:
+  - Kahuna SWS: in-file, 16ch 16-bit LE 48kHz, L on 1, R on 3.
+  - K-Frame EIF: companion `.eaf`, 4ch 24-bit-in-32-bit LE 48kHz, L on 1, R on 2,
+    zero-padded to frame_count x samples-per-frame (spec under the 2026-10-07
+    desk results).
+  - QuickTime MOV: stereo PCM 48kHz.
+  Sources vary: MOV at 16 or 24-bit, mono to multichannel, sometimes 44.1kHz;
+  SWS's 16-channel layout; EIF's `.eaf`. **Proof required: an outcome test for
+  every source x target pair carrying audio** - convert a file with KNOWN audio,
+  read the written output back from disk, and check sample rate, channel slots,
+  bit depth, length against frame count, and content against the source.
+  Bit-exact where nothing is lost (e.g. 16-bit into `.eaf` is the sample `<< 8`);
+  where something must be lost (24-bit into 16-bit SWS) the test pins down the
+  exact rule. **Known failure today:** anything read from an `.eaf` (EIF to SWS,
+  EIF to MOV) is reduced to 8-bit by `read_eaf_stereo`. SWS to EIF and MOV to EIF
+  carry no audio at all until `.eaf` writing exists.
+
+- **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
+  commit; one engine release (v1.12.0) at the end with the full checklist, then
+  the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour
+  advice:** a K-Frame's own MOV import treats all ProRes as BT.601, so loading
+  ProRes straight in shifts saturated colours; converting through MacHuna does
+  not (desk results 2026-10-07).
 
 **Known limitations (recorded, not scheduled):**
 - **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one applies the tick to both, so one comes out wrong. David's view (2026-09-09): not a real use case. The v1.8.0 item list makes mixed batches easier to build than the old UI did, which is why it is worth recording. The fix, if ever needed, is a per-row option rather than a batch-wide checkbox.
