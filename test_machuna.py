@@ -2840,6 +2840,43 @@ class TestUntaggedHdColour(unittest.TestCase):
         self.assertLessEqual(abs(float(yuv[540, 1500, 2]) - ref[2, 540, 1500]), 2, 'SWS Cr shifted')
 
 
+class TestTgaAlphaIsReadNotAssumed(unittest.TestCase):
+    """Fable black-box pass, 2026-10-08: the probe assumed every TGA has alpha,
+    so a 24-bit TGA sequence (common for fill-only graphics) failed to convert
+    to SWS - ffmpeg was asked to extract a key that was not there."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _seq(self, mode, alpha=255):
+        from PIL import Image
+        files = []
+        for i in range(3):
+            p = os.path.join(self.tmp, f'{mode}_{alpha}_{i:04d}.tga')
+            colour = (40 * i, 80, 120) + ((alpha,) if mode == 'RGBA' else ())
+            Image.new(mode, (1920, 1080), colour).save(p)
+            files.append(p)
+        return files
+
+    def _sws(self, files):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        return m.HulaSWSHeader(m.convert_tga_sequence(files, 1, d, '1080p25', False, False,
+                                                      lambda *a: None, write_log=False))
+
+    def test_a_24_bit_tga_sequence_converts_without_a_key(self):
+        h = self._sws(self._seq('RGB'))
+        self.assertEqual(h.frame_count, 3)
+        self.assertFalse(h.has_key)
+
+    def test_a_32_bit_tga_sequence_keeps_its_key_even_fully_opaque(self):
+        """"Always retain an alpha if there is one" (David, 2026-10-08)."""
+        self.assertTrue(self._sws(self._seq('RGBA', 255)).has_key)
+        self.assertTrue(self._sws(self._seq('RGBA', 128)).has_key)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

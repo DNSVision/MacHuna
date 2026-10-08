@@ -459,9 +459,9 @@ def get_video_info(input_path: str) -> dict:
                             info['frame_count'] = max(1, int(dur * avg))
                 except Exception:
                     pass
-            # TGA files always have alpha in our use case
-            if input_path.lower().endswith('.tga'):
-                info['has_alpha'] = True
+            # A TGA's alpha is read from its pixel format (bgra vs bgr24), not
+            # assumed: assuming it made 24-bit TGA sequences fail to convert to
+            # SWS (Fable black-box pass, 2026-10-08).
 
         elif stream.get('codec_type') == 'audio':
             if not info['has_audio']:
