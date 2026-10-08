@@ -3959,3 +3959,55 @@ class TestSwsToSwsStaysTenBit(unittest.TestCase):
         self.assertEqual((h.width, h.height, h.frame_count, h.has_key), (1920, 1080, 4, True))
         y = m._v210_plane_to_yuv(of[0], 1920, 1080, 1)[0][540, :, 0]
         self.assertTrue(np.any(np.round(y).astype(int) % 4 != 0), 'only 8-bit steps survived')
+
+
+class TestThirdReviewFixes(unittest.TestCase):
+    """Third independent review (2026-10-08) of decisions H-M."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_failed_audio_rename_never_leaves_a_new_picture_with_old_sound(self):
+        import subprocess, numpy as np
+        from unittest import mock
+        src = os.path.join(self.tmp, 'a.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'testsrc=size=192x108:rate=25', '-f', 'lavfi', '-i', 'sine=sample_rate=48000',
+                        '-frames:v', '3', '-t', '0.12', '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', src], check=True)
+        d = os.path.join(self.tmp, 'o'); os.makedirs(d)
+        Path(d, '0001.eif').write_bytes(b'previous picture')
+        m.write_eaf(os.path.join(d, '0001.eaf'), np.full((1920, 2), 77, dtype=np.int64), 1, 25.0)
+        old_eaf = Path(d, '0001.eaf').read_bytes()
+        real = os.replace
+        def fail_on_eaf(a, b):
+            if str(b).endswith('.eaf'):
+                raise OSError('simulated')
+            return real(a, b)
+        with mock.patch.object(m.os, 'replace', side_effect=fail_on_eaf):
+            with self.assertRaises(OSError):
+                m.convert_clip_to_eif(src, d, log=lambda *a: None, out_name='0001')
+        eif = Path(d, '0001.eif')
+        if Path(d, '0001.eaf').read_bytes() == old_eaf:
+            self.assertTrue(not eif.exists() or eif.read_bytes() == b'previous picture',
+                            'a new picture was left beside the old sound')
+        self.assertEqual([f for f in os.listdir(d) if f.startswith('.')], [])
+
+    def test_an_sws_whose_plane_size_is_not_the_v210_size_is_refused(self):
+        import numpy as np
+        w, h, n = 1280, 720, 4
+        odd = ((w + 5) // 6) * 16 * h          # the pre-v1.6.8 formula
+        raw = os.path.join(self.tmp, 'f.v210')
+        Path(raw).write_bytes(np.zeros(odd * n, np.uint8).tobytes())
+        hdr = m.build_sws_header(source_filename='x.mov', clip_name='X', width=w, height=h,
+                                 frame_count=n, plane_size=odd, video_standard='1080p50',
+                                 is_still=False, fps=50.0, has_audio=False, has_key=False)
+        d = os.path.join(self.tmp, 's'); os.makedirs(d)
+        src = os.path.join(d, '1.SWS')
+        m.write_sws(src, raw, None, hdr, False, frame_count=n, log=lambda *a: None)
+        out = os.path.join(self.tmp, 'out'); os.makedirs(out)
+        with self.assertRaises(ValueError):
+            m.convert_sws_to_sws(src, 2, out, '1080p50', split_fat32=False, log=lambda *a: None)
+        self.assertEqual(os.listdir(out), [])

@@ -603,9 +603,16 @@ def convert_to_v210(input_path: str, output_path: str,
 def _byteswap_v210(path: str):
     """Swap bytes within each 32-bit word in a raw v210 file (LE -> BE)."""
     import numpy as np
-    data = np.fromfile(path, dtype='>u4')   # read as big-endian uint32
-    data.byteswap(inplace=True)             # swap to little-endian
-    data.tofile(path)                       # write back
+    # In place and in 64 MB blocks, so memory does not grow with the clip
+    # (third review, 2026-10-08: a 1 GB plane took 1.2 GB more RAM).
+    if os.path.getsize(path) < 4:
+        return
+    data = np.memmap(path, dtype='<u4', mode='r+')
+    step = 16 * 1024 * 1024
+    for i in range(0, len(data), step):
+        data[i:i + step] = data[i:i + step].byteswap()
+    data.flush()
+    del data
 
 
 def extract_audio(input_path: str, output_path: str, frame_count: int, fps: float) -> bool:
@@ -1446,6 +1453,11 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
     n = src.frame_count
     if n == 0:
         raise ValueError(f"{Path(sws_path).name} holds no frames")
+    if src.plane_size != _v210_plane_size(src.width, src.height):
+        # Lines are read at the standard 128-byte v210 stride; another plane
+        # size would be mis-read and lose frames silently (third review).
+        raise ValueError(f"{Path(sws_path).name}: its header plane size ({src.plane_size:,}) is "
+                         f"not the v210 size for {src.width}×{src.height}, so it cannot be read safely.")
     # Follow the source's key state; ignore_alpha drops it.
     keep_key = src.has_key and not ignore_alpha
 
@@ -4265,6 +4277,7 @@ def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=prin
     tmp_eif = _eif_partial_path(dest_path)
     eaf     = eaf_path_for(dest_path)
     tmp_eaf = _eif_partial_path(eaf) if stereo24 is not None else None
+    had_eaf = os.path.exists(eaf)
     try:
         if tmp_eaf:
             write_eaf(tmp_eaf, stereo24, frame_count, fps)
@@ -4272,12 +4285,23 @@ def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=prin
     except BaseException:
         _drop(tmp_eaf)
         raise
+    try:
+        if tmp_eaf:
+            os.replace(tmp_eaf, eaf)
+        elif os.path.exists(eaf):
+            os.remove(eaf)
+    except BaseException:
+        # The new picture is already in place but its sound is not: never
+        # leave it beside an old clip's .eaf (third review, 2026-10-08).
+        _drop(tmp_eaf)
+        _drop(dest_path)
+        log(f"  The audio could not be put in place, so the new "
+            f"{os.path.basename(dest_path)} was removed rather than left with the wrong sound")
+        raise
     if tmp_eaf:
-        os.replace(tmp_eaf, eaf)
         log(f"  Audio → {os.path.basename(eaf)} (24-bit, "
             f"{frame_count * _samples_per_frame(fps)} samples)")
-    elif os.path.exists(eaf):
-        os.remove(eaf)
+    elif had_eaf:
         log(f"  Removed {os.path.basename(eaf)} left from an earlier conversion "
             f"- this clip has no audio")
 
