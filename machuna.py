@@ -1478,25 +1478,29 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         stereo = _source_stereo24(input_path) if include_audio else None
         header = _build_eif_header(clip_name, frame_count, fps,
                                    has_audio=stereo is not None)
-        key_fh = open(key_path, 'rb') if key_path else None
         try:
-            with open(dest_path, 'wb') as out, open(fill_v210, 'rb') as fill_fh:
-                out.write(header)
-                for i in range(frame_count):
-                    if cancel_event and cancel_event.is_set():
-                        _discard_cancelled_eif(dest_path, out, log)
-                        return None
-                    yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
-                    kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
-                            if key_fh else None)
-                    u0, u1, u2 = _encode_eif_frame_from_yuv(yuv, kyuv)
-                    out.write(u0); out.write(u1); out.write(u2)
-                    if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                        log(f"  Frame {i + 1}/{frame_count}")
-                out.write(_eif_tail(fps))
-        finally:
-            if key_fh:
-                key_fh.close()
+            key_fh = open(key_path, 'rb') if key_path else None
+            try:
+                with open(dest_path, 'wb') as out, open(fill_v210, 'rb') as fill_fh:
+                    out.write(header)
+                    for i in range(frame_count):
+                        if cancel_event and cancel_event.is_set():
+                            _discard_cancelled_eif(dest_path, out, log)
+                            return None
+                        yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                        kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
+                                if key_fh else None)
+                        u0, u1, u2 = _encode_eif_frame_from_yuv(yuv, kyuv)
+                        out.write(u0); out.write(u1); out.write(u2)
+                        if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                            log(f"  Frame {i + 1}/{frame_count}")
+                    out.write(_eif_tail(fps))
+            finally:
+                if key_fh:
+                    key_fh.close()
+        except BaseException:
+            _discard_failed_eif(dest_path, log)
+            raise
         _settle_eaf(dest_path, stereo, frame_count, fps, log)
 
     log(f"  Done → {dest_path}")
@@ -1527,32 +1531,35 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
         f" → {os.path.basename(dest_path)}")
     header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
-    with open(dest_path, 'wb') as out_fh:
-        out_fh.write(header)
-        for i, path in enumerate(tga_files):
-            if cancel_event and cancel_event.is_set():
-                _discard_cancelled_eif(dest_path, out_fh, log)
-                return None
-            img = Image.open(path)
-            if img.size != (1920, 1080):
-                if source_interlaced:
-                    # Scale each field on its own, then weave them back, so the
-                    # two moments in time never blend into each other.
-                    a = np.asarray(img.convert('RGBA'))
-                    top = np.asarray(Image.fromarray(a[0::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
-                    bot = np.asarray(Image.fromarray(a[1::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
-                    woven = np.empty((1080, 1920, 4), dtype=np.uint8)
-                    woven[0::2], woven[1::2] = top, bot
-                    img = Image.fromarray(woven, 'RGBA')
-                else:
-                    img = img.resize((1920, 1080), Image.BILINEAR)
-            rgba = np.array(img.convert('RGBA'))
-            u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
-            out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
-            if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                log(f"  Frame {i + 1}/{frame_count}")
-        out_fh.write(_eif_tail(fps))
-
+    try:
+        with open(dest_path, 'wb') as out_fh:
+            out_fh.write(header)
+            for i, path in enumerate(tga_files):
+                if cancel_event and cancel_event.is_set():
+                    _discard_cancelled_eif(dest_path, out_fh, log)
+                    return None
+                img = Image.open(path)
+                if img.size != (1920, 1080):
+                    if source_interlaced:
+                        # Scale each field on its own, then weave them back, so the
+                        # two moments in time never blend into each other.
+                        a = np.asarray(img.convert('RGBA'))
+                        top = np.asarray(Image.fromarray(a[0::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
+                        bot = np.asarray(Image.fromarray(a[1::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
+                        woven = np.empty((1080, 1920, 4), dtype=np.uint8)
+                        woven[0::2], woven[1::2] = top, bot
+                        img = Image.fromarray(woven, 'RGBA')
+                    else:
+                        img = img.resize((1920, 1080), Image.BILINEAR)
+                rgba = np.array(img.convert('RGBA'))
+                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+                out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
+                if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                    log(f"  Frame {i + 1}/{frame_count}")
+            out_fh.write(_eif_tail(fps))
+    except BaseException:
+        _discard_failed_eif(dest_path, log)
+        raise
     # A TGA sequence carries no sound, so clear any stale companion.
     _settle_eaf(dest_path, None, frame_count, fps, log)
     log(f"  Done → {dest_path}")
@@ -1601,35 +1608,39 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
-    with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
-        out.write(header)
-        for n, i in enumerate(src_index):
-            if cancel_event and cancel_event.is_set():
-                _discard_cancelled_eif(dest_path, out, log)
-                return None
-            sws_fh.seek(fill_off + i * h.plane_size)
-            fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
-            key_yuv  = None
-            if h.has_key:
-                sws_fh.seek(key_off + i * h.plane_size)
-                key_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+    try:
+        with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
+            out.write(header)
+            for n, i in enumerate(src_index):
+                if cancel_event and cancel_event.is_set():
+                    _discard_cancelled_eif(dest_path, out, log)
+                    return None
+                sws_fh.seek(fill_off + i * h.plane_size)
+                fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+                key_yuv  = None
+                if h.has_key:
+                    sws_fh.seek(key_off + i * h.plane_size)
+                    key_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
 
-            if need_resize:
-                rgb   = _yuv_to_rgb8(fill_yuv)
-                alpha = _yuv_to_gray8(key_yuv) if key_yuv is not None else None
-                rgb   = np.array(Image.fromarray(rgb, 'RGB').resize((1920, 1080), Image.BILINEAR))
-                if alpha is not None:
-                    alpha = np.array(Image.fromarray(alpha, 'L').resize((1920, 1080), Image.BILINEAR))
-                    rgba  = np.dstack([rgb, alpha])
+                if need_resize:
+                    rgb   = _yuv_to_rgb8(fill_yuv)
+                    alpha = _yuv_to_gray8(key_yuv) if key_yuv is not None else None
+                    rgb   = np.array(Image.fromarray(rgb, 'RGB').resize((1920, 1080), Image.BILINEAR))
+                    if alpha is not None:
+                        alpha = np.array(Image.fromarray(alpha, 'L').resize((1920, 1080), Image.BILINEAR))
+                        rgba  = np.dstack([rgb, alpha])
+                    else:
+                        rgba  = np.dstack([rgb, np.full((1080, 1920), 255, np.uint8)])
+                    u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
                 else:
-                    rgba  = np.dstack([rgb, np.full((1080, 1920), 255, np.uint8)])
-                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
-            else:
-                u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
-            out.write(u0); out.write(u1); out.write(u2)
-            if (n + 1) % 10 == 0 or n + 1 == out_count:
-                log(f"  Frame {n + 1}/{out_count}")
-        out.write(_eif_tail(fps))
+                    u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
+                out.write(u0); out.write(u1); out.write(u2)
+                if (n + 1) % 10 == 0 or n + 1 == out_count:
+                    log(f"  Frame {n + 1}/{out_count}")
+            out.write(_eif_tail(fps))
+    except BaseException:
+        _discard_failed_eif(dest_path, log)
+        raise
     _settle_eaf(dest_path, stereo, out_count, fps, log)
 
     log(f"  Done → {dest_path}")
@@ -3842,6 +3853,19 @@ def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str
     with open(pcm_path, 'wb') as f:
         f.write(out.tobytes())
     return pcm_path
+
+
+def _discard_failed_eif(eif_path: str, log=print):
+    """A conversion that FAILED partway leaves a half-written picture: remove
+    it and any .eaf beside it, as a cancel does (independent review,
+    2026-10-08). The error itself is still raised to the caller."""
+    for p in (eif_path, eaf_path_for(eif_path)):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+    log(f"  Failed - removed the incomplete {os.path.basename(eif_path)}")
 
 
 def _discard_cancelled_eif(eif_path: str, fh, log=print):

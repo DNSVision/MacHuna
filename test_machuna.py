@@ -2002,6 +2002,47 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertTrue(any('audio' in l.lower() and 'split' in l.lower() for l in lines),
                         'the log must say the audio was left out')
 
+    def test_a_failed_eif_leaves_nothing_half_written(self):
+        """Independent review, 2026-10-08: a failure partway through (not a
+        cancel) left a partial .eif with a valid slot name, and any old .eaf."""
+        import numpy as np
+        from PIL import Image
+        d = self._dir('e_fail')
+        t = [os.path.join(d, f'f{i:04d}.tga') for i in range(3)]
+        for p in t:
+            Image.new('RGBA', (1920, 1080), (1, 2, 3, 255)).save(p)
+        sws = self._sws('stereo16', 'e_fail_sws')
+        routes = {
+            'clip': lambda: m.convert_clip_to_eif(self.src['stereo24'], d, log=lambda *a: None,
+                                                  out_name='0001'),
+            'sws': lambda: m.convert_sws_to_eif(sws, d, log=lambda *a: None, out_name='0001'),
+            'tga': lambda: m.convert_tga_seq_to_eif(t, d, 'T', 25.0, log=lambda *a: None,
+                                                    out_name='0001'),
+        }
+        encoders = ('_encode_eif_frame_from_yuv', '_encode_eif_frame_from_rgba')
+        for route, run in routes.items():
+            m.write_eaf(os.path.join(d, '0001.eaf'), np.ones((1920, 2), dtype=np.int64), 1, 25.0)
+            real = {fn: getattr(m, fn) for fn in encoders}
+            calls = [0]
+            def wrap(fn):
+                def boom(*a, **k):
+                    calls[0] += 1
+                    if calls[0] == 2:
+                        raise OSError('disk full (simulated)')
+                    return real[fn](*a, **k)
+                return boom
+            for fn in encoders:
+                setattr(m, fn, wrap(fn))
+            try:
+                with self.subTest(route=route):
+                    with self.assertRaises(OSError):
+                        run()
+                    self.assertFalse(os.path.exists(os.path.join(d, '0001.eif')), 'partial .eif left')
+                    self.assertFalse(os.path.exists(os.path.join(d, '0001.eaf')), 'old .eaf left')
+            finally:
+                for fn in encoders:
+                    setattr(m, fn, real[fn])
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
@@ -2140,6 +2181,16 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
         self.assertFalse(m.kframe_tga_asks_desk_format(self.i25))
         self.assertFalse(m.kframe_tga_asks_desk_format(self.p25))
         self.assertFalse(m.kframe_tga_asks_desk_format(self.e25))
+
+    def test_the_desk_question_for_sws_sources(self):
+        """Review: the helper's SWS branch had no test."""
+        d = tempfile.mkdtemp(dir=self.tmp)
+        m.convert_clip(self.p50, 1, d, video_standard='1080p50', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        m.convert_clip(self.p50, 2, d, video_standard='1080i50', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        self.assertTrue(m.kframe_tga_asks_desk_format(os.path.join(d, '1.SWS')))
+        self.assertFalse(m.kframe_tga_asks_desk_format(os.path.join(d, '2.SWS')))
 
 
 class TestInterlacedTgaToEif(unittest.TestCase):
