@@ -1824,6 +1824,10 @@ class TestAudioRoutes(unittest.TestCase):
             run()
             with self.subTest(route=route):
                 self.assertFalse(os.path.exists(stale))
+                # Nor the half-written picture: a partial file with a valid slot
+                # name could be loaded onto a desk by mistake (David, 2026-10-08).
+                self.assertFalse(os.path.exists(os.path.join(d, '0001.eif')),
+                                 'a cancelled conversion left a partial .eif')
 
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""

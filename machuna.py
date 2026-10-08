@@ -1383,10 +1383,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                 out.write(header)
                 for i in range(frame_count):
                     if cancel_event and cancel_event.is_set():
-                        log("  Cancelled.")
-                        # The picture is incomplete: no old .eaf may stay beside it.
-                        _settle_eaf(dest_path, None, 0, 25.0, log)
-                        return dest_path
+                        _discard_cancelled_eif(dest_path, out, log)
+                        return None
                     yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
                     kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
                             if key_fh else None)
@@ -1432,10 +1430,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         out_fh.write(header)
         for i, path in enumerate(tga_files):
             if cancel_event and cancel_event.is_set():
-                log("  Cancelled.")
-                # The picture is incomplete: no old .eaf may stay beside it.
-                _settle_eaf(dest_path, None, 0, 25.0, log)
-                return dest_path
+                _discard_cancelled_eif(dest_path, out_fh, log)
+                return None
             img = Image.open(path)
             if img.size != (1920, 1080):
                 if source_interlaced:
@@ -1490,10 +1486,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
         out.write(header)
         for i in range(h.frame_count):
             if cancel_event and cancel_event.is_set():
-                log("  Cancelled.")
-                # The picture is incomplete: no old .eaf may stay beside it.
-                _settle_eaf(dest_path, None, 0, 25.0, log)
-                return dest_path
+                _discard_cancelled_eif(dest_path, out, log)
+                return None
             sws_fh.seek(fill_off + i * h.plane_size)
             fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
             key_yuv  = None
@@ -3674,6 +3668,17 @@ def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str
     with open(pcm_path, 'wb') as f:
         f.write(out.tobytes())
     return pcm_path
+
+
+def _discard_cancelled_eif(eif_path: str, fh, log=print):
+    """A cancelled conversion leaves a half-written picture. A partial file
+    with a valid slot name could be loaded onto a desk by mistake, so it goes,
+    and so does any .eaf beside it (David, 2026-10-08)."""
+    fh.close()
+    for p in (eif_path, eaf_path_for(eif_path)):
+        if os.path.exists(p):
+            os.remove(p)
+    log(f"  Cancelled - removed the incomplete {os.path.basename(eif_path)}")
 
 
 def _settle_eaf(eif_path: str, stereo24, frame_count: int, fps: float, log=print):
