@@ -2354,6 +2354,66 @@ class TestInterlacedTgaToProgressiveSws(unittest.TestCase):
         self.assertEqual(self._frames('1080p5994'), 12)
 
 
+class TestEifToSwsHonoursTheStandard(unittest.TestCase):
+    """Decisions C and D (David, 2026-10-08). EIF to SWS ignored the chosen
+    standard (25fps always became 1080p25, though a 25fps EIF usually holds
+    woven 50i), and a keyless EIF - whose stored key is opaque throughout -
+    gained a solid key plane, against "no key in, no key out"."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _eif(self, fps, frames, keyed):
+        import numpy as np
+        from PIL import Image
+        tgas = []
+        for i in range(frames):
+            a = np.zeros((1080, 1920, 4), dtype=np.uint8)
+            a[..., 0] = 20 * i; a[..., 1] = 100; a[..., 3] = 255
+            if keyed:
+                a[:, 960:, 3] = 0
+            p = os.path.join(self.tmp, f'k{int(keyed)}_{fps}_{i:04d}.tga')
+            Image.fromarray(a, 'RGBA').save(p); tgas.append(p)
+        return m.convert_tga_seq_to_eif(tgas, self.tmp, 'E', float(fps), log=lambda *a: None,
+                                        out_name=f'{int(keyed)}{fps:03d}')
+
+    def _sws(self, eif, std):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        return m.convert_eif_to_sws(eif, 1, d, video_standard=std, split_fat32=False,
+                                    log=lambda *a: None)
+
+    def test_a_25fps_eif_can_be_1080i50(self):
+        h = m.HulaSWSHeader(self._sws(self._eif(25, 4, True), '1080i50'))
+        self.assertEqual(h.standard.replace('/', ''), '1080i50')
+        self.assertEqual(h.frame_count, 4)
+
+    def test_a_50fps_eif_is_woven_for_1080i50(self):
+        import numpy as np
+        out = self._sws(self._eif(50, 4, True), '1080i50')
+        h = m.HulaSWSHeader(out)
+        self.assertEqual((h.standard.replace('/', ''), h.frame_count), ('1080i50', 2))
+        # Lines alternate between the two source frames (different red levels).
+        rgb, _a = m._hula_decode_frame(Path(out).read_bytes()[h.data_offset:h.data_offset + h.plane_size],
+                                       None, h.width, h.height)
+        self.assertNotEqual(int(rgb[100, 100, 0]), int(rgb[101, 100, 0]))
+        self.assertEqual(int(rgb[100, 100, 0]), int(rgb[102, 100, 0]))
+
+    def test_other_progressive_rates_keep_the_duration(self):
+        h = m.HulaSWSHeader(self._sws(self._eif(50, 4, True), '1080p25'))
+        self.assertEqual((h.frame_count, h.fps), (2, 25.0))
+        h = m.HulaSWSHeader(self._sws(self._eif(25, 4, True), '1080p50'))
+        self.assertEqual((h.frame_count, h.fps), (8, 50.0))
+
+    def test_other_interlaced_rates_are_refused(self):
+        with self.assertRaises(ValueError):
+            self._sws(self._eif(25, 2, True), '1080i5994')
+
+    def test_a_keyless_eif_gives_an_sws_without_a_key_plane(self):
+        self.assertFalse(m.HulaSWSHeader(self._sws(self._eif(25, 2, False), '1080p25')).has_key)
+        self.assertTrue(m.HulaSWSHeader(self._sws(self._eif(25, 2, True), '1080p25')).has_key)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

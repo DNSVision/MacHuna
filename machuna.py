@@ -1652,63 +1652,119 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         split_fat32: bool = True,
                         log=print, cancel_event=None,
                         include_audio: bool = True) -> str:
-    """Convert a K-Frame EIF clip to Kahuna SWS format.
+    """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio.
 
-    video_standard is ignored — standard is derived from EIF fps (25→1080p25, 50→1080p50)
-    so the SWS frame rate always matches the source EIF.
+    The chosen standard is honoured (decision D, David 2026-10-08; it used to
+    be ignored, so a 25fps EIF - usually woven 50i on a K-Frame - always became
+    1080p25):
+      25fps EIF -> 1080p25 or 1080i50: frames as they are
+      50fps EIF -> 1080p50 as they are; 1080i50 by weaving pairs of frames (TFF)
+      another progressive rate: frames picked by time, duration kept (decision A)
+      another interlaced rate: refused
+    Picture data is repacked losslessly; weaving works on whole lines. An EIF
+    whose key is fully opaque throughout has no real key and gets no key plane
+    (decision C, "no key in, no key out").
     """
     h = EIFHeader(eif_path)
-    # Auto-derive standard from EIF fps — EIF is always 1920×1080 progressive
-    video_standard = '1080p50' if abs(h.fps - 50.0) < 1.0 else '1080p25'
+    eif_fps = 50.0 if abs(h.fps - 50.0) < 1.0 else 25.0
+    out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+    n = h.frame_count
+    if 'i' in video_standard:
+        if abs(out_fps - 25.0) > 0.01:
+            raise ValueError(
+                f"{os.path.basename(eif_path)} is a {eif_fps:.0f}fps EIF and cannot become "
+                f"{video_standard}: MacHuna does not convert between 50Hz and 60Hz "
+                f"interlaced standards. Choose 1080i50 or a progressive standard.")
+        if eif_fps == 50.0:
+            plan = [(2 * k, 2 * k + 1) for k in range(n // 2)]
+            how = "woven in pairs (TFF)"
+            if n % 2:
+                log(f"  Odd frame count ({n}) - last frame left out of the weave")
+        else:
+            plan = [(k,) for k in range(n)]
+            how = "frames as they are (woven 50i)"
+    elif abs(out_fps - eif_fps) < 0.01:
+        plan = [(k,) for k in range(n)]
+        how = "frames as they are"
+    else:
+        out_count = max(1, int(round(n * out_fps / eif_fps)))
+        plan = [(min(int(k * eif_fps / out_fps + 1e-9), n - 1),) for k in range(out_count)]
+        how = f"frame rate {eif_fps:.0f} → {out_fps:g}fps, duration kept"
+    out_count = len(plan)
     log(f"Converting EIF to SWS: {os.path.basename(eif_path)}")
-    log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps → {video_standard}")
+    log(f"  {n} frame(s) @ {eif_fps:.0f}fps → {out_count} frame(s) {video_standard}, {how}")
 
-    frame_count = h.frame_count
-    plane_size  = _EIF_PLANE_SIZE  # 1920×1080 v210
+    plane_size = _EIF_PLANE_SIZE  # 1920×1080 v210
+    row_bytes  = plane_size // 1080
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_path = os.path.join(tmp, 'fill.v210')
         key_path  = os.path.join(tmp, 'key.v210')
+        keyed = False
+        cache = {}
+
+        def frame(idx):
+            nonlocal keyed
+            if idx not in cache:
+                cache.clear()
+                eif_fh.seek(h.video_start + idx * 3 * _EIF_UNIT_BYTES)
+                units = eif_fh.read(3 * _EIF_UNIT_BYTES)
+                k = (np.frombuffer(units, dtype='<u4') >> 20) & 0x3FF
+                if (k < 940).any():
+                    keyed = True
+                u = _EIF_UNIT_BYTES
+                cache[idx] = _eif_frame_to_v210be(units[:u], units[u:2 * u], units[2 * u:])
+            return cache[idx]
+
+        def weave(a, b):
+            out = bytearray(plane_size)
+            for row in range(1080):
+                src = a if row % 2 == 0 else b          # TFF: top field from the first
+                out[row * row_bytes:(row + 1) * row_bytes] = src[row * row_bytes:(row + 1) * row_bytes]
+            return bytes(out)
 
         with open(eif_path, 'rb') as eif_fh, \
              open(fill_path, 'wb') as fill_fh, \
              open(key_path,  'wb') as key_fh:
-            for i in range(frame_count):
+            for o, srcs in enumerate(plan):
                 if cancel_event and cancel_event.is_set():
                     log("  Cancelled.")
                     return ''
-                eif_fh.seek(h.video_start + i * 3 * _EIF_UNIT_BYTES)
-                u0 = eif_fh.read(_EIF_UNIT_BYTES)
-                u1 = eif_fh.read(_EIF_UNIT_BYTES)
-                u2 = eif_fh.read(_EIF_UNIT_BYTES)
-                fill_be, key_be = _eif_frame_to_v210be(u0, u1, u2)
+                if len(srcs) == 1:
+                    fill_be, key_be = frame(srcs[0])
+                else:
+                    fa, ka = frame(srcs[0])
+                    fb, kb = frame(srcs[1])
+                    fill_be, key_be = weave(fa, fb), weave(ka, kb)
                 fill_fh.write(fill_be)
                 key_fh.write(key_be)
-                if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                    log(f"  Frame {i + 1}/{frame_count}")
+                if (o + 1) % 10 == 0 or o + 1 == out_count:
+                    log(f"  Frame {o + 1}/{out_count}")
 
+        if not keyed:
+            log("  Key is opaque throughout - no key plane (no key in, no key out)")
         clip_name = h.clip_name or Path(eif_path).stem
         audio_raw = None
         if include_audio:
             stereo = _read_eaf_words(eaf_path_for(eif_path), log=log)
             if stereo is not None:
                 audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'),
-                                           stereo, frame_count, h.fps)
+                                           stereo, out_count, out_fps)
         hdr = build_sws_header(
             source_filename=os.path.basename(eif_path),
             clip_name=clip_name,
             width=1920, height=1080,
-            frame_count=frame_count,
+            frame_count=out_count,
             plane_size=plane_size,
             video_standard=video_standard,
-            is_still=(frame_count == 1),
-            fps=h.fps,
+            is_still=(out_count == 1),
+            fps=out_fps,
             has_audio=audio_raw is not None,
-            has_key=True,
+            has_key=keyed,
         )
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
-        write_sws(dest_path, fill_path, key_path, hdr, split_fat32,
-                  frame_count=frame_count, audio_raw=audio_raw, log=log)
+        write_sws(dest_path, fill_path, key_path if keyed else None, hdr, split_fat32,
+                  frame_count=out_count, audio_raw=audio_raw, log=log)
 
     log(f"  Done → {dest_path}")
     return dest_path
