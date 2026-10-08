@@ -447,9 +447,9 @@ def get_video_info(input_path: str) -> dict:
 
         elif stream.get('codec_type') == 'audio':
             if not info['has_audio']:
-                # First audio stream only: the one -map 0:a:0 and the pan
-                # filters below read.
+                # First audio stream: the one the pan filters below read.
                 info['audio_channels'] = int(stream.get('channels') or 0)
+            info.setdefault('audio_streams', []).append(int(stream.get('channels') or 0))
             info['has_audio'] = True
 
     return info
@@ -546,11 +546,10 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
     # Mono goes to BOTH programme channels (David, 2026-10-08). The stereo rule
     # has no second input channel to send right, so v1.11.0 left mono on the
     # left only. Stereo and multichannel are unchanged, byte for byte.
-    mono = get_video_info(input_path).get('audio_channels') == 1
-    pan_filter = 'pan=16c|c0=c0|c2=c0' if mono else 'pan=16c|c0=c0|c2=c1'
+    # Dual mono (two mono tracks) is track 1 left, track 2 right (decision E).
+    audio_args, _ = _programme_audio_filter(get_video_info(input_path), '16c', 'c0', 'c2')
     cmd = [ffmpeg, '-y', '-i', input_path,
-           '-vn',
-           '-af', pan_filter,
+           '-vn'] + audio_args + [
            '-acodec', 'pcm_s16le',
            '-ar', '48000',
            '-f', 's16le',
@@ -792,6 +791,24 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
 
     log(f"  Done → {dest_path}")
     return dest_path
+
+
+def _programme_audio_filter(info: dict, layout: str, left: str, right: str):
+    """ffmpeg -filter_complex arguments that take a source's programme left and
+    right into `layout` on output channels `left` and `right` (e.g. '16c', 'c0',
+    'c2'). Stereo or more: the first two channels. Mono: the one channel to both
+    sides (David, 2026-10-08). Dual mono - a mono first track with a second
+    track beside it, common in broadcast ProRes - track 1 left, track 2 right
+    (decision E). Returns (args, output_label)."""
+    streams = info.get('audio_streams') or [info.get('audio_channels') or 2]
+    if streams[0] == 1 and len(streams) > 1:
+        graph = (f"[0:a:0][0:a:1]amerge=inputs=2,"
+                 f"pan={layout}|{left}=c0|{right}=c1[aout]")
+    elif streams[0] == 1:
+        graph = f"[0:a:0]pan={layout}|{left}=c0|{right}=c0[aout]"
+    else:
+        graph = f"[0:a:0]pan={layout}|{left}=c0|{right}=c1[aout]"
+    return ['-filter_complex', graph, '-map', '[aout]'], '[aout]'
 
 
 def _fps_expr(fps: float) -> str:
@@ -3773,12 +3790,11 @@ def _source_stereo24(input_path: str):
     info = get_video_info(input_path)
     if not info.get('has_audio'):
         return None
-    pan = ('pan=stereo|c0=c0|c1=c0' if info.get('audio_channels') == 1
-           else 'pan=stereo|c0=c0|c1=c1')
+    audio_args, _ = _programme_audio_filter(info, 'stereo', 'c0', 'c1')
     with tempfile.TemporaryDirectory() as tmp:
         raw = os.path.join(tmp, 'audio.s32')
         result = _run_ffmpeg([_get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error',
-                              '-i', input_path, '-map', '0:a:0', '-vn', '-af', pan,
+                              '-i', input_path, '-vn'] + audio_args + [
                               '-ar', str(EAF_SAMPLE_RATE), '-c:a', 'pcm_s32le',
                               '-f', 's32le', raw])
         if result.returncode != 0 or not os.path.exists(raw):

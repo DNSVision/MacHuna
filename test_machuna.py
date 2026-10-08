@@ -1950,6 +1950,38 @@ class TestAudioRoutes(unittest.TestCase):
             m.convert_clip(src, 1, self._dir('i25_to_i5994'), video_standard='1080i5994',
                            include_audio=False, split_fat32=False, log=lambda *a: None)
 
+    # ── Dual mono: two mono tracks (decision E, 2026-10-08) ────────────────
+    def _dual_mono(self):
+        import subprocess, wave, numpy as np
+        w1, w2 = os.path.join(self.tmp, 'dm1.wav'), os.path.join(self.tmp, 'dm2.wav')
+        for path, data in ((w1, self.L16), (w2, self.R16)):
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+                w.writeframes(data.astype('<i2').tobytes())
+        out = os.path.join(self.tmp, 'dualmono.mov')
+        if not os.path.exists(out):
+            subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.24', '-f', 'lavfi',
+                            '-i', 'testsrc=size=192x108:rate=25', '-i', w1, '-i', w2,
+                            '-map', '0:v', '-map', '1:a', '-map', '2:a', '-c:v', 'prores_ks',
+                            '-c:a', 'pcm_s16le', out], check=True)
+        return out
+
+    def test_dual_mono_puts_track_1_left_and_track_2_right(self):
+        """Independent review: track 1 went to both sides and track 2 was
+        thrown away. Common in broadcast ProRes."""
+        import numpy as np
+        src = self._dual_mono()
+        d = self._dir('dm_sws')
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        a = _sws_audio(os.path.join(d, '1.SWS'))
+        self.assertTrue(np.array_equal(a[:, 0], self.L16), 'SWS left is not track 1')
+        self.assertTrue(np.array_equal(a[:, 2], self.R16), 'SWS right is not track 2')
+        eif = m.convert_clip_to_eif(src, self._dir('dm_eif'), log=lambda *a: None, out_name='0001')
+        got = self._eaf24(eif)
+        self.assertTrue(np.array_equal(got[:, 0], self.L16 << 8), 'EIF left is not track 1')
+        self.assertTrue(np.array_equal(got[:, 1], self.R16 << 8), 'EIF right is not track 2')
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
