@@ -4079,3 +4079,38 @@ class TestFiftyNineNinetyFourAndSixtyAreOneFamily(unittest.TestCase):
     def test_other_interlaced_rates_are_still_refused(self):
         with self.assertRaises(ValueError):
             self._sws(self._mov('i25', '25', True), '1080i5994', 'r', [])
+
+
+class TestKeyPrecisionWithoutColourLabel(unittest.TestCase):
+    """Regression test against David's real material (2026-10-08): a keyed
+    clip with no colour label takes the key's fallback chain, which since
+    v1.12.1 went through 8-bit grey, so partial transparency came out up to
+    5 levels off the source alpha (v1.11.0: about 1). Judged against the
+    SOURCE's own alpha, not against either engine."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_soft_key_stays_within_a_level_and_a_half_of_the_source(self):
+        import subprocess, json, numpy as np
+        ff = m._get_ffmpeg_path('ffmpeg')
+        src = os.path.join(self.tmp, 'ramp.mov')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=1920x1080:rate=25',
+                        '-frames:v', '1', '-vf',
+                        "format=yuva444p12le,geq=lum='2048':cb='2048':cr='2048':a='X*4095/1919'",
+                        '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', src], check=True)
+        cs = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                                        'stream=color_space', '-of', 'json', src],
+                                       capture_output=True, text=True).stdout)['streams'][0].get('color_space', 'unknown')
+        self.assertIn(cs, ('unknown', None), 'the source must carry no colour label')
+        raw = subprocess.run([ff, '-v', 'error', '-i', src, '-f', 'rawvideo', '-pix_fmt', 'yuva444p12le', '-'],
+                             capture_output=True, check=True).stdout
+        ideal = 64 + np.frombuffer(raw, '<u2').reshape(4, 1080, 1920)[3] / 4095 * 876
+        eif = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0001')
+        w = np.fromfile(eif, '<u4', count=1080 * 1920, offset=m._EIF_HDR_SIZE).reshape(1080, 1920)
+        key = ((w >> 20) & 0x3FF).astype(float)
+        self.assertLessEqual(float(np.abs(key - ideal).max()), 1.5)
+        self.assertEqual((int(key.min()), int(key.max())), (64, 940))

@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.12.3 — 2026-10-08
+
+**Found by a regression run on real material** (David's TEST WIPES folder: ten 50p MOVs, a 50i MOV, a long H.264 clip with sound, a desk-made 50i EIF and four TGA sequences), converted through MacHuna 2.0's own bridge with the v1.11.0 engine and with this one, every difference then judged against the SOURCE, the desk or a recorded decision - never against the old engine. 85 conversions: 64 byte-identical, 20 different for reasons already in this changelog (each checked, several against the source itself), and one regression, fixed here.
+
+### Fixed
+- **A soft key on a clip with no colour label lost precision on its way to EIF** (and to an SWS when the clip needed scaling). Such clips take a fallback route for the key, which since v1.12.1 went through 8-bit grey: partial transparency came out up to 5 levels off the source's own alpha, where v1.11.0 was about 1 off. Solid keys were unaffected. The key now stays 16-bit to the end and is held in legal range by MacHuna itself (an ffmpeg limiter tried first turned clear areas opaque). Measured against the source alpha: within 1.3 levels on the real wipe, 1.5 on a full ramp; hard edges stay 64-940.
+
+### Checked against the source while doing so
+- The colour change on untagged ProRes (v1.12.1) is a real improvement: on MacHuna_Wipe, brightness is now within 1 level of the source, where v1.11.0 was up to 34 off.
+- SWS to SWS at the same standard now produces an exact copy of the source, picture and sound.
+
+---
+
 ## v1.12.2 — 2026-10-08
 
 ### Changed

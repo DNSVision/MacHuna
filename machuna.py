@@ -43,7 +43,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.12.2"
+VERSION = "1.12.3"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -598,16 +598,45 @@ def convert_to_v210(input_path: str, output_path: str,
                 # here. Unscaled, ffmpeg's own conversion to v210 puts the key in
                 # legal range; an explicit resize skips that, and a hard edge
                 # overshot to 4-1016. State the range conversion (Fable, 2026-10-08).
-                vf_key_fallback += f',{scale},format=gray,scale=out_range=tv,format=yuv420p'
+                # 16-bit grey, not 8: through 8-bit, partial transparency came
+                # out up to 5 levels off the source alpha (found by the
+                # regression run on David's real material, 2026-10-08).
+                # Legal range is then held by _clamp_v210_key below, so a hard
+                # edge cannot overshoot as the Fable pass found.
+                vf_key_fallback += f',{scale},format=gray16le,scale=out_range=tv'
             if vf_extra:
                 vf_key_fallback += f',{vf_extra}'
             cmd_key = [ffmpeg, '-y', '-i', input_path,
                        '-vf', vf_key_fallback,
                        '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
             _run_ffmpeg(cmd_key, check=True)
+            if width and height:
+                _clamp_v210_key(alpha_path)
         _byteswap_v210(alpha_path)
         return alpha_path
     return None
+
+
+def _clamp_v210_key(path: str, lo: int = 64, hi: int = 940):
+    """Hold every 10-bit sample of a little-endian v210 KEY plane in legal
+    range, in place and in blocks. A key's chroma is neutral (512), so only
+    the key level itself can move. Done here rather than with an ffmpeg
+    filter: `limiter` in the 16-bit key chain turned clear areas opaque
+    (measured 2026-10-08)."""
+    import numpy as np
+    if os.path.getsize(path) < 4:
+        return
+    data = np.memmap(path, dtype='<u4', mode='r+')
+    step = 16 * 1024 * 1024
+    for i in range(0, len(data), step):
+        w = data[i:i + step]
+        out = w & np.uint32(0xC0000000)
+        for shift in (0, 10, 20):
+            v = (w >> np.uint32(shift)) & np.uint32(0x3FF)
+            out |= np.clip(v, lo, hi).astype(np.uint32) << np.uint32(shift)
+        data[i:i + step] = out
+    data.flush()
+    del data
 
 
 def _byteswap_v210(path: str):
