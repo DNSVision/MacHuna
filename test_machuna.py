@@ -440,7 +440,7 @@ class TestEifFpsResample(unittest.TestCase):
                 f.truncate(m._EIF_PLANE_SIZE)
             return None  # no key plane
 
-        def fake_header(clip_name, frame_count, fps):
+        def fake_header(clip_name, frame_count, fps, **_kw):
             self.captured['header_fps'] = fps
             raise TestEifFpsResample._Stop
 
@@ -912,26 +912,19 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
 
 
 class TestMissingFeatureNotes(unittest.TestCase):
-    """EIF audio is not unproven, it is absent. Kept separate from the
-    hardware-unverified notices so the two are never conflated."""
+    """The mechanism for declaring a feature ABSENT, as distinct from
+    unproven. Its one entry, EIF audio, was retired on 2026-10-08 when .eaf
+    writing landed; the mechanism stays for the next one."""
 
-    def test_eif_audio_is_declared_missing(self):
-        note = m.missing_feature_note('K-Frame EIF')
-        self.assertIsNotNone(note)
-        self.assertIn('no audio', note)
-        self.assertIn('.eaf', note)
+    def test_eif_audio_is_no_longer_declared_missing(self):
+        self.assertIsNone(m.missing_feature_note('K-Frame EIF'))
 
-    def test_outputs_that_do_carry_audio_say_nothing(self):
-        for out in ('Kahuna SWS', 'K-Frame TGA', 'Sony TGA', 'TGA Sequence',
-                    'QuickTime MOV'):
+    def test_no_output_currently_declares_a_missing_feature(self):
+        for out in ('Kahuna SWS', 'K-Frame EIF', 'K-Frame TGA', 'Sony TGA',
+                    'TGA Sequence', 'QuickTime MOV'):
             with self.subTest(out=out):
                 self.assertIsNone(m.missing_feature_note(out))
-
-    def test_missing_is_not_the_same_list_as_unverified(self):
-        # EIF is both: untested on a desk AND missing audio. Everything else
-        # untested is only untested.
-        self.assertEqual(set(m.MISSING_FEATURE_NOTES), {'K-Frame EIF'})
-        self.assertIn('K-Frame EIF', m.UNVERIFIED_OUTPUT_NOTES)
+        self.assertEqual(m.MISSING_FEATURE_NOTES, {})
 
 
 class TestUsableGeometry(unittest.TestCase):
@@ -1482,6 +1475,301 @@ class TestEifToMovAudio(unittest.TestCase):
         self.assertEqual(len(got), n)
         self.assertTrue(np.array_equal(got[:, 0], left), 'MOV left is not the .eaf left')
         self.assertTrue(np.array_equal(got[:, 1], right), 'MOV right is not the .eaf right')
+
+
+class TestEafWriter(unittest.TestCase):
+    """write_eaf, held to the file a live K-Frame accepted and exported back
+    unchanged (0922, 2026-10-07), and to the layout rules proven that day."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    @unittest.skipUnless((DESK_2026_10_07 / 'audio' / 'desk_0922.eaf').exists(),
+                         'desk-session file 0922 not on this machine')
+    def test_reproduces_the_file_the_desk_returned_byte_for_byte(self):
+        import numpy as np
+        stereo = np.load(DESK_2026_10_07 / 'audio' / '0922_samples.npy')
+        out = os.path.join(self.tmp, '0922.eaf')
+        m.write_eaf(out, stereo, frame_count=30, fps=25.0)
+        self.assertEqual(Path(out).read_bytes(),
+                         (DESK_2026_10_07 / 'audio' / 'desk_0922.eaf').read_bytes())
+
+    def test_header_fields_at_both_rates(self):
+        import numpy as np
+        for fps, spf, rate in ((25.0, 1920, 0x0484), (50.0, 960, 0x04A4)):
+            out = os.path.join(self.tmp, f'h{int(fps)}.eaf')
+            m.write_eaf(out, np.zeros((100, 2), dtype=np.int64), frame_count=4, fps=fps)
+            head = Path(out).read_bytes()[:128]
+            with self.subTest(fps=fps):
+                self.assertEqual(struct.unpack_from('<I', head, 0x00)[0], 285365)
+                self.assertEqual(struct.unpack_from('<H', head, 0x60)[0], rate)
+                self.assertEqual(struct.unpack_from('<H', head, 0x62)[0], spf)
+                self.assertEqual(struct.unpack_from('<I', head, 0x64)[0], 4 * spf)
+                self.assertEqual(struct.unpack_from('<I', head, 0x6A)[0], 4)
+                self.assertEqual(os.path.getsize(out), 128 + 4 * spf * 16)
+
+    def test_short_audio_is_padded_with_silence_and_long_audio_trimmed(self):
+        import numpy as np
+        rng = np.random.default_rng(3)
+        for n in (1000, 1920 * 2, 9999):
+            src = rng.integers(-(1 << 23), 1 << 23, (n, 2))
+            out = os.path.join(self.tmp, f'len{n}.eaf')
+            m.write_eaf(out, src, frame_count=2, fps=25.0)
+            got = _stereo24(m.read_eaf_stereo24(out, log=lambda *a: None))
+            keep = min(n, 3840)
+            with self.subTest(samples=n):
+                self.assertEqual(len(got), 3840)
+                self.assertTrue(np.array_equal(got[:keep], src[:keep]))
+                self.assertEqual(int(np.abs(got[keep:]).max(initial=0)), 0)
+
+
+def _sws_audio(path):
+    """An SWS's audio as (n, 16) s16, read from the file on disk."""
+    import numpy as np
+    h = m.HulaSWSHeader(path)
+    if not h.has_audio:
+        return None
+    raw = Path(path).read_bytes()[h.audio_offset:]
+    a = np.frombuffer(raw, dtype='<i2')
+    return a[:len(a) // 16 * 16].reshape(-1, 16).astype(np.int64)
+
+
+class TestAudioRoutes(unittest.TestCase):
+    """Every route that carries audio, end to end, read back from disk. David's
+    requirement (2026-10-08): whatever the source, the output carries exactly
+    what the TARGET desk expects. Bit-exact where nothing is lost; 24-bit into
+    a 16-bit SWS keeps the top 16 bits, as the K-Frame's own import does."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            raise unittest.SkipTest('ffmpeg not available')
+        import numpy as np, subprocess, wave
+        cls.tmp = tempfile.mkdtemp()
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        rng = np.random.default_rng(1007)
+
+        def wav(path, chans, rate=48000, bits=24):
+            a = np.stack(chans, 1).astype(np.int64)
+            if bits == 24:
+                b = (a & 0xFFFFFF).astype('<u4').view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+            else:
+                b = a.astype('<i2').tobytes()
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(a.shape[1]); w.setsampwidth(bits // 8)
+                w.setframerate(rate); w.writeframes(b)
+
+        def mov(name, chans, fps=25, rate=48000, bits=24):
+            w = os.path.join(cls.tmp, name + '.wav')
+            wav(w, chans, rate, bits)
+            out = os.path.join(cls.tmp, name + '.mov')
+            # Limit the PICTURE input by duration. '-frames:v 6' on the output
+            # stops the whole file there and cuts longer audio mid-block, so
+            # the "long audio" source silently was not long.
+            subprocess.run([cls.ff, '-y', '-v', 'error', '-t', f'{6 / fps:g}', '-f', 'lavfi',
+                            '-i', f'testsrc=size=192x108:rate={fps}', '-i', w, '-map', '0:v',
+                            '-map', '1:a', '-c:v', 'prores_ks',
+                            '-c:a', f'pcm_s{bits}le', out], check=True)
+            return out
+
+        def tone(n, bits=24):
+            full = 1 << (bits - 1)
+            return rng.integers(-full // 4, full // 4, n)
+
+        n25 = 6 * 1920
+        cls.L, cls.R, cls.M = tone(n25), tone(n25), tone(n25)
+        cls.src = {
+            'stereo24': mov('stereo24', [cls.L, cls.R]),
+            'mono24': mov('mono24', [cls.M]),
+            'quad24': mov('quad24', [cls.L, cls.R, tone(n25), tone(n25)]),
+            'short24': mov('short24', [cls.L[:5000], cls.R[:5000]]),
+            'long24': mov('long24', [np.concatenate([cls.L, cls.L]), np.concatenate([cls.R, cls.R])]),
+            'stereo441': mov('stereo441', [tone(6 * 1764, 16), tone(6 * 1764, 16)], rate=44100, bits=16),
+            'stereo24_50': mov('stereo24_50', [cls.L[:6 * 960], cls.R[:6 * 960]], fps=50),
+        }
+        cls.L16, cls.R16 = tone(n25, 16), tone(n25, 16)
+        cls.src['stereo16'] = mov('stereo16', [cls.L16, cls.R16], bits=16)
+        cls.src['mono16'] = mov('mono16', [cls.L16], bits=16)
+        cls.src['silent'] = os.path.join(cls.tmp, 'silent.mov')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'testsrc=size=192x108:rate=25', '-frames:v', '6',
+                        '-c:v', 'prores_ks', cls.src['silent']], check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def test_the_test_sources_are_what_the_tests_assume(self):
+        """A source that is not what it claims makes every test on it
+        meaningless - the long-audio file once came out shorter than the clip."""
+        import subprocess
+        def audio_samples(path):
+            out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0',
+                                  '-show_entries', 'stream=duration_ts', '-of', 'csv=p=0', path],
+                                 capture_output=True, text=True).stdout.strip()
+            return int(out)
+        self.assertEqual(audio_samples(self.src['stereo24']), 6 * 1920)
+        self.assertEqual(audio_samples(self.src['short24']), 5000)
+        self.assertEqual(audio_samples(self.src['long24']), 12 * 1920)
+        self.assertEqual(m.get_video_info(self.src['mono24'])['audio_channels'], 1)
+        self.assertEqual(m.get_video_info(self.src['quad24'])['audio_channels'], 4)
+
+    def _dir(self, name):
+        d = os.path.join(self.tmp, name)
+        shutil.rmtree(d, True)
+        os.makedirs(d)
+        return d
+
+    def _eif(self, src, out_dir, **kw):
+        return m.convert_clip_to_eif(self.src[src], self._dir(out_dir), log=lambda *a: None,
+                                     out_name='0001', **kw)
+
+    def _flag(self, eif):
+        return struct.unpack_from('<I', Path(eif).read_bytes()[:0x64], 0x60)[0]
+
+    def _eaf24(self, eif):
+        return _stereo24(m.read_eaf_stereo24(m.eaf_path_for(eif), log=lambda *a: None))
+
+    # ── source to EIF ──────────────────────────────────────────────────────
+    def test_24_bit_stereo_to_eif_is_bit_exact(self):
+        import numpy as np
+        eif = self._eif('stereo24', 'e_s24')
+        got = self._eaf24(eif)
+        self.assertEqual(len(got), 6 * 1920)
+        self.assertTrue(np.array_equal(got[:, 0], self.L))
+        self.assertTrue(np.array_equal(got[:, 1], self.R))
+        self.assertEqual(self._flag(eif), 0x07, 'the .eif must announce its audio')
+
+    def test_16_bit_stereo_to_eif_is_the_sample_shifted_up(self):
+        import numpy as np
+        got = self._eaf24(self._eif('stereo16', 'e_s16'))
+        self.assertTrue(np.array_equal(got[:, 0], self.L16 << 8))
+        self.assertTrue(np.array_equal(got[:, 1], self.R16 << 8))
+
+    def test_50fps_uses_960_samples_per_frame(self):
+        import numpy as np
+        eif = self._eif('stereo24_50', 'e_50')
+        got = self._eaf24(eif)
+        self.assertEqual(len(got), 6 * 960)
+        self.assertTrue(np.array_equal(got[:, 0], self.L[:6 * 960]))
+        head = Path(m.eaf_path_for(eif)).read_bytes()[:128]
+        self.assertEqual(struct.unpack_from('<H', head, 0x62)[0], 960)
+
+    def test_mono_goes_to_both_channels(self):
+        import numpy as np
+        got = self._eaf24(self._eif('mono24', 'e_mono'))
+        self.assertTrue(np.array_equal(got[:, 0], self.M))
+        self.assertTrue(np.array_equal(got[:, 1], self.M))
+
+    def test_four_channels_take_the_first_two(self):
+        import numpy as np
+        got = self._eaf24(self._eif('quad24', 'e_quad'))
+        self.assertTrue(np.array_equal(got[:, 0], self.L))
+        self.assertTrue(np.array_equal(got[:, 1], self.R))
+
+    def test_short_audio_is_padded_and_long_audio_trimmed(self):
+        import numpy as np
+        short = self._eaf24(self._eif('short24', 'e_short'))
+        self.assertEqual(len(short), 6 * 1920)
+        self.assertTrue(np.array_equal(short[:5000, 0], self.L[:5000]))
+        self.assertEqual(int(np.abs(short[5000:]).max()), 0)
+        long_ = self._eaf24(self._eif('long24', 'e_long'))
+        self.assertEqual(len(long_), 6 * 1920)
+        self.assertTrue(np.array_equal(long_[:, 0], self.L))
+
+    def test_44_1khz_is_resampled_to_the_clip_length(self):
+        got = self._eaf24(self._eif('stereo441', 'e_441'))
+        self.assertEqual(len(got), 6 * 1920)
+        self.assertGreater(int(abs(got).max()), 0)
+
+    def test_include_audio_off_writes_no_eaf_and_says_so(self):
+        eif = self._eif('stereo24', 'e_off', include_audio=False)
+        self.assertFalse(os.path.exists(m.eaf_path_for(eif)))
+        self.assertEqual(self._flag(eif), 0x03)
+
+    def test_a_source_without_audio_writes_no_eaf(self):
+        eif = self._eif('silent', 'e_silent')
+        self.assertFalse(os.path.exists(m.eaf_path_for(eif)))
+        self.assertEqual(self._flag(eif), 0x03)
+
+    def test_a_stale_eaf_is_replaced_or_removed(self):
+        """Decision 2026-10-08: .eif and .eaf are one output. A leftover .eaf
+        would put an old clip's sound on air with a new picture."""
+        import numpy as np
+        d = self._dir('e_stale')
+        stale = os.path.join(d, '0001.eaf')
+        m.write_eaf(stale, np.full((3840, 2), 12345, dtype=np.int64), 2, 25.0)
+        m.convert_clip_to_eif(self.src['silent'], d, log=lambda *a: None, out_name='0001')
+        self.assertFalse(os.path.exists(stale), 'stale .eaf survived an audio-less EIF')
+        m.write_eaf(stale, np.full((3840, 2), 12345, dtype=np.int64), 2, 25.0)
+        eif = m.convert_clip_to_eif(self.src['stereo24'], d, log=lambda *a: None, out_name='0001')
+        self.assertTrue(np.array_equal(self._eaf24(eif)[:, 0], self.L), 'stale .eaf not replaced')
+
+    def test_tga_sequence_to_eif_has_no_audio_and_clears_a_stale_eaf(self):
+        import numpy as np
+        from PIL import Image
+        d = self._dir('e_tga')
+        stale = os.path.join(d, '0001.eaf')
+        m.write_eaf(stale, np.ones((1920, 2), dtype=np.int64), 1, 25.0)
+        t = os.path.join(d, 'f0000.tga')
+        Image.new('RGBA', (1920, 1080), (1, 2, 3, 255)).save(t)
+        eif = m.convert_tga_seq_to_eif([t], d, 'T', 25.0, log=lambda *a: None, out_name='0001')
+        self.assertFalse(os.path.exists(stale))
+        self.assertEqual(self._flag(eif), 0x03)
+
+    # ── SWS to EIF, EIF to SWS, and SWS mono ───────────────────────────────
+    def _sws(self, src, out_dir, std='1080p25'):
+        d = self._dir(out_dir)
+        m.convert_clip(self.src[src], 1, d, video_standard=std, include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        return os.path.join(d, '1.SWS')
+
+    def test_sws_to_eif_carries_the_sws_left_and_right(self):
+        import numpy as np
+        sws = self._sws('stereo16', 's_for_eif')
+        a = _sws_audio(sws)
+        eif = m.convert_sws_to_eif(sws, self._dir('se'), log=lambda *a: None, out_name='0002')
+        got = self._eaf24(eif)
+        self.assertTrue(np.array_equal(got[:, 0], a[:, 0] << 8))
+        self.assertTrue(np.array_equal(got[:, 1], a[:, 2] << 8))
+        self.assertEqual(self._flag(eif), 0x07)
+
+    def test_eif_to_sws_puts_the_eaf_on_the_kahuna_channels(self):
+        """L on channel 1, R on channel 3, the rest silent; 24-bit keeps its
+        top 16 bits."""
+        import numpy as np
+        eif = self._eif('stereo24', 'es_src')
+        d = self._dir('es_out')
+        sws = m.convert_eif_to_sws(eif, 9, d, split_fat32=False, log=lambda *a: None)
+        a = _sws_audio(sws)
+        self.assertIsNotNone(a, 'the SWS header must declare its audio')
+        self.assertEqual(len(a), 6 * 1920)
+        self.assertTrue(np.array_equal(a[:, 0], self.L >> 8))
+        self.assertTrue(np.array_equal(a[:, 2], self.R >> 8))
+        others = [c for c in range(16) if c not in (0, 2)]
+        self.assertEqual(int(np.abs(a[:, others]).max()), 0)
+
+    def test_eif_without_eaf_to_sws_has_no_audio(self):
+        eif = self._eif('silent', 'es_silent_src')
+        sws = m.convert_eif_to_sws(eif, 9, self._dir('es_silent'), split_fat32=False,
+                                   log=lambda *a: None)
+        self.assertIsNone(_sws_audio(sws))
+
+    def test_mono_to_sws_goes_to_both_kahuna_channels(self):
+        """Decision 2026-10-08. v1.11.0 put mono on the left only."""
+        import numpy as np
+        a = _sws_audio(self._sws('mono16', 's_mono'))
+        self.assertTrue(np.array_equal(a[:, 0], self.L16))
+        self.assertTrue(np.array_equal(a[:, 2], self.L16))
+
+    def test_stereo_to_sws_is_unchanged(self):
+        import numpy as np
+        a = _sws_audio(self._sws('stereo16', 's_stereo'))
+        self.assertTrue(np.array_equal(a[:, 0], self.L16))
+        self.assertTrue(np.array_equal(a[:, 2], self.R16))
+        others = [c for c in range(16) if c not in (0, 2)]
+        self.assertEqual(int(np.abs(a[:, others]).max()), 0)
 
 
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))

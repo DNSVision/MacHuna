@@ -180,6 +180,15 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   and the desk has now said which is right. This settles the old "Interlaced EIF
   reconciliation" item: the TGA route should write woven 25fps. Not yet changed.
 
+- **Split SWS files drop their audio but the header still declares it
+  (pre-existing, found 2026-10-08 during fix 3).** `write_sws` sends anything
+  over the FAT32 limit to `_write_sws_split`, which never writes audio
+  ("audio is not supported in split files"), but the header was already built
+  with `has_audio=True`. Affects MOV to SWS since long before the desk fixes, and
+  now EIF to SWS for long clips too. Not changed by fix 3. Fix: build the header
+  after deciding whether the file splits, or support audio in split files once a
+  reference exists.
+
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour

@@ -18,6 +18,18 @@ Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; t
   - The old tests were replaced, not adjusted: they built test files in the same mistaken layout the reader assumed, so the two agreed perfectly while both were wrong.
   - **MacHuna 2.0's Video Player plays EIF audio correctly too**, once it moves to this engine, with no Swift change. Its bridge plays and meters `read_eaf_stereo`'s 16-bit stereo directly, so that function keeps its 16-bit contract (now the true top 16 bits of each sample); a new `read_eaf_stereo24` gives the full 24 bits to routes that can keep them.
 
+### Added
+- **EIF output now carries audio.** Converting a MOV or an SWS to K-Frame EIF writes the companion `.eaf` audio file beside the `.eif`, in the layout proven on a live K-Frame: four channels of 24-bit audio at 48kHz, left on 1 and right on 2, padded with silence or trimmed to the clip length. The `.eif` announces it. **A KNOCKOUT_WIPE conversion now produces an `.eaf` identical to the one the K-Frame made from the same MOV**, apart from the desk's date stamp, which the desk does not need.
+  - 24-bit sources keep all 24 bits (the desk's own MOV import keeps only 16). 44.1kHz is resampled to 48kHz. Four or more channels: the first two are left and right.
+  - **Include audio** is on by default, matching decision 43; the engine takes `include_audio` on every EIF route.
+- **EIF to SWS now carries the `.eaf` audio** into the SWS in the Kahuna's layout (left on 1, right on 3), keeping the top 16 bits of each 24-bit sample, as the K-Frame's own import does. Before, this route dropped audio entirely.
+
+### Changed
+- **A mono source now plays on both left and right**, in SWS as well as EIF (David, 8 October). Until now SWS put mono on the left only, an accident of the channel routing, never hardware-confirmed. **Stereo and multichannel SWS output is byte-identical to before** (proved on stereo, four-channel, 44.1kHz and 24-bit sources, timestamps aside); for mono, the only bytes that change are the right channel's audio.
+- **The `.eif` audio flag now tells the truth.** It said "has audio" on every 25fps clip and "no audio" on every 50fps clip, because the rule came from reference files where frame rate and audio happened to coincide. The desk did not mind (tested on 7 October), but it now matches the desk's own files.
+- **An `.eif` and its `.eaf` are treated as one output.** Writing an EIF either writes fresh audio or removes a leftover `.eaf` of the same name, and says so in the log. Otherwise an old clip's sound could be paired with a new picture on air, because the desk matches them by name alone.
+- The "EIF output carries no audio" warning is gone, because it is no longer true.
+
 ---
 
 ## v1.11.0 — 2026-09-18

@@ -446,6 +446,10 @@ def get_video_info(input_path: str) -> dict:
                 info['has_alpha'] = True
 
         elif stream.get('codec_type') == 'audio':
+            if not info['has_audio']:
+                # First audio stream only: the one -map 0:a:0 and the pan
+                # filters below read.
+                info['audio_channels'] = int(stream.get('channels') or 0)
             info['has_audio'] = True
 
     return info
@@ -532,7 +536,11 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
     # A straight -ac 16 upmix puts L on Ch1 and R on Ch2 which is wrong.
     # Use the pan filter to route explicitly. Unspecified channels are silent.
     # Note: 'c1=0' syntax is invalid in ffmpeg -- just omit silent channels.
-    pan_filter = 'pan=16c|c0=c0|c2=c1'
+    # Mono goes to BOTH programme channels (David, 2026-10-08). The stereo rule
+    # has no second input channel to send right, so v1.11.0 left mono on the
+    # left only. Stereo and multichannel are unchanged, byte for byte.
+    mono = get_video_info(input_path).get('audio_channels') == 1
+    pan_filter = 'pan=16c|c0=c0|c2=c0' if mono else 'pan=16c|c0=c0|c2=c1'
     cmd = [ffmpeg, '-y', '-i', input_path,
            '-vn',
            '-af', pan_filter,
@@ -1078,7 +1086,8 @@ _EIF_AUDIO_EXT = bytes.fromhex(
 )
 
 
-def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
+def _build_eif_header(clip_name: str, frame_count: int, fps: float,
+                       has_audio: bool = False) -> bytes:
     """Build 18260-byte EIF file header (Grass Valley K-Frame format).
 
     [UNCONFIRMED: generated EIF output pending hardware verification on a live K-Frame desk]
@@ -1086,7 +1095,10 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float) -> bytes:
     is_25  = abs(fps - 25.0) <= abs(fps - 50.0)
     dur_us = 40000 if is_25 else 20000
     fps_i  = 25    if is_25 else 50
-    flags  = 0x07  if is_25 else 0x03
+    # 0x060 bit 2 announces a companion .eaf: 0x07 with one, 0x03 without, in
+    # every desk-made file. Was set by frame rate, which held only because the
+    # 50fps references happened to have no audio. Desk session 2026-10-07.
+    flags  = 0x07  if has_audio else 0x03
     unk064 = 0x84  if is_25 else 0xA4
     # 8-byte movi chunk identifier (fps-dependent, confirmed from real EIF files)
     movi_tag = b'RIFFRIFF' if is_25 else b'\x00\x02\x01\x04\x00\x02\x01\x04'
@@ -1245,7 +1257,8 @@ def _eif_tail(fps: float) -> bytes:
 
 
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
-                         cancel_event=None, out_name: str = None) -> str:
+                         cancel_event=None, out_name: str = None,
+                         include_audio: bool = True) -> str:
     """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format.
 
     [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
@@ -1283,7 +1296,9 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         log(f"  {info['width']}×{info['height']} @ {fps_in:.3g}fps → "
             f"EIF 1920×1080 @ {fps:.0f}fps, {frame_count} frame(s)")
 
-        header = _build_eif_header(clip_name, frame_count, fps)
+        stereo = _source_stereo24(input_path) if include_audio else None
+        header = _build_eif_header(clip_name, frame_count, fps,
+                                   has_audio=stereo is not None)
         key_fh = open(key_path, 'rb') if key_path else None
         try:
             with open(dest_path, 'wb') as out, open(fill_v210, 'rb') as fill_fh:
@@ -1303,6 +1318,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         finally:
             if key_fh:
                 key_fh.close()
+        _settle_eaf(dest_path, stereo, frame_count, fps, log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -1398,12 +1414,16 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                     log(f"  Frame {i + 1}/{frame_count}")
             out_fh.write(_eif_tail(fps))
 
+    # A TGA sequence carries no sound, so clear any stale companion.
+    _settle_eaf(dest_path, None, frame_count,
+                fps_out if source_interlaced else fps, log)
     log(f"  Done → {dest_path}")
     return dest_path
 
 
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
-                        log=print, cancel_event=None, out_name: str = None) -> str:
+                        log=print, cancel_event=None, out_name: str = None,
+                        include_audio: bool = True) -> str:
     """Convert a Kahuna SWS clip to K-Frame EIF format.
 
     [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
@@ -1419,7 +1439,9 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     if need_resize:
         log(f"  Scaling {h.width}×{h.height} → 1920×1080")
 
-    header   = _build_eif_header(stem[:31].upper(), h.frame_count, fps)
+    stereo   = _sws_stereo24(sws_path) if include_audio else None
+    header   = _build_eif_header(stem[:31].upper(), h.frame_count, fps,
+                                 has_audio=stereo is not None)
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
@@ -1452,6 +1474,7 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
             if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
                 log(f"  Frame {i + 1}/{h.frame_count}")
         out.write(_eif_tail(fps))
+    _settle_eaf(dest_path, stereo, h.frame_count, fps, log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -1500,7 +1523,8 @@ def _eif_frame_to_v210be(u0: bytes, u1: bytes, u2: bytes):
 def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         video_standard: str = '1080p25',
                         split_fat32: bool = True,
-                        log=print, cancel_event=None) -> str:
+                        log=print, cancel_event=None,
+                        include_audio: bool = True) -> str:
     """Convert a K-Frame EIF clip to Kahuna SWS format.
 
     video_standard is ignored — standard is derived from EIF fps (25→1080p25, 50→1080p50)
@@ -1537,6 +1561,12 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                     log(f"  Frame {i + 1}/{frame_count}")
 
         clip_name = h.clip_name or Path(eif_path).stem
+        audio_raw = None
+        if include_audio:
+            stereo = _read_eaf_words(eaf_path_for(eif_path), log=log)
+            if stereo is not None:
+                audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'),
+                                           stereo, frame_count, h.fps)
         hdr = build_sws_header(
             source_filename=os.path.basename(eif_path),
             clip_name=clip_name,
@@ -1546,12 +1576,12 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
             video_standard=video_standard,
             is_still=(frame_count == 1),
             fps=h.fps,
-            has_audio=False,
+            has_audio=audio_raw is not None,
             has_key=True,
         )
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill_path, key_path, hdr, split_fat32,
-                  frame_count=frame_count, log=log)
+                  frame_count=frame_count, audio_raw=audio_raw, log=log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -3022,17 +3052,11 @@ UNVERIFIED_OUTPUT_NOTES = {
 }
 
 
-# Not "unverified" but "not written yet". A K-Frame carries clip audio in a
-# companion .eaf file. Its layout was proven on a live K-Frame on 2026-10-07
-# (see the .eaf section below) and reading it is built, but WRITING is not yet,
-# so EIF output is silent, always. Worth saying out loud: it is the one limitation
-# David is certain of, as opposed to merely unproven.
-MISSING_FEATURE_NOTES = {
-    "K-Frame EIF": "EIF output carries no audio. A K-Frame stores clip audio in a "
-                   "companion .eaf file. That format has been worked out, but the "
-                   "code to read and write it is not built yet, so any audio on the "
-                   "source is dropped. This is a missing feature, not a fault.",
-}
+# Not "unverified" but "not written yet": features known to be absent, kept
+# apart from the hardware-unverified notes so the two are never conflated. Its
+# one entry, EIF audio, was retired on 2026-10-08 when .eaf writing landed.
+# The mechanism stays for the next one.
+MISSING_FEATURE_NOTES = {}
 
 
 def missing_feature_note(output_name):
@@ -3489,6 +3513,107 @@ def read_eaf_stereo(eaf_path: str, log=print):
     16-bit; use read_eaf_stereo24 to keep everything. None if unreadable."""
     pair = _read_eaf_words(eaf_path, log)
     return None if pair is None else (pair >> 8).astype('<i2').tobytes()
+
+
+def _samples_per_frame(fps: float) -> int:
+    return int(round(EAF_SAMPLE_RATE / fps))
+
+
+def write_eaf(eaf_path: str, stereo24, frame_count: int, fps: float) -> str:
+    """Write a .eaf in the layout proven on a live K-Frame on 2026-10-07.
+
+    stereo24: signed 24-bit left/right values, shape (n, 2). Written as four
+    channels of 32-bit little-endian words - sample in bits 23:0, channel << 4
+    in bits 31:24 - with left and right on channels 1 and 2 and 3-4 silent.
+    Zero-padded or trimmed to frame_count x samples-per-frame, which the
+    header declares, as the desk's own import does. No FILETIME at 0x58: the
+    desk accepted a file without one and exported it back unchanged.
+    """
+    spf = _samples_per_frame(fps)
+    n   = frame_count * spf
+    src = np.asarray(stereo24, dtype=np.int64)[:n]
+    words = np.zeros((n, EAF_CHANNELS), dtype=np.uint32)
+    for ch in range(EAF_CHANNELS):
+        words[:, ch] = np.uint32(ch << 28)
+    for ch in (0, 1):
+        words[:len(src), ch] |= (src[:, ch] & 0xFFFFFF).astype(np.uint32)
+    head = bytearray(EAF_HEADER_BYTES)
+    struct.pack_into('<I', head, 0x00, 285365)
+    struct.pack_into('<H', head, 0x60, 0x0484 if abs(fps - 25.0) <= abs(fps - 50.0) else 0x04A4)
+    struct.pack_into('<H', head, 0x62, spf)
+    struct.pack_into('<I', head, EAF_OFF_SAMPLES, n)
+    struct.pack_into('<I', head, EAF_OFF_FRAMES, frame_count)
+    with open(eaf_path, 'wb') as f:
+        f.write(bytes(head))
+        f.write(words.astype('<u4').tobytes())
+    return eaf_path
+
+
+def _source_stereo24(input_path: str):
+    """A source file's programme audio as 24-bit left/right, shape (n, 2), at
+    48kHz, or None if it has none. The first two channels are left and right;
+    a mono source goes to both (David, 2026-10-08). 16-bit audio arrives as
+    the sample << 8, 24-bit exactly."""
+    info = get_video_info(input_path)
+    if not info.get('has_audio'):
+        return None
+    pan = ('pan=stereo|c0=c0|c1=c0' if info.get('audio_channels') == 1
+           else 'pan=stereo|c0=c0|c1=c1')
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = os.path.join(tmp, 'audio.s32')
+        result = _run_ffmpeg([_get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error',
+                              '-i', input_path, '-map', '0:a:0', '-vn', '-af', pan,
+                              '-ar', str(EAF_SAMPLE_RATE), '-c:a', 'pcm_s32le',
+                              '-f', 's32le', raw])
+        if result.returncode != 0 or not os.path.exists(raw):
+            return None
+        data = np.fromfile(raw, dtype='<i4')
+    return data[:len(data) // 2 * 2].reshape(-1, 2).astype(np.int64) >> 8
+
+
+def _sws_stereo24(sws_path: str):
+    """An SWS's programme audio (channels 1 and 3) as 24-bit left/right, the
+    16-bit sample << 8, or None if it has none or it cannot be found."""
+    h = HulaSWSHeader(sws_path)
+    if not h.has_audio or not os.path.isfile(sws_path):
+        return None
+    with open(sws_path, 'rb') as f:
+        f.seek(h.audio_offset)
+        raw = f.read()
+    a = np.frombuffer(raw[:len(raw) // 32 * 32], dtype='<i2').reshape(-1, 16)
+    if a.size == 0:
+        return None
+    return np.stack([a[:, 0], a[:, 2]], 1).astype(np.int64) << 8
+
+
+def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str:
+    """Kahuna SWS audio from 24-bit left/right: 16 channels of 16-bit LE at
+    48kHz, left on 1 and right on 3, the rest silent, padded or trimmed to the
+    clip. 24-bit keeps its top 16 bits, as the K-Frame's own import does."""
+    n = frame_count * _samples_per_frame(fps)
+    src = np.asarray(stereo24, dtype=np.int64)[:n]
+    out = np.zeros((n, 16), dtype='<i2')
+    out[:len(src), 0] = src[:, 0] >> 8
+    out[:len(src), 2] = src[:, 1] >> 8
+    with open(pcm_path, 'wb') as f:
+        f.write(out.tobytes())
+    return pcm_path
+
+
+def _settle_eaf(eif_path: str, stereo24, frame_count: int, fps: float, log=print):
+    """The .eif and its .eaf are one output (David, 2026-10-08): write fresh
+    audio, or remove a stale .eaf of the same name. A leftover .eaf would pair
+    an old clip's sound with a new picture, because the desk matches them by
+    name alone."""
+    eaf = eaf_path_for(eif_path)
+    if stereo24 is not None:
+        write_eaf(eaf, stereo24, frame_count, fps)
+        log(f"  Audio → {os.path.basename(eaf)} (24-bit, "
+            f"{frame_count * _samples_per_frame(fps)} samples)")
+    elif os.path.exists(eaf):
+        os.remove(eaf)
+        log(f"  Removed {os.path.basename(eaf)} left from an earlier conversion "
+            f"- this clip has no audio")
 
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
