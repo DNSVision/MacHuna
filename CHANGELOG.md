@@ -16,6 +16,7 @@ Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; t
   - The MOV now carries 24-bit PCM, so everything the `.eaf` holds survives. SWS to MOV is unchanged at 16-bit, because SWS audio is 16-bit.
   - Proved against files the K-Frame itself wrote from sources with known audio (KNOCKOUT_WIPE, and generated 24-bit stereo and four-channel tests), and end to end: the desk's own KNOCKOUT_WIPE clip converted to MOV gives back the original audio, all 81,600 samples on both channels, bit for bit.
   - The old tests were replaced, not adjusted: they built test files in the same mistaken layout the reader assumed, so the two agreed perfectly while both were wrong.
+  - **MacHuna 2.0's Video Player plays EIF audio correctly too**, once it moves to this engine, with no Swift change. Its bridge plays and meters `read_eaf_stereo`'s 16-bit stereo directly, so that function keeps its 16-bit contract (now the true top 16 bits of each sample); a new `read_eaf_stereo24` gives the full 24 bits to routes that can keep them.
 
 ---
 

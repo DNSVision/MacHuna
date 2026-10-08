@@ -3447,13 +3447,9 @@ def eaf_path_for(eif_path: str) -> str:
     return str(Path(eif_path).with_suffix('.eaf'))
 
 
-def read_eaf_stereo(eaf_path: str, log=print):
-    """Read a .eaf and return its left and right as interleaved little-endian
-    signed 32-bit bytes, each sample's 24 bits in the top 24 (sample << 8), so
-    nothing the file holds is lost on the way to a 24-bit MOV.
-
-    Returns None if the file is absent or does not parse as an .eaf.
-    """
+def _read_eaf_words(eaf_path: str, log=print):
+    """The .eaf's left and right as signed 24-bit sample values, shape (n, 2),
+    int32. None if the file is absent or does not parse as an .eaf."""
     if not eaf_path or not os.path.exists(eaf_path):
         return None
     if os.path.getsize(eaf_path) <= EAF_HEADER_BYTES:
@@ -3470,14 +3466,29 @@ def read_eaf_stereo(eaf_path: str, log=print):
         return None
     words = np.frombuffer(body[:expect], dtype='<u4').reshape(-1, EAF_CHANNELS)
     left_i, right_i = EAF_PROGRAMME_CHANS
-    # Shifting the tag byte out and the 24-bit sample up leaves sample << 8 as a
-    # signed 32-bit value: sign-correct, and the tag can never reach the audio.
-    stereo = np.empty((samples, 2), dtype='<u4')
-    stereo[:, 0] = words[:, left_i] << 8
-    stereo[:, 1] = words[:, right_i] << 8
+    # Shift the tag byte out and the sample up, then back down arithmetically:
+    # sign-correct 24-bit values, and the tag can never reach the audio.
+    pair = np.stack([words[:, left_i], words[:, right_i]], 1) << 8
     log(f"  .eaf: {samples} samples, {frames} frame(s), "
-        f"{samples / float(EAF_SAMPLE_RATE):.2f}s, 24-bit")
-    return stereo.tobytes()
+        f"{samples / float(EAF_SAMPLE_RATE):.2f}s")
+    return pair.view('<i4') >> 8
+
+
+def read_eaf_stereo24(eaf_path: str, log=print):
+    """Left and right at full 24-bit resolution, as interleaved little-endian
+    s32 bytes with each sample in the top 24 bits (sample << 8). For routes
+    that can keep all of it, such as a 24-bit MOV. None if unreadable."""
+    pair = _read_eaf_words(eaf_path, log)
+    return None if pair is None else (pair << 8).astype('<i4').tobytes()
+
+
+def read_eaf_stereo(eaf_path: str, log=print):
+    """Left and right as interleaved little-endian s16 bytes: the top 16 bits
+    of each 24-bit sample. This contract is relied on outside this file -
+    MacHuna 2.0's player bridge plays and meters these bytes - so it stays
+    16-bit; use read_eaf_stereo24 to keep everything. None if unreadable."""
+    pair = _read_eaf_words(eaf_path, log)
+    return None if pair is None else (pair >> 8).astype('<i2').tobytes()
 
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
@@ -3536,7 +3547,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                     log(f"  Frame {i + 1}/{h.frame_count}")
         stereo_pcm = None
         if include_audio:
-            pcm = read_eaf_stereo(eaf_path_for(eif_path), log=log)
+            pcm = read_eaf_stereo24(eaf_path_for(eif_path), log=log)
             if pcm:
                 stereo_pcm = os.path.join(tmp, 'audio.pcm')
                 with open(stereo_pcm, 'wb') as af:

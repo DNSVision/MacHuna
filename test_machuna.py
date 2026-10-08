@@ -1312,7 +1312,7 @@ def _write_eaf(path, samples24, frames, spf=1920, tag_extra=0):
 
 
 def _stereo24(pcm_bytes):
-    """read_eaf_stereo's output: interleaved little-endian s32, the 24-bit
+    """read_eaf_stereo24's output: interleaved little-endian s32, the 24-bit
     sample in the top 24 bits. Returned as 24-bit values, shape (n, 2)."""
     import numpy as np
     return np.frombuffer(pcm_bytes, dtype='<i4').reshape(-1, 2).astype(np.int64) >> 8
@@ -1345,7 +1345,7 @@ class TestEafAudio(unittest.TestCase):
         left, right = self._tone(n, 64, 3_000_000), self._tone(n, 96, -2_500_000)
         p = os.path.join(self.tmp, 'a.eaf')
         _write_eaf(p, np.stack([left, right, np.zeros(n), np.zeros(n)], 1), 3)
-        got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+        got = _stereo24(m.read_eaf_stereo24(p, log=lambda *a: None))
         self.assertTrue(np.array_equal(got[:, 0], left), 'left is not bit-exact')
         self.assertTrue(np.array_equal(got[:, 1], right), 'right is not bit-exact')
 
@@ -1358,7 +1358,7 @@ class TestEafAudio(unittest.TestCase):
         for extra in (0x0, 0x4, 0xC, 0x40 | 0xC):
             p = os.path.join(self.tmp, f'tag{extra}.eaf')
             _write_eaf(p, np.zeros((n, 4)), 1, tag_extra=extra)
-            got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+            got = _stereo24(m.read_eaf_stereo24(p, log=lambda *a: None))
             with self.subTest(status_bits=hex(extra)):
                 self.assertEqual(int(np.abs(got).max()), 0)
 
@@ -1368,16 +1368,31 @@ class TestEafAudio(unittest.TestCase):
         n = len(vals)
         p = os.path.join(self.tmp, 'sign.eaf')
         _write_eaf(p, np.stack([vals, -vals.clip(-(1 << 23) + 1), np.zeros(n), np.zeros(n)], 1), 1)
-        got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+        got = _stereo24(m.read_eaf_stereo24(p, log=lambda *a: None))
         self.assertEqual(got[:, 0].tolist(), vals.tolist())
+
+    def test_the_16_bit_reading_is_the_top_16_bits_of_each_sample(self):
+        """read_eaf_stereo keeps its original contract - interleaved LE s16 -
+        because MacHuna 2.0's player bridge plays and meters those bytes
+        directly. It must now be the top 16 bits of the real 24-bit sample."""
+        import numpy as np
+        n = 1920
+        left, right = self._tone(n, 64, 3_000_000), self._tone(n, 50, -1_500_000)
+        p = os.path.join(self.tmp, 's16.eaf')
+        _write_eaf(p, np.stack([left, right, np.zeros(n), np.zeros(n)], 1), 1, tag_extra=0x4C)
+        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None), dtype='<i2').reshape(-1, 2)
+        self.assertTrue(np.array_equal(got[:, 0], left >> 8))
+        self.assertTrue(np.array_equal(got[:, 1], right >> 8))
 
     def test_truncated_and_missing_files_return_none(self):
         self.assertIsNone(m.read_eaf_stereo(os.path.join(self.tmp, 'nope.eaf')))
+        self.assertIsNone(m.read_eaf_stereo24(os.path.join(self.tmp, 'nope.eaf')))
         short = os.path.join(self.tmp, 'short.eaf')
         head = bytearray(128)
         struct.pack_into('<I', head, 0x64, 99999)
         Path(short).write_bytes(bytes(head) + b'\x00' * 100)
         self.assertIsNone(m.read_eaf_stereo(short, log=lambda *a: None))
+        self.assertIsNone(m.read_eaf_stereo24(short, log=lambda *a: None))
 
     def test_companion_path_swaps_the_extension(self):
         self.assertTrue(m.eaf_path_for('/x/0003.eif').endswith('0003.eaf'))
@@ -1393,7 +1408,7 @@ class TestEafAgainstTheDesk(unittest.TestCase):
         p = DESK_2026_10_07 / name
         if not p.exists():
             self.skipTest(f'{name} not present')
-        return _stereo24(m.read_eaf_stereo(str(p), log=lambda *a: None))
+        return _stereo24(m.read_eaf_stereo24(str(p), log=lambda *a: None))
 
     def test_0922_our_own_file_returned_by_the_desk_is_bit_exact_24_bit(self):
         import numpy as np
@@ -1426,6 +1441,10 @@ class TestEafAgainstTheDesk(unittest.TestCase):
                               '-map', '0:a:0', '-f', 's16le', '-'], capture_output=True, check=True).stdout
         src = np.frombuffer(raw, dtype='<i2').reshape(-1, 2).astype(np.int64) << 8
         self.assertTrue(np.array_equal(got, src))
+        # The 16-bit reading the player uses gives back the 16-bit source exactly.
+        s16 = np.frombuffer(m.read_eaf_stereo(str(DESK_2026_10_07 / '0900.eaf'),
+                                              log=lambda *a: None), dtype='<i2').reshape(-1, 2)
+        self.assertTrue(np.array_equal(s16.astype(np.int64), src >> 8))
 
 
 class TestEifToMovAudio(unittest.TestCase):
@@ -1494,7 +1513,7 @@ class TestEafAgainstRealFiles(unittest.TestCase):
             if pcm is None:
                 continue
             h = m.EIFHeader(str(eif))
-            audio_s = (len(pcm) // 8) / float(m.EAF_SAMPLE_RATE)   # stereo s32: 8 bytes per sample
+            audio_s = (len(pcm) // 4) / float(m.EAF_SAMPLE_RATE)   # stereo s16: 4 bytes per sample
             video_s = h.frame_count / h.fps
             with self.subTest(clip=eif.name):
                 self.assertAlmostEqual(audio_s, video_s, places=2)
