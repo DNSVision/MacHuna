@@ -535,7 +535,11 @@ def convert_to_v210(input_path: str, output_path: str,
             # Simpler fallback
             vf_key_fallback = 'alphaextract'
             if width and height:
-                vf_key_fallback += f',{scale}'
+                # The first chain fails on a source with no colour label, landing
+                # here. Unscaled, ffmpeg's own conversion to v210 puts the key in
+                # legal range; an explicit resize skips that, and a hard edge
+                # overshot to 4-1016. State the range conversion (Fable, 2026-10-08).
+                vf_key_fallback += f',{scale},format=gray,scale=out_range=tv,format=yuv420p'
             if vf_extra:
                 vf_key_fallback += f',{vf_extra}'
             cmd_key = [ffmpeg, '-y', '-i', input_path,
@@ -1084,6 +1088,11 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     return dest_path
 
 
+# Single images. A lone .tga is a still too; a TGA SEQUENCE reaches EIF through
+# convert_tga_seq_to_eif, not convert_clip_to_eif.
+_STILL_EXTS = {'.png', '.bmp', '.jpg', '.jpeg', '.tif', '.tiff', '.tga'}
+
+
 def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
     """ffmpeg input arguments for a list of TGA frames, IN THE ORDER GIVEN,
     read explicitly as TGA. A TGA has no signature, so letting ffmpeg probe
@@ -1205,7 +1214,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             vf_key2 = 'alphaextract'
             if scale_vf:
                 vf_key1 += f',{scale_vf}'
-                vf_key2 += f',{scale_vf}'
+                # As in convert_to_v210: a resize skips ffmpeg's own conversion
+                # to legal range, so state it (Fable pass, 2026-10-08).
+                vf_key2 += f',{scale_vf},format=gray,scale=out_range=tv,format=yuv420p'
             if vf_tinterlace:
                 vf_key1 += f',{vf_tinterlace}'
                 vf_key2 += f',{vf_tinterlace}'
@@ -1592,6 +1603,11 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
     .eaf audio when the source has sound. Confirmed on a live K-Frame,
     2026-10-07.
     """
+    if Path(input_path).suffix.lower() in _STILL_EXTS:
+        # Settled: stills convert to Kahuna SWS only. The apps block this; the
+        # engine wrote a one-frame EIF anyway (Fable pass, 2026-10-08).
+        raise ValueError(f"{os.path.basename(input_path)} is a still. Stills convert to "
+                         f"Kahuna SWS only.")
     log(f"Converting to EIF: {os.path.basename(input_path)}")
     info   = get_video_info(input_path)
     fps_in = info['fps']

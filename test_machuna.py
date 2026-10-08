@@ -2939,6 +2939,47 @@ class TestNoEmptySws(unittest.TestCase):
         self._consistent(out, 4)
 
 
+class TestFableSmallFixes(unittest.TestCase):
+    """Fable black-box pass, 2026-10-08: three smaller faults."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_the_engine_refuses_a_still_to_eif(self):
+        """Stills convert to Kahuna SWS only (settled). The apps block it; the
+        engine wrote a one-frame EIF anyway."""
+        from PIL import Image
+        for ext in ('png', 'jpg', 'tga'):
+            p = os.path.join(self.tmp, f'still.{ext}')
+            Image.new('RGB', (640, 360), (9, 120, 9)).save(p)
+            with self.subTest(ext=ext):
+                with self.assertRaises(ValueError):
+                    m.convert_clip_to_eif(p, self.tmp, log=lambda *a: None, out_name='0001')
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, '0001.eif')))
+
+    def test_a_scaled_key_stays_in_the_legal_range(self):
+        """Scaling a hard-edged key overshot to 4..1016 in SWS (EIF clamps)."""
+        import subprocess, numpy as np
+        src = os.path.join(self.tmp, 'k.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.08', '-f', 'lavfi',
+                        '-i', 'testsrc2=size=192x108:rate=25', '-vf',
+                        "format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(mod(X,16),8),4095,0)'",
+                        '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', src], check=True)
+        d = os.path.join(self.tmp, 'kd'); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        h = m.HulaSWSHeader(os.path.join(d, '1.SWS'))
+        data = Path(d, '1.SWS').read_bytes()
+        key_off = h.data_offset + h.frame_count * h.plane_size
+        k = m._v210_plane_to_yuv(data[key_off:key_off + h.plane_size], 1920, 1080, 1)[0][..., 0]
+        self.assertGreaterEqual(float(k.min()), 64)
+        self.assertLessEqual(float(k.max()), 940)
+
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
