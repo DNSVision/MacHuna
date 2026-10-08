@@ -160,6 +160,17 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   earlier note here wrongly said it came through at 8-bit; it never reads the
   `.eaf`). SWS to EIF and MOV to EIF carry no audio until `.eaf` writing exists.
 
+- **Audio decisions for fix 3 (David, 2026-10-08):**
+  - **Mono goes to BOTH left and right, for SWS and EIF.** Measured on v1.11.0:
+    SWS put a mono source on the left only (`pan=16c|c0=c0|c2=c1` has no second
+    input channel for right) - an accident of the routing, never
+    hardware-confirmed. Stereo and multichannel SWS output must stay
+    byte-identical; only mono changes.
+  - **`NNNN.eif` and `NNNN.eaf` are one output.** Writing an EIF either writes
+    fresh audio or removes a stale `.eaf` of the same name, and logs it. A
+    leftover `.eaf` would otherwise put an old clip's sound on air with a new
+    picture, because the desk pairs them by name alone.
+
 - **Interlaced TGA sequence to EIF disagrees with the desk (found 2026-10-08,
   reading the code).** `convert_tga_seq_to_eif(source_interlaced=True)`
   deinterlaces to a 50fps progressive EIF. The desk stores 50i as woven 25fps
