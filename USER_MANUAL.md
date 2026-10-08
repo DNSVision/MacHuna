@@ -251,7 +251,7 @@ When outputting to Kahuna SWS, the following options are available:
 | **TGA source interlaced** | See Section 8.2. |
 | **Include audio** | Embeds audio from the source into the .SWS file. Shown only when audio is detected in the source. See Section 9. |
 
-> **SWS → SWS standards conversion:** when the source is itself an SWS file, the output header's clip name follows the source SWS's name, and the output key state follows the source (a keyless source produces keyless output). **Audio is carried through** (from v1.12.0; earlier versions dropped it). The duration does not change when the standard does, so the sound comes across unchanged at the new frame rate. Untick **Include audio** to leave it out. An interlaced SWS going to the same interlaced standard passes straight through (before v1.12.1 its fields were woven a second time, halving the clip); to a different interlaced rate it is refused.
+> **SWS → SWS standards conversion:** when the source is itself an SWS file, the output header's clip name follows the source SWS's name, and the output key state follows the source (a keyless source produces keyless output). **Audio is carried through** (from v1.12.0; earlier versions dropped it). The duration does not change when the standard does, so the sound comes across unchanged at the new frame rate. Untick **Include audio** to leave it out. **The picture stays 10-bit** (v1.12.1): a straight copy, a frame-rate change and a weave copy the source's own picture exactly, and deinterlacing works on the 10-bit picture (earlier versions passed through 8-bit TGA files, which lost precision). An interlaced SWS going to the same interlaced standard passes straight through (before v1.12.1 its fields were woven a second time, halving the clip); to a different interlaced rate it is refused.
 
 ### 5.1 Progressive to Interlaced (P→I)
 
@@ -287,7 +287,7 @@ Example: 50 frames of 1080i/50 source → 100 frames of 1080p/50 output.
 | 1080i/59.94 | 1080p/50 | ran fast | correct |
 | 1080i/59.94 | 1080p/25 | ran 20% slow | correct |
 
-**Progressive to progressive at a different rate (v1.12.1).** A 25p clip going to 1080p/50, a 50p clip to 1080p/25, or 59.94p going to a 50fps EIF, is converted to the new rate - frames repeated or dropped - so it keeps its duration and its sound still fits. Earlier versions kept every frame and stamped the new rate, so the clip played fast or slow. **Interlaced to a different interlaced rate** (1080i/50 material to 1080i/59.94) is refused, as progressive to interlaced already is: changing a field rate needs a proper standards converter.
+**Progressive to progressive at a different rate (v1.12.1).** A 25p clip going to 1080p/50, a 50p clip to 1080p/25, or 59.94p going to a 50fps EIF, is converted to the new rate - frames repeated or dropped - so it keeps its duration and its sound still fits. Every output frame shows the source frame that is on screen at that moment, so the first frame always comes first, and 29.97 and 59.94 are worked out exactly (30000/1001 and 60000/1001), so long American clips do not drift. Every route picks the same frames. Earlier versions kept every frame and stamped the new rate, so the clip played fast or slow. **Interlaced to a different interlaced rate** (1080i/50 material to 1080i/59.94) is refused, as progressive to interlaced already is: changing a field rate needs a proper standards converter.
 
 This applies to video clips, SWS→SWS, and TGA outputs. **A loose TGA image sequence is the exception:** it carries no frame rate anywhere, so MacHuna assumes the source standard matches the output family you pick (an interlaced pile aimed at 1080p/50 is treated as 1080i/50 material). That assumption is right for normal use. If you are converting a TGA sequence across families — interlaced 50Hz frames aimed at a 60Hz progressive standard — convert via a video clip or SWS instead, so MacHuna has a real frame rate to work from.
 
@@ -325,7 +325,7 @@ Any of the following inputs can be converted to K-Frame EIF:
 
 EIF output is always 1920×1080. Sources of other sizes are scaled (interlaced TGA frames one field at a time, so the fields never blend). Frame rate is rounded to the nearest EIF-supported rate (25fps or 50fps), and the video is resampled to that rate so the clip keeps its original duration and plays at the correct speed. For example a 60fps source becomes a 50fps EIF clip of the same length.
 
-**The picture and its audio are one output.** When MacHuna writes `0005.eif` it either writes a fresh `0005.eaf` or, if this clip has no sound, removes an old `0005.eaf` left from an earlier conversion, and says so in the log. Otherwise a desk could play last week's sound with today's picture. **If you cancel**, the half-written `.eif` and any `.eaf` beside it are deleted, so a broken file can never be loaded by mistake.
+**The picture and its audio are one output.** When MacHuna writes `0005.eif` it either writes a fresh `0005.eaf` or, if this clip has no sound, removes an old `0005.eaf` left from an earlier conversion, and says so in the log. Otherwise a desk could play last week's sound with today's picture. **If you cancel, or a conversion fails**, nothing is left half-written and any earlier clip of the same name is left exactly as it was (v1.12.1): the `.eif` and `.eaf` are written under temporary names and only put in place, together, once both are complete. (In v1.12.0 a cancel deleted the half-written file - and with it the earlier clip.)
 
 ### 6.3 Converting FROM EIF
 
@@ -333,7 +333,7 @@ EIF files can be converted to the following outputs:
 
 | Output | Notes |
 |---|---|
-| **Kahuna SWS** | Lossless direct YCbCr repack, to the **Standard** you choose (v1.12.1): a 25fps EIF can be 1080p/25 or 1080i/50 (choose 1080i/50 for 50i material, which is what a 25fps EIF usually is); a 50fps EIF can be 1080p/50, or 1080i/50 by weaving pairs of frames; other progressive standards are converted to the new rate; 59.94Hz and 60Hz interlaced are refused. An EIF with no real key (opaque throughout) gives an SWS with no key plane. The clip's `.eaf` audio is carried into the SWS on the Kahuna's channels (left 1, right 3); untick **Include audio** to leave it out. |
+| **Kahuna SWS** | Lossless direct YCbCr repack, to the **Standard** you choose (v1.12.1): a 25fps EIF can be 1080p/25 or 1080i/50 (choose 1080i/50 for 50i material, which is what a 25fps EIF usually is); a 50fps EIF can be 1080p/50, or 1080i/50 by weaving pairs of frames; other progressive standards are converted to the new rate; 59.94Hz and 60Hz interlaced are refused. The key is always kept: an EIF always carries one, and a key that is opaque throughout may be meant, to keep a clip full frame for its whole length. The clip's `.eaf` audio is carried into the SWS on the Kahuna's channels (left 1, right 3); untick **Include audio** to leave it out. |
 | **K-Frame TGA** | Full-resolution 1920×1080 32-bit RGBA TGA sequence. Frames numbered `0001.tga` onwards. |
 | **Sony TGA** | 32-bit RGBA TGA sequence with 4-character clip name prefix. |
 
@@ -347,7 +347,9 @@ The built-in Video Player opens `.EIF` files directly. Frame rate is detected au
 
 Something found during the K-Frame testing that is worth knowing even if you never use MacHuna for it. **A K-Frame's own MOV import treats every ProRes file as SD colour (BT.601)**, whatever the file is labelled, so saturated colours shift: reds come out darker, blues move. Tested with ProRes labelled RGB, unlabelled, and properly labelled HD; the desk's result was identical each time, so no export setting avoids it. QuickTime Animation (RGB) files import correctly.
 
-**Converting through MacHuna keeps the colour accurate**, because MacHuna reads the picture as it really is. For ProRes deliveries, convert to EIF in MacHuna rather than importing the MOV on the desk.
+**Converting through MacHuna keeps the colour accurate.** MacHuna reads a labelled file by its label, and an unlabelled HD file (720 lines or more) as HD colour, BT.709, which is the industry convention. For ProRes deliveries, convert to EIF in MacHuna rather than importing the MOV on the desk.
+
+Two things to know. **Before v1.12.1, MacHuna read an unlabelled HD file as SD colour, just as the desk does**, so a conversion of such a file made with an earlier version has the same shift; convert it again. And if a file really is SD colour at HD size but carries no label, MacHuna cannot tell: label it when you export it.
 
 ---
 
@@ -416,6 +418,8 @@ A TGA sequence has no frame rate of its own: the desk imports the frames at what
 
 With a progressive standard, frames always go through as they are. MacHuna logs what it did for each file.
 
+Every K-Frame TGA and Sony TGA frame is **1920×1080, 32-bit RGBA**, whatever the source (v1.12.1). A video clip of another size is scaled (an interlaced one a field at a time, so the fields never blend), and a clip with no alpha gets a fully opaque one. Before v1.12.1, frames from a video clip kept the clip's size and were 24-bit when it had no alpha.
+
 > **Fixed in v1.12.0.** An interlaced video clip used to be woven a second time on an interlaced standard: half the frames, each mixing two moments in time. This affected K-Frame TGA and Sony TGA. A 25fps EIF used to be refused with an error.
 
 ### 7.5 Field Order (TGA outputs)
@@ -426,7 +430,7 @@ A **TFF / BFF** toggle appears for interlaced standards, and always for Sony TGA
 
 ### 7.6 Sony TGA — Clip Name
 
-Enter a **4-character alphanumeric clip name** (e.g. `WIPE`). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
+Enter a **clip name of exactly four letters or digits** (e.g. `WIPE`). Anything else is refused before anything is written (v1.12.1; a shorter name used to be padded with spaces in every frame name, and a longer one cut short without a word). All TGA frames in the batch share this name — on the Sony MVS, files with the same 4-character prefix are grouped into a single clip on import.
 
 **Each clip takes its own 4‑character name from the item list** (see Section 4.4), so each becomes its own output folder and several Sony clips convert together. The shared Clip name field that once forced one clip at a time is gone as of v1.8.0.
 

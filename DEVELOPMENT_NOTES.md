@@ -307,6 +307,13 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
       the end, so sync holds for the whole clip; the rounding is about 15 ms of
       extra silence per minute, at the end. UNCONFIRMED against K-Watch: there is
       no 59.94 K-Watch reference SWS, and the Kahuna has never played one.
+    - **OPEN QUESTION for David (found by the matrix, 2026-10-08):** decision (a)
+      makes 59.94p WEAVE into 1080i60 (one family), but an existing 1080i59.94
+      SWS is REFUSED for 1080i60, and so is a 29.97i clip (interlaced to another
+      interlaced rate uses a strict 0.01fps test). Both give the same 0.1% speed
+      error, so the rules disagree. Left as they are until David decides.
+    - Matrix now has 59.94p and 29.97i sources (MOV and SWS): 324 cases, 273
+      pass every rule, 0 break one, 51 refused on purpose (2026-10-08).
   - Plus, no decision needed: the SWS-to-SWS i-to-i double weave, the EIF+SWS
     folder scan crash on unreadable `.sws` (my v1.12.0 fault), the SWS header
     total size with audio (my v1.12.0 fault), the Tk app marking a cancelled EIF
