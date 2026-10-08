@@ -981,7 +981,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         rescale = (w, h) != (1920, 1080)
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0,
-                                  interlaced=rescale and info['is_interlaced'])
+                                  interlaced=rescale and info.get('is_interlaced', False))
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -1563,7 +1563,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     width=1920, height=1080,
                                     extract_alpha=info['has_alpha'],
                                     vf_extra=f'fps={fps:g}',
-                                    interlaced=info['is_interlaced'] and
+                                    interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if frame_count == 0:
