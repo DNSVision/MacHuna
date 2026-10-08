@@ -1788,6 +1788,16 @@ class TestAudioRoutes(unittest.TestCase):
                 h = m.HulaSWSHeader(out)
                 self.assertEqual(len(b), h.frame_count * int(round(48000 / h.fps)))
 
+    def test_sws_to_sws_header_states_the_real_file_size(self):
+        """Independent review, 2026-10-08: with audio, the header's total size
+        (0x1CC) assumed 25fps audio and was wrong for every other rate."""
+        for src_std, out_std in (('1080p50', '1080p50'), ('1080i50', '1080p50'),
+                                 ('1080p25', '1080p25')):
+            _a, out = self._sws_to_sws(src_std, out_std)
+            declared = struct.unpack_from('>I', Path(out).read_bytes()[:0x200], 0x1CC)[0]
+            with self.subTest(src=src_std, out=out_std):
+                self.assertEqual(declared, os.path.getsize(out))
+
     def test_sws_to_sws_include_audio_off_writes_none(self):
         _a, out = self._sws_to_sws('1080p25', '1080p25', include_audio=False)
         self.assertIsNone(_sws_audio(out))
@@ -2083,6 +2093,17 @@ class TestTkPlayerEifAudio(unittest.TestCase):
         self.assertTrue(has_aud)
         os.remove(m.eaf_path_for(eif))
         self.assertFalse(m._scan_folder_unified(self.tmp)[2])
+
+    def test_an_unreadable_sws_beside_eifs_does_not_break_the_scan(self):
+        """Independent review, 2026-10-08: macOS writes hidden ._ companions on
+        FAT32 sticks. A ._1.SWS beside an EIF made the whole folder fail to
+        load, because the v1.12.0 audio check read every SWS unguarded."""
+        eif, _ = self._eif_with_audio()
+        os.remove(m.eaf_path_for(eif))     # no audio, so the scan has to read the SWS
+        Path(self.tmp, '._1.SWS').write_bytes(b'\x00' * 4096)
+        _items, itype, has_aud, _seq = m._scan_folder_unified(self.tmp)
+        self.assertEqual(itype, 'mixed_eif_sws')
+        self.assertFalse(has_aud)
 
     def test_the_tk_app_passes_include_audio_to_eif_to_sws(self):
         src = Path(m.__file__).read_text()

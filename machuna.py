@@ -1036,9 +1036,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         clip_name = clip_name_override or Path(tga_files[0]).stem
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
+        out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
         audio_raw = None
         if _audio_stereo24 is not None:
-            out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
             audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'), _audio_stereo24,
                                        output_frame_count, out_fps)
 
@@ -1050,6 +1050,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
+            fps=out_fps,      # sizes the audio; without it 0x1CC assumed 25fps
             has_audio=audio_raw is not None,
             has_key=(actual_key is not None),
             auto_play=auto_play,
@@ -3989,9 +3990,15 @@ def _scan_folder_unified(folder: str) -> tuple:
 
     if has_eif and not has_vid and not has_stills and not has_seqs:
         if has_sws:
+            def _sws_has_audio(path):
+                # Guarded like the from_sws branch: macOS ._ companions on FAT32
+                # sticks end in .SWS and are not SWS files (review, 2026-10-08).
+                try:
+                    return HulaSWSHeader(path).has_audio
+                except Exception:
+                    return False
             mixed_aud = any(os.path.exists(eaf_path_for(i['path'])) for i in eif_items) \
-                or any(HulaSWSHeader(i['path']).has_audio for i in sws_items
-                       if os.path.isfile(i['path']))
+                or any(_sws_has_audio(i['path']) for i in sws_items)
             return eif_items + sws_items, 'mixed_eif_sws', mixed_aud, False
         eif_aud = any(os.path.exists(eaf_path_for(i['path'])) for i in eif_items)
         return eif_items, 'from_eif', eif_aud, False
