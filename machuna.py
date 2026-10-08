@@ -990,6 +990,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         # already rate-checked against the source SWS header's fps.
         vf_tinterlace = 'tinterlace=mode=interleave_top'
         log(f"  Progressive→interlaced (TFF): {frame_count} frames → {frame_count // 2} frames")
+    elif do_i_to_p and FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]] <= 30.0:
+        # Decision B (David, 2026-10-08): a progressive standard at the FRAME rate
+        # (25/29.97/30p) gets one deinterlaced frame per interlaced frame. Splitting
+        # into fields here doubled the frames and played at half speed.
+        vf_tinterlace = 'yadif=mode=send_frame:parity=tff'
+        do_i_to_p = False
+        log(f"  Interlaced→progressive (yadif, one frame each, TFF): {frame_count} frames")
     elif do_i_to_p:
         # Deinterlace with yadif (send_field, TFF per SMPTE 274M). Concat frames carry no
         # field metadata, so parity is set explicitly. yadif doubles the frame count the

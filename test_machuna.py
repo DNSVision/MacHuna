@@ -2320,6 +2320,40 @@ class TestEifFromAKeyedClipOfAnySize(unittest.TestCase):
         self.assertLess(key[540, 1500], 100)
 
 
+class TestInterlacedTgaToProgressiveSws(unittest.TestCase):
+    """Decision B (David, 2026-10-08): an interlaced TGA sequence going to a
+    progressive SWS at the frame rate (25/29.97/30p) gets one deinterlaced
+    frame per interlaced frame. It always split each frame into two fields,
+    right for 50p but at 25p doubling the frames and halving the speed."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        import numpy as np
+        from PIL import Image
+        self.tgas = []
+        for i in range(6):
+            a = np.zeros((108, 192, 4), dtype=np.uint8); a[..., 3] = 255
+            a[0::2, :, 0] = 40 * i; a[1::2, :, 2] = 200
+            p = os.path.join(self.tmp, f'I_{i:04d}.tga')
+            Image.fromarray(a, 'RGBA').save(p); self.tgas.append(p)
+
+    def _frames(self, std):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        out = m.convert_tga_sequence(self.tgas, 1, d, std, False, False, lambda *a: None,
+                                     write_log=False, source_interlaced=True)
+        return m.HulaSWSHeader(out).frame_count
+
+    def test_frame_rate_progressive_keeps_one_frame_per_interlaced_frame(self):
+        self.assertEqual(self._frames('1080p25'), 6)
+
+    def test_field_rate_progressive_still_splits_the_fields(self):
+        self.assertEqual(self._frames('1080p50'), 12)
+        self.assertEqual(self._frames('1080p5994'), 12)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
