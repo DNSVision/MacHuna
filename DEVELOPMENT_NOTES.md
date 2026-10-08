@@ -269,7 +269,20 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
       SD-colour shift as the K-Frame on untagged ProRes; the claim that MacHuna
       was right "in every case" was never measured for untagged files and was
       false); 24-bit TGA to SWS; zero-frame SWS outputs; engine refuses stills
-      to EIF; key range clamped after scaling; 59.94p to 1080i60 refused.
+      to EIF; key range clamped after scaling.
+    - **59.94 and 60 stay one family (decision a, David 2026-10-08): "go with a
+      but focus on making 59.94 correct as that's the format Americans tend to
+      use."** The 0.5fps tolerance in `_p_to_i_field_map` / `_i_to_p_filter` is
+      kept, so 59.94p can weave to 1080i60 as before. 59.94 itself must be exact:
+      every rate written into a file or handed to ffmpeg goes through `_fps_expr`
+      (60000/1001, 30000/1001). Four places did not - the deinterlace resample and
+      three MOV encodes, which stamped 59.94 MOVs as 2997/50. Fixed.
+    - **59.94 audio is 1602 / 801 samples a frame, and that does not drift.**
+      48000 / 29.97 is 1601.6, so a whole number per frame over-counts by 0.4.
+      MacHuna decodes audio at a true 48 kHz from sample 0 and only pads or trims
+      the end, so sync holds for the whole clip; the rounding is about 15 ms of
+      extra silence per minute, at the end. UNCONFIRMED against K-Watch: there is
+      no 59.94 K-Watch reference SWS, and the Kahuna has never played one.
   - Plus, no decision needed: the SWS-to-SWS i-to-i double weave, the EIF+SWS
     folder scan crash on unreadable `.sws` (my v1.12.0 fault), the SWS header
     total size with audio (my v1.12.0 fault), the Tk app marking a cancelled EIF

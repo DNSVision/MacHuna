@@ -369,7 +369,7 @@ class TestIToPFilter(unittest.TestCase):
         self.assertEqual(m._i_to_p_filter(25.0, '1080p60'),
                          'yadif=mode=send_field,fps=60')
         self.assertEqual(m._i_to_p_filter(25.0, '1080p5994'),
-                         'yadif=mode=send_field,fps=59.94')
+                         'yadif=mode=send_field,fps=60000/1001')
         # Bobbing 29.97 gives 59.94, but the target is 50 — resample down.
         self.assertEqual(m._i_to_p_filter(29.97, '1080p50'),
                          'yadif=mode=send_field,fps=50')
@@ -408,7 +408,7 @@ class TestIToPFilter(unittest.TestCase):
                 target = m.FORMAT_VARIANT_FPS[m.FORMAT_VARIANTS[out_std]]
                 produced = src_fps * 2 if 'send_field' in vf else src_fps
                 if abs(produced - target) > 0.5:
-                    self.assertIn(f'fps={target:g}', vf,
+                    self.assertIn(f'fps={m._fps_expr(target)}', vf,
                                   f'{src_std} → {out_std} needs a resample to {target}')
                 else:
                     self.assertNotIn('fps=', vf,
@@ -3437,3 +3437,93 @@ class TestKeylessConversionOutcome(unittest.TestCase):
             sizes[ignore] = os.path.getsize(p)
         self.assertEqual(sizes[False], sizes[True],
                          'the tickbox must make no difference when there is no alpha')
+
+
+class TestExact5994(unittest.TestCase):
+    """59.94 is what American broadcasters use, so it must be the exact
+    60000/1001 wherever a rate is written into a file or handed to ffmpeg -
+    never the rounded 59.94, which an NLE reads as a non-standard rate."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _rate(self, path):
+        import subprocess
+        out = subprocess.run([m._get_ffmpeg_path('ffprobe'), '-v', 'error', '-select_streams', 'v:0',
+                              '-show_entries', 'stream=r_frame_rate', '-of', 'csv=p=0', path],
+                             capture_output=True, text=True)
+        return out.stdout.strip()
+
+    def _sws(self, std, rate):
+        import subprocess
+        src = os.path.join(self.tmp, f'src_{std}.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', f'testsrc=size=192x108:rate={rate}', '-frames:v', '6',
+                        '-c:v', 'prores_ks', src], check=True)
+        d = os.path.join(self.tmp, std)
+        os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard=std, include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        return os.path.join(d, '1.SWS')
+
+    def _mov_from(self, src, tag):
+        import glob
+        d = os.path.join(self.tmp, 'mov_' + tag)
+        os.makedirs(d)
+        m._hula_run_batch([src], d, m.HULA_TARGET_QUICKTIME_MOV, standard='1080p25',
+                          clip_name='TEST', include_audio=False, log=lambda *a: None)
+        movs = glob.glob(os.path.join(d, '**', '*.mov'), recursive=True)
+        self.assertEqual(len(movs), 1, 'one MOV expected')
+        return movs[0]
+
+    def test_a_5994p_sws_becomes_an_exact_5994_mov(self):
+        sws = self._sws('1080p5994', '60000/1001')
+        self.assertEqual(self._rate(self._mov_from(sws, 'p')), '60000/1001')
+
+    def test_an_i5994_sws_becomes_an_exact_2997_mov(self):
+        sws = self._sws('1080i5994', '60000/1001')
+        self.assertEqual(self._rate(self._mov_from(sws, 'i')), '30000/1001')
+
+    def test_a_tga_sequence_at_5994_becomes_an_exact_5994_mov(self):
+        from PIL import Image
+        import numpy as np
+        files = []
+        for i in range(6):
+            f = os.path.join(self.tmp, 'f%04d.tga' % i)
+            Image.fromarray(np.full((32, 32, 4), 255, np.uint8), 'RGBA').save(f, format='TGA')
+            files.append(f)
+        out = m.convert_tga_seq_to_mov(files, self.tmp, 'ntsc', 59.94, log=lambda *a: None)
+        self.assertEqual(self._rate(out), '60000/1001')
+
+    def test_deinterlacing_to_5994_resamples_to_the_exact_rate(self):
+        vf = m._i_to_p_filter(25.0, '1080p5994')
+        self.assertIn('fps=60000/1001', vf)
+
+    def test_a_5994_clip_keeps_801_samples_a_frame_from_sample_zero(self):
+        """Audio is decoded at a true 48 kHz and only padded at the end, so the
+        1601.6 / 800.8 rounding never drifts the sound against the picture."""
+        import subprocess, numpy as np
+        src = os.path.join(self.tmp, 'a5994.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error',
+                        '-f', 'lavfi', '-i', 'testsrc=size=192x108:rate=60000/1001',
+                        '-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=48000',
+                        '-frames:v', '60', '-t', str(60 / (60000 / 1001)),
+                        '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', src], check=True)
+        ref = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', src, '-f', 's16le',
+                              '-ac', '1', '-'], capture_output=True, check=True).stdout
+        ref = np.frombuffer(ref, '<i2')
+        d = os.path.join(self.tmp, 'a')
+        os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080p5994', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        sws = os.path.join(d, '1.SWS')
+        h = m.HulaSWSHeader(sws)
+        self.assertEqual(h.frame_count, 60)
+        a = _sws_audio(sws)
+        self.assertEqual(len(a), 60 * 801)
+        n = len(ref)
+        self.assertTrue(np.array_equal(a[:n, 0], ref))
+        self.assertEqual(int(np.abs(a[n:]).max()), 0)

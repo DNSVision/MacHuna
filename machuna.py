@@ -209,7 +209,7 @@ def _i_to_p_filter(source_fps: float, video_standard: str, parity: str = None) -
     if abs(produced_fps - target_fps) > TOL:
         # Deinterlacing alone has landed on the wrong rate — resample to the target
         # so the clip keeps real time (i50→p60, i5994→p50, i5994→p25).
-        vf += f',fps={target_fps:g}'
+        vf += f',fps={_fps_expr(target_fps)}'
     return vf
 
 
@@ -4138,7 +4138,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
             else:
                 log("  No companion .eaf - MOV will be silent")
         log("  Encoding ProRes 4444...")
-        _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, f"{h.fps:.6g}",
+        _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, _fps_expr(h.fps),
                                 stereo_pcm, out_path, pcm_24bit=True), check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -4171,7 +4171,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                 '-pix_fmt', 'yuva444p10le',
                 '-color_primaries', 'bt709', '-color_trc', 'bt709',
                 '-colorspace', 'bt709',
-                '-r', f"{out_fps:g}", out_path]
+                '-r', _fps_expr(out_fps), out_path]
         _run_ffmpeg(cmd, check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -4211,7 +4211,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
                       if include_audio else None)
         log("  Encoding ProRes 4444...")
         _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
-                                f"{header.fps:.6g}", stereo_pcm, out_path),
+                                _fps_expr(header.fps), stereo_pcm, out_path),
                     check=True)
     log(f"  Done → {out_path}")
     return out_path
