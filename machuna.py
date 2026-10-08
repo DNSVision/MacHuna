@@ -1535,21 +1535,39 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     fps  = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
     stem = Path(sws_path).stem
     dest_path = os.path.join(dest_dir, (out_name or stem) + '.eif')
-    log(f"  {h.frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
+    # Decision A (David, 2026-10-08): EIF runs at 25 or 50fps only. A source at
+    # another progressive rate (59.94/60) is converted by picking frames by
+    # time, so the clip keeps its duration and its audio fits; it used to map
+    # frames 1:1 and play at the wrong speed. An interlaced source at another
+    # rate has no EIF equivalent and is refused.
+    if abs(h.fps - fps) >= 0.01:
+        if 'i' in h.standard:
+            raise ValueError(
+                f"{Path(sws_path).name} is {h.standard}; K-Frame EIF stores interlaced "
+                f"material only at 25fps (50i). Convert it to 1080i50 first.")
+        out_count = max(1, int(round(h.frame_count * fps / h.fps)))
+        src_index = [min(int(k * h.fps / fps + 1e-9), h.frame_count - 1)
+                     for k in range(out_count)]
+        log(f"  Frame rate {h.fps:.2f} → {fps:.0f}fps: {h.frame_count} → {out_count} frames, "
+            f"duration kept")
+    else:
+        out_count = h.frame_count
+        src_index = list(range(h.frame_count))
+    log(f"  {out_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
 
     need_resize = (h.width != 1920 or h.height != 1080)
     if need_resize:
         log(f"  Scaling {h.width}×{h.height} → 1920×1080")
 
     stereo   = _sws_stereo24(sws_path) if include_audio else None
-    header   = _build_eif_header(stem[:31].upper(), h.frame_count, fps,
+    header   = _build_eif_header(stem[:31].upper(), out_count, fps,
                                  has_audio=stereo is not None)
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
     with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
         out.write(header)
-        for i in range(h.frame_count):
+        for n, i in enumerate(src_index):
             if cancel_event and cancel_event.is_set():
                 _discard_cancelled_eif(dest_path, out, log)
                 return None
@@ -1573,10 +1591,10 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
             else:
                 u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
             out.write(u0); out.write(u1); out.write(u2)
-            if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
-                log(f"  Frame {i + 1}/{h.frame_count}")
+            if (n + 1) % 10 == 0 or n + 1 == out_count:
+                log(f"  Frame {n + 1}/{out_count}")
         out.write(_eif_tail(fps))
-    _settle_eaf(dest_path, stereo, h.frame_count, fps, log)
+    _settle_eaf(dest_path, stereo, out_count, fps, log)
 
     log(f"  Done → {dest_path}")
     return dest_path

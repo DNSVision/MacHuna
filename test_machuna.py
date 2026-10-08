@@ -1743,6 +1743,34 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertTrue(np.array_equal(got[:, 1], a[:, 2] << 8))
         self.assertEqual(self._flag(eif), 0x07)
 
+    def test_a_5994_sws_becomes_a_50fps_eif_of_the_same_length(self):
+        """Decision A: it used to map 59.94 frames 1:1 onto 50fps (plays slow)
+        while the .eaf was padded to the new length."""
+        import numpy as np
+        sws = self._clip_sws('stereo16', '1080p5994', 'sws5994')
+        h = m.HulaSWSHeader(sws)
+        a = _sws_audio(sws)
+        eif = m.convert_sws_to_eif(sws, self._dir('sws5994_eif'), log=lambda *a: None, out_name='0003')
+        e = m.EIFHeader(eif)
+        self.assertEqual(e.fps, 50.0)
+        self.assertAlmostEqual(e.frame_count / 50.0, h.frame_count / h.fps, delta=1 / 50.0)
+        got = self._eaf24(eif)
+        self.assertEqual(len(got), e.frame_count * 960)
+        n = min(len(a), len(got))
+        self.assertTrue(np.array_equal(got[:n, 0], a[:n, 0] << 8))
+
+    def test_an_interlaced_5994_sws_cannot_become_an_eif(self):
+        import subprocess
+        src = os.path.join(self.tmp, 'p5994.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.2', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=60000/1001', '-c:v', 'prores_ks', src], check=True)
+        d = self._dir('i5994')
+        m.convert_clip(src, 1, d, video_standard='1080i5994', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        with self.assertRaises(ValueError):
+            m.convert_sws_to_eif(os.path.join(d, '1.SWS'), self._dir('i5994_eif'),
+                                 log=lambda *a: None, out_name='0004')
+
     def test_eif_to_sws_puts_the_eaf_on_the_kahuna_channels(self):
         """L on channel 1, R on channel 3, the rest silent; 24-bit keeps its
         top 16 bits."""
