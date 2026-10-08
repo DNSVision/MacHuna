@@ -174,6 +174,61 @@ def _p_to_i_field_map(source_fps: float, video_standard: str,
         f"conversion — convert the source to {field_fps:.0f}p (or {frame_fps:.0f}p) first.")
 
 
+def _exact_fps(fps: float):
+    """A frame rate as an exact fraction: 30000/1001 and 60000/1001 for 29.97
+    and 59.94 (and 24000/1001), so frame arithmetic never drifts."""
+    from fractions import Fraction
+    for num in (24000, 30000, 60000):
+        if abs(fps - num / 1001) < 0.01:
+            return Fraction(num, 1001)
+    return Fraction(fps).limit_denominator(1001)
+
+
+def _pick_frames(n: int, src_fps: float, dst_fps: float) -> list:
+    """Decision H (David, 2026-10-08): the one frame-selection rule. Output
+    frame k shows source frame floor(k x source rate / output rate) - the frame
+    on screen at that moment, so frame 0 is always first - and there are
+    round(n x output rate / source rate) of them, halves rounded up so the last
+    source frame is not dropped. Exact NTSC fractions throughout. Every route
+    that converts a progressive rate uses this."""
+    import math
+    from fractions import Fraction
+    if n <= 0:
+        return []
+    s, d = _exact_fps(src_fps), _exact_fps(dst_fps)
+    if s == d:
+        return list(range(n))
+    count = max(1, math.floor(n * d / s + Fraction(1, 2)))
+    return [min(math.floor(k * s / d), n - 1) for k in range(count)]
+
+
+def _remap_v210(path: str, plane_size: int, index: list):
+    """Rewrite a raw v210 file so it holds the frames listed in index, in
+    that order (a frame may repeat). Used with _pick_frames."""
+    tmp = path + '.remap'
+    with open(path, 'rb') as src, open(tmp, 'wb') as out:
+        for i in index:
+            src.seek(i * plane_size)
+            out.write(src.read(plane_size))
+    os.replace(tmp, path)
+
+
+def _i_to_p_plan(source_fps: float, video_standard: str, parity: str = None):
+    """The deinterlace an interlaced source needs for a progressive standard:
+    (yadif filter, the rate it produces, the target rate). The rate change
+    that may still be needed is the caller's - by _pick_frames where the
+    frames pass through Python, or ffmpeg's fps filter in _i_to_p_filter."""
+    target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+    p = f':parity={parity}' if parity else ''
+    TOL = 0.5   # 59.94 and 60 are broadcast-equivalent; same tolerance as _p_to_i_field_map
+    if target_fps > source_fps + TOL:
+        # Target above the source frame rate: bob, so each field becomes a frame.
+        return f'yadif=mode=send_field{p}', source_fps * 2, target_fps
+    # Target at or below the source frame rate: one frame out per frame in,
+    # discarding the second field.
+    return f'yadif=mode=send_frame{p}', source_fps, target_fps
+
+
 def _i_to_p_filter(source_fps: float, video_standard: str, parity: str = None) -> str:
     """Decide how an *interlaced* source maps onto a *progressive* standard.
 
@@ -195,22 +250,15 @@ def _i_to_p_filter(source_fps: float, video_standard: str, parity: str = None) -
     frames, which carries no field-order metadata for yadif to read. Callers with a
     real video input leave it unset so yadif uses the stream's own flags.
     """
-    target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
-    p = f':parity={parity}' if parity else ''
-    TOL = 0.5   # 59.94 and 60 are broadcast-equivalent; same tolerance as _p_to_i_field_map
-    if target_fps > source_fps + TOL:
-        # Target above the source frame rate: bob, so each field becomes a frame.
-        vf = f'yadif=mode=send_field{p}'
-        produced_fps = source_fps * 2
-    else:
-        # Target at or below the source frame rate: one frame out per frame in,
-        # discarding the second field.
-        vf = f'yadif=mode=send_frame{p}'
-        produced_fps = source_fps
-    if abs(produced_fps - target_fps) > TOL:
+    vf, produced_fps, target_fps = _i_to_p_plan(source_fps, video_standard, parity)
+    if abs(produced_fps - target_fps) > 0.5:
         # Deinterlacing alone has landed on the wrong rate — resample to the target
         # so the clip keeps real time (i50→p60, i5994→p50, i5994→p25).
-        vf += f',fps={_fps_expr(target_fps)}'
+        # round=up picks the frame on screen at each output moment, as
+        # _pick_frames does; ffmpeg's default (nearest) does not at 59.94 <-> 50
+        # (tested 2026-10-08). It can add one frame at the very end. Only the
+        # TGA-sequence routes, which ffmpeg writes directly, rely on this.
+        vf += f',fps={_fps_expr(target_fps)}:round=up'
     return vf
 
 
@@ -953,6 +1001,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
     do_p_to_i = video_standard in _interlaced_standards and not info['is_interlaced']
     do_i_to_p = info['is_interlaced'] and video_standard not in _interlaced_standards
+    remap_from = None   # the rate of the decoded frames, when they need picking
 
     if do_p_to_i:
         # Weave pairs of progressive frames into interlaced frames (TFF).
@@ -980,7 +1029,11 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # _i_to_p_filter bobs or drops fields as the rates require and appends an
         # fps resample whenever deinterlacing alone would miss the target, so the
         # output always lands on target_fps and the frame count follows from it.
-        vf_tinterlace = _i_to_p_filter(fps, video_standard)
+        # Deinterlace only; any rate change after it is made by _pick_frames
+        # once the frames are out (decision H).
+        vf_tinterlace, produced_fps, _t = _i_to_p_plan(fps, video_standard)
+        if abs(produced_fps - target_fps) > 0.5:
+            remap_from = produced_fps
         output_frame_count = int(round(frame_count * target_fps / fps))
         log(f"  Transcoding interlaced→progressive: {frame_count} frames @ {fps:.2f}fps → ~{output_frame_count} frames @ {output_fps:.2f}fps")
     else:
@@ -1001,7 +1054,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             # repeating frames, so the clip keeps its duration and its audio
             # fits. It used to keep every frame and stamp the standard's rate,
             # so 25p on a 1080p50 SWS played at double speed.
-            vf_tinterlace      = f'fps={_fps_expr(target_fps)}'
+            vf_tinterlace      = ''
+            remap_from         = fps      # frames picked by _pick_frames (decision H)
             output_fps         = target_fps
             output_frame_count = int(round(frame_count * target_fps / fps))
             log(f"  Frame rate {fps:.2f} → {target_fps:.2f}fps: {frame_count} frames → "
@@ -1046,6 +1100,14 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # especially after tinterlace which may output a different count than frame_count//2.
         plane_size         = _v210_plane_size(w, h)
         output_frame_count = os.path.getsize(fill_raw) // plane_size
+        if remap_from is not None and output_frame_count:
+            index = _pick_frames(output_frame_count, remap_from, output_fps)
+            for raw in (fill_raw, actual_key):
+                if raw:
+                    _remap_v210(raw, plane_size, index)
+            log(f"  Frames picked by time: {output_frame_count} @ {remap_from:g} → "
+                f"{len(index)} @ {output_fps:g}fps")
+            output_frame_count = len(index)
         if output_frame_count == 0:
             raise ValueError(f"{os.path.basename(input_path)}: the conversion produced no "
                              f"frames, so nothing was written.")
@@ -1372,9 +1434,8 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             # EIF routes do (an ffmpeg fps filter here kept 1, 3, 5 where every
             # other route keeps 0, 2, 4 - second review, 2026-10-08).
             n = len(frames)
-            out_count = max(1, int(round(n * out_fps / src_hdr.fps)))
-            frames = [frames[min(int(k * src_hdr.fps / out_fps + 1e-9), n - 1)]
-                      for k in range(out_count)]
+            frames = [frames[i] for i in _pick_frames(n, src_hdr.fps, out_fps)]
+            out_count = len(frames)
             vf = None
             log(f"  {stem}: {src_hdr.standard} → {video_standard}"
                 f" (frame rate {src_hdr.fps:g} → {out_fps:g}: {n} → {out_count} frames, "
@@ -1613,6 +1674,12 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
     info   = get_video_info(input_path)
     fps_in = info['fps']
     fps    = 25.0 if abs(fps_in - 25.0) <= abs(fps_in - 50.0) else 50.0
+    cross_rate = abs(fps_in - fps) >= 0.01
+    if cross_rate and info.get('is_interlaced', False):
+        # As SWS to EIF (decision A): interlaced at another rate has no EIF form.
+        raise ValueError(
+            f"{os.path.basename(input_path)} is interlaced at {fps_in:.2f}fps; K-Frame EIF "
+            f"stores interlaced material only at 25fps (50i). Convert it to 50i first.")
     if abs(fps_in - fps) > 1.0:
         log(f"  Note: source {fps_in:.3g}fps → EIF {fps:.0f}fps")
 
@@ -1622,23 +1689,23 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
 
     with tempfile.TemporaryDirectory() as tmp:
         fill_v210 = os.path.join(tmp, 'fill.v210')
-        # Resample to the chosen EIF rate (25/50) so the number of frames we
-        # write matches the fps stamped in the header. Without this, a source
-        # that is not already 25/50 (e.g. 30/29.97/60/59.94fps) is extracted at
-        # its own rate while the header says 25/50, so the K-Frame plays it at
-        # the wrong speed. ffmpeg's fps filter drops/duplicates frames to hit
-        # the target rate; vf_extra is applied to both fill and key planes so
-        # their frame counts stay in sync. (Fix 14.)
-        # NOTE: how EIF stores originally-interlaced content is still
-        # unconfirmed (roadmap #6) -- this only corrects playback speed.
+        # A source not already at 25/50 is converted to the EIF rate so the
+        # frames written match the fps in the header (Fix 14), the same frames
+        # for fill and key. They are picked by _pick_frames (decision H), not
+        # ffmpeg's fps filter, which chose differently at 59.94/29.97.
         key_path  = convert_to_v210(input_path, fill_v210,
                                     width=1920, height=1080,
                                     extract_alpha=info['has_alpha'],
-                                    vf_extra=f'fps={fps:g}',
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
                                     assume_709=_assume_709(info))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
+        if cross_rate and frame_count:
+            index = _pick_frames(frame_count, fps_in, fps)
+            for raw in (fill_v210, key_path):
+                if raw:
+                    _remap_v210(raw, _EIF_PLANE_SIZE, index)
+            frame_count = len(index)
         if frame_count == 0:
             raise ValueError("No complete frames extracted from source.")
 
@@ -1760,9 +1827,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
             raise ValueError(
                 f"{Path(sws_path).name} is {h.standard}; K-Frame EIF stores interlaced "
                 f"material only at 25fps (50i). Convert it to 1080i50 first.")
-        out_count = max(1, int(round(h.frame_count * fps / h.fps)))
-        src_index = [min(int(k * h.fps / fps + 1e-9), h.frame_count - 1)
-                     for k in range(out_count)]
+        src_index = _pick_frames(h.frame_count, h.fps, fps)
+        out_count = len(src_index)
         log(f"  Frame rate {h.fps:.2f} → {fps:.0f}fps: {h.frame_count} → {out_count} frames, "
             f"duration kept")
     else:
@@ -1906,8 +1972,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
         plan = [(k,) for k in range(n)]
         how = "frames as they are"
     else:
-        out_count = max(1, int(round(n * out_fps / eif_fps)))
-        plan = [(min(int(k * eif_fps / out_fps + 1e-9), n - 1),) for k in range(out_count)]
+        plan = [(i,) for i in _pick_frames(n, eif_fps, out_fps)]
+        out_count = len(plan)
         how = f"frame rate {eif_fps:.0f} → {out_fps:g}fps, duration kept"
     out_count = len(plan)
     log(f"Converting EIF to SWS: {os.path.basename(eif_path)}")

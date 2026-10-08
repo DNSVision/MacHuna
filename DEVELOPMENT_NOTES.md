@@ -264,6 +264,15 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     - **H. One frame-selection rule everywhere**: output frame k shows source
       frame floor(k x source_rate / output_rate), so the first frame is always
       shown (ffmpeg's fps filter on the video routes picked differently).
+      DONE: `_pick_frames()` with exact NTSC fractions (rounded 59.94 picks a
+      different frame from about frame 5994); count rounds halves up so the last
+      source frame stays (5 frames at 50 -> 0, 2, 4 at 25). Every SWS and EIF
+      route picks in Python. Tested: no ffmpeg fps setting gives the rule -
+      the default (nearest) picks wrongly at 59.94<->50 and 29.97<->25, and
+      `round=up` picks rightly but can add a frame at the end. `round=up` is
+      used only where ffmpeg writes a TGA sequence directly (Tk and bridge TGA
+      routes, via `_i_to_p_filter`). Also: an interlaced clip at another rate is
+      refused for EIF, as SWS to EIF already was (decision A).
     - **I. K-Frame and Sony TGA from a MOV are 1920x1080 32-bit RGBA**, as from
       SWS/EIF (they kept the source size, and were 24-bit without alpha).
     - **K. SWS to SWS stays 10-bit throughout**, lossless where no processing is

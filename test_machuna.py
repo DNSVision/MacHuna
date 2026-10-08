@@ -367,20 +367,20 @@ class TestIToPFilter(unittest.TestCase):
     def test_cross_rate_up_appends_resample(self):
         # The Fix 9(b) bug: bobbing 25fps gives 50, but the target is 60/59.94.
         self.assertEqual(m._i_to_p_filter(25.0, '1080p60'),
-                         'yadif=mode=send_field,fps=60')
+                         'yadif=mode=send_field,fps=60:round=up')
         self.assertEqual(m._i_to_p_filter(25.0, '1080p5994'),
-                         'yadif=mode=send_field,fps=60000/1001')
+                         'yadif=mode=send_field,fps=60000/1001:round=up')
         # Bobbing 29.97 gives 59.94, but the target is 50 — resample down.
         self.assertEqual(m._i_to_p_filter(29.97, '1080p50'),
-                         'yadif=mode=send_field,fps=50')
+                         'yadif=mode=send_field,fps=50:round=up')
 
     def test_cross_rate_down_appends_resample(self):
         # Target below the source frame rate: send_frame keeps the source count,
         # which would run slow at the target rate, so it must resample too.
         self.assertEqual(m._i_to_p_filter(29.97, '1080p25'),
-                         'yadif=mode=send_frame,fps=25')
+                         'yadif=mode=send_frame,fps=25:round=up')
         self.assertEqual(m._i_to_p_filter(30.0, '1080p25'),
-                         'yadif=mode=send_frame,fps=25')
+                         'yadif=mode=send_frame,fps=25:round=up')
 
     def test_5994_and_60_treated_as_equivalent(self):
         # Broadcast-equivalent rates must not trigger a pointless resample —
@@ -394,7 +394,7 @@ class TestIToPFilter(unittest.TestCase):
         self.assertEqual(m._i_to_p_filter(25.0, '1080p50', parity='tff'),
                          'yadif=mode=send_field:parity=tff')
         self.assertEqual(m._i_to_p_filter(25.0, '1080p60', parity='bff'),
-                         'yadif=mode=send_field:parity=bff,fps=60')
+                         'yadif=mode=send_field:parity=bff,fps=60:round=up')
         self.assertNotIn('parity', m._i_to_p_filter(25.0, '1080p50'))
 
     def test_every_interlaced_to_progressive_pairing_lands_on_target(self):
@@ -416,82 +416,33 @@ class TestIToPFilter(unittest.TestCase):
 
 
 class TestEifFpsResample(unittest.TestCase):
-    """Fix 14: convert_clip_to_eif must resample the source to the EIF header
-    rate (25/50) so the number of frames written matches the fps stamped in the
-    header. Otherwise a non-25/50 source (30/29.97/60/59.94fps) is extracted at
-    its own rate while the header claims 25/50, and the K-Frame plays it at the
-    wrong speed."""
-
-    class _Stop(Exception):
-        """Sentinel raised once we've captured what we need, to avoid running
-        ffmpeg / the frame encoder."""
+    """Fix 14: a clip converted to EIF must have as many frames as its header
+    rate (25/50) needs for the clip's real length, or the K-Frame plays it at
+    the wrong speed. Measured on real conversions - the old version of this
+    test captured the ffmpeg argument, which decision H replaced."""
 
     def setUp(self):
-        self._orig_info   = m.get_video_info
-        self._orig_v210   = m.convert_to_v210
-        self._orig_header = m._build_eif_header
-        self.captured = {}
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
 
-        def fake_v210(input_path, output_path, **kwargs):
-            # Record the resample instruction and leave a sparse 1-frame file
-            # so frame_count computes to 1 (no real bytes written to disk).
-            self.captured['vf_extra'] = kwargs.get('vf_extra')
-            with open(output_path, 'wb') as f:
-                f.truncate(m._EIF_PLANE_SIZE)
-            return None  # no key plane
-
-        def fake_header(clip_name, frame_count, fps, **_kw):
-            self.captured['header_fps'] = fps
-            raise TestEifFpsResample._Stop
-
-        m.convert_to_v210   = fake_v210
-        m._build_eif_header = fake_header
-
-    def tearDown(self):
-        m.get_video_info   = self._orig_info
-        m.convert_to_v210  = self._orig_v210
-        m._build_eif_header = self._orig_header
-
-    def _run_for(self, source_fps):
-        m.get_video_info = lambda p: {
-            'fps': source_fps, 'has_alpha': False, 'has_audio': False,
-            'width': 1920, 'height': 1080,
-        }
-        with self.assertRaises(TestEifFpsResample._Stop):
-            m.convert_clip_to_eif('dummy.mov', '.', log=lambda *a, **k: None)
-        return self.captured['vf_extra'], self.captured['header_fps']
-
-    def test_resample_target_always_matches_header_fps(self):
-        # The invariant that guarantees correct playback speed: whatever rate we
-        # resample to must equal the rate we stamp in the header.
-        for src in (24.0, 23.976, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0):
-            vf_extra, header_fps = self._run_for(src)
-            self.assertEqual(vf_extra, f'fps={header_fps:g}',
-                             msg=f'{src}fps: resample {vf_extra} != header {header_fps}')
-
-    def test_60fps_source_resampled_to_50(self):
-        vf_extra, _ = self._run_for(60.0)
-        self.assertEqual(vf_extra, 'fps=50')
-
-    def test_5994_source_resampled_to_50(self):
-        vf_extra, _ = self._run_for(59.94)
-        self.assertEqual(vf_extra, 'fps=50')
-
-    def test_30fps_source_resampled_to_25(self):
-        vf_extra, _ = self._run_for(30.0)
-        self.assertEqual(vf_extra, 'fps=25')
-
-    def test_2997_source_resampled_to_25(self):
-        vf_extra, _ = self._run_for(29.97)
-        self.assertEqual(vf_extra, 'fps=25')
-
-    def test_already_25_stays_25(self):
-        vf_extra, _ = self._run_for(25.0)
-        self.assertEqual(vf_extra, 'fps=25')
-
-    def test_already_50_stays_50(self):
-        vf_extra, _ = self._run_for(50.0)
-        self.assertEqual(vf_extra, 'fps=50')
+    def test_every_source_rate_keeps_its_length(self):
+        import subprocess
+        from fractions import Fraction as F
+        for rate, want_fps in (('24000/1001', 25), ('25', 25), ('30000/1001', 25), ('30', 25),
+                               ('50', 50), ('60000/1001', 50), ('60', 50)):
+            with self.subTest(rate=rate):
+                src = os.path.join(self.tmp, rate.replace('/', '_') + '.mov')
+                n = 9
+                subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                                f'testsrc=size=192x108:rate={rate}', '-frames:v', str(n),
+                                '-c:v', 'prores_ks', src], check=True)
+                eif = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None,
+                                            out_name=rate.replace('/', '_'))
+                h = m.EIFHeader(eif)
+                self.assertEqual(h.fps, want_fps)
+                self.assertLessEqual(abs(h.frame_count / h.fps - float(n / F(rate))), 1 / h.fps)
 
 
 # ── Bespoke per-item output IDs ────────────────────────────────────────────────
@@ -3743,3 +3694,121 @@ class TestMovToTgaIsFullSizeRgba(unittest.TestCase):
         _, a = self._read(self._frames(mov, m.HULA_TARGET_KFRAME_TGA, '1080p25')[0])
         got = a[540, 960, :3].astype(float)
         self.assertLessEqual(float(np.abs(got - want).max()), 3, f'got {got}, BT.709 says {want.round(1)}')
+
+
+class TestOneFrameRule(unittest.TestCase):
+    """Decision H (David, 2026-10-08): one frame-selection rule everywhere.
+    Output frame k shows source frame floor(k x source rate / output rate),
+    so the first frame is always shown, and there are round(source frames x
+    output rate / source rate) of them, halves rounded up. NTSC rates are the
+    exact 30000/1001 and 60000/1001. ffmpeg's fps filter, used on the clip
+    routes, rounds to the nearest frame instead, which differs at 59.94 <-> 50
+    and 29.97 <-> 25 - the American case."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    @staticmethod
+    def _rule(n, src, dst):
+        from fractions import Fraction as F
+        import math
+        ex = lambda r: F(60000, 1001) if abs(r - 59.94) < .01 else F(30000, 1001) if abs(r - 29.97) < .01 else F(r)
+        s, d = ex(src), ex(dst)
+        count = max(1, math.floor(n * d / s + F(1, 2)))
+        return [min(math.floor(k * s / d), n - 1) for k in range(count)]
+
+    def _mov(self, rate, n, extra=()):
+        import subprocess
+        out = os.path.join(self.tmp, f'num_{rate.replace("/", "_")}_{n}.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        f"color=c=black:size=192x108:rate={rate}",
+                        '-vf', "geq=lum='16+8*N':cb=128:cr=128", *extra,
+                        '-frames:v', str(n), '-c:v', 'prores_ks', out], check=True)
+        return out
+
+    @staticmethod
+    def _num(y10):
+        return int(round((float(y10) / 4 - 16) / 8))
+
+    def _sws_numbers(self, sws):
+        h = m.HulaSWSHeader(sws)
+        data = Path(sws).read_bytes()
+        out = []
+        for k in range(h.frame_count):
+            off = h.data_offset + k * h.plane_size
+            yuv = m._v210_plane_to_yuv(data[off:off + h.plane_size], h.width, h.height, 1)[0]
+            out.append(self._num(yuv[h.height // 2, h.width // 2, 0]))
+        return out
+
+    def _eif_numbers(self, eif):
+        import numpy as np
+        h = m.EIFHeader(eif)
+        out = []
+        with open(eif, 'rb') as f:
+            for k in range(h.frame_count):
+                f.seek(h.video_start + k * 3 * m._EIF_UNIT_BYTES + m._EIF_UNIT_BYTES)
+                w = np.frombuffer(f.read(m._EIF_UNIT_BYTES), dtype='<u4').reshape(360, 1920)
+                out.append(self._num((w[180, 960] >> 10) & 0x3FF))
+        return out
+
+    def _clip_sws(self, src, std, tag):
+        d = os.path.join(self.tmp, tag); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard=std, include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        return os.path.join(d, '1.SWS')
+
+    def test_clip_to_sws(self):
+        for rate, src_fps, n, std, dst_fps in (('60000/1001', 59.94, 12, '1080p50', 50),
+                                               ('50', 50, 12, '1080p5994', 59.94),
+                                               ('30000/1001', 29.97, 13, '1080p25', 25),
+                                               ('25', 25, 7, '1080p5994', 59.94),
+                                               ('50', 50, 5, '1080p25', 25)):
+            with self.subTest(rate=rate, std=std, n=n):
+                sws = self._clip_sws(self._mov(rate, n), std, f'c_{std}_{n}_{rate.replace("/", "_")}')
+                self.assertEqual(self._sws_numbers(sws), self._rule(n, src_fps, dst_fps))
+
+    def test_clip_to_eif(self):
+        for rate, src_fps, n, dst_fps in (('60000/1001', 59.94, 12, 50), ('30000/1001', 29.97, 13, 25),
+                                          ('60', 60, 7, 50), ('24', 24, 9, 25)):
+            with self.subTest(rate=rate, n=n):
+                d = os.path.join(self.tmp, f'e_{n}_{rate.replace("/", "_")}'); os.makedirs(d)
+                eif = m.convert_clip_to_eif(self._mov(rate, n), d, log=lambda *a: None, out_name='0001')
+                self.assertEqual(self._eif_numbers(eif), self._rule(n, src_fps, dst_fps))
+
+    def test_sws_to_sws_and_sws_to_eif(self):
+        sws = self._clip_sws(self._mov('60000/1001', 12), '1080p5994', 'src5994')
+        d = os.path.join(self.tmp, 's2s'); os.makedirs(d)
+        out = m.convert_sws_to_sws(sws, 2, d, '1080p50', split_fat32=False, log=lambda *a: None)
+        self.assertEqual(self._sws_numbers(out), self._rule(12, 59.94, 50))
+        eif = m.convert_sws_to_eif(sws, d, log=lambda *a: None, out_name='0002')
+        self.assertEqual(self._eif_numbers(eif), self._rule(12, 59.94, 50))
+
+    def test_eif_to_sws(self):
+        d = os.path.join(self.tmp, 'e2s'); os.makedirs(d)
+        eif = m.convert_clip_to_eif(self._mov('50', 5), d, log=lambda *a: None, out_name='0005')
+        for std, dst in (('1080p5994', 59.94), ('1080p25', 25)):
+            with self.subTest(std=std):
+                out = m.convert_eif_to_sws(eif, 3, d, video_standard=std, split_fat32=False,
+                                           log=lambda *a: None)
+                self.assertEqual(self._sws_numbers(out), self._rule(5, 50, dst))
+
+    def test_the_rule_is_exact_over_long_ntsc_clips(self):
+        """Rounded 59.94 picks a different frame from about frame 5994 on."""
+        for n, src, dst in ((7000, 50, 59.94), (7000, 59.94, 50), (4000, 25, 29.97), (4000, 29.97, 25)):
+            with self.subTest(src=src, dst=dst):
+                self.assertEqual(m._pick_frames(n, src, dst), self._rule(n, src, dst))
+
+    def test_an_interlaced_clip_at_another_rate_cannot_become_an_eif(self):
+        """As SWS to EIF already refuses (decision A): 29.97i has no EIF form."""
+        src = self._mov('30000/1001', 4, ('-flags', '+ilme+ildct'))
+        import subprocess
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-i', src, '-vf', 'setfield=tff',
+                        '-flags', '+ilme+ildct', '-c:v', 'prores_ks', src + '.i.mov'], check=True)
+        self.assertTrue(m.get_video_info(src + '.i.mov')['is_interlaced'])
+        d = os.path.join(self.tmp, 'i2997'); os.makedirs(d)
+        with self.assertRaises(ValueError):
+            m.convert_clip_to_eif(src + '.i.mov', d, log=lambda *a: None, out_name='0001')
+        self.assertEqual(os.listdir(d), [])
