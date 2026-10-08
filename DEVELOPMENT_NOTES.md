@@ -132,8 +132,9 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     no Standard control; worked out from the source, asking only when there is a
     real choice (a progressive 50fps source: "Is the desk 50p or 50i?"). An
     interlaced source is never woven again. K-Frame TGA only for now. Spec in
-    `MacHuna-Swift/DESIGN_DECISIONS.md` section 44; engine fix to
-    `_hula_convert_mov_to_tga` first.
+    `MacHuna-Swift/DESIGN_DECISIONS.md` section 44. **Engine half DONE
+    2026-10-08** (source-aware weaving, `kframe_tga_asks_desk_format`); the
+    Swift control is still to build.
   - ~~**Dragging an EIF that has an `.eaf`**~~ - **DECIDED 2026-10-08**: the drag
     carries both files, the row shows audio is present, clashes are left to the
     Finder, and a missing `.eaf` counts as a vanished output. Spec in
@@ -188,6 +189,14 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   now EIF to SWS for long clips too. Not changed by fix 3. Fix: build the header
   after deciding whether the file splits, or support audio in split files once a
   reference exists.
+
+- **Sony TGA weaves an already-interlaced MOV a second time (found 2026-10-08,
+  fix 4).** Same flaw K-Frame TGA had: `_hula_convert_mov_to_tga` with a 1080i
+  standard weaves pairs of an interlaced source, giving half the frames with
+  fields from different moments (TNTS 50i to Sony at 1080i50: 15 frames from
+  30). Fix 4 corrected it for K-Frame only, because decision 44 covered K-Frame
+  TGA; Sony was left exactly as it was. **Needs David's decision** before
+  changing, and ideally a Sony desk to confirm 25i field handling.
 
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then

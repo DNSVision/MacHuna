@@ -24,6 +24,11 @@ Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; t
   - **Include audio** is on by default, matching decision 43; the engine takes `include_audio` on every EIF route.
 - **EIF to SWS now carries the `.eaf` audio** into the SWS in the Kahuna's layout (left on 1, right on 3), keeping the top 16 bits of each 24-bit sample, as the K-Frame's own import does. Before, this route dropped audio entirely.
 
+- **K-Frame TGA no longer halves an interlaced source.** With a 1080i standard, a MOV that was already interlaced was woven a second time: half the frames, each mixing fields from two different moments. K-Frame TGA now works its output out from the source (decision 44): only a progressive source at 50fps or more is woven, for a 50i desk; anything already interlaced, or at 25fps, goes through frame for frame. TNTS 50i at 1080i50 now gives 30 frames, **byte-identical to the TGAs that loaded correctly on the K-Frame on 7 October**, where it used to give 15.
+  - A **25fps EIF** to K-Frame TGA on an interlaced standard used to be refused with an error; it now goes through frame for frame, since a 25fps EIF already holds woven 50i.
+  - SWS sources already followed this rule and are unchanged. **Sony TGA is deliberately unchanged** (see the roadmap: it has the same double-weave on an interlaced MOV).
+  - New `kframe_tga_asks_desk_format(path)` tells the app when to ask "Is the desk 50p or 50i?": only for a progressive source at 50fps or more.
+
 ### Changed
 - **A mono source now plays on both left and right**, in SWS as well as EIF (David, 8 October). Until now SWS put mono on the left only, an accident of the channel routing, never hardware-confirmed. **Stereo and multichannel SWS output is byte-identical to before** (proved on stereo, four-channel, 44.1kHz and 24-bit sources, timestamps aside); for mono, the only bytes that change are the right channel's audio.
 - **The `.eif` audio flag now tells the truth.** It said "has audio" on every 25fps clip and "no audio" on every 50fps clip, because the rule came from reference files where frame rate and audio happened to coincide. The desk did not mind (tested on 7 October), but it now matches the desk's own files.

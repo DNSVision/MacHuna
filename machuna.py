@@ -3375,6 +3375,25 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     return dest_dir
 
 
+def kframe_tga_asks_desk_format(path: str) -> bool:
+    """True when making K-Frame TGA from this source is a real choice: a
+    PROGRESSIVE source at 50fps or more, which a 50p desk takes frame for frame
+    and a 50i desk wants woven in pairs. Anything already interlaced, or at
+    25fps, goes through frame for frame whatever the desk, so there is nothing
+    to ask (decision 44, 2026-10-08). A 25fps EIF counts as interlaced: the
+    K-Frame stores 50i as woven 25fps frames (desk session 2026-10-07)."""
+    ext = Path(path).suffix.lower()
+    try:
+        if ext == '.eif':
+            return EIFHeader(path).fps >= 48.0
+        if ext == '.sws':
+            return HulaSWSHeader(path).fps >= 48.0
+        info = get_video_info(path)
+        return (not info.get('is_interlaced')) and info.get('fps', 0) >= 48.0
+    except Exception:
+        return False
+
+
 def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                               target: str, standard: str,
                               clip_name: str = 'WIPE',
@@ -3392,6 +3411,14 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     os.makedirs(dest_dir, exist_ok=True)
     cn        = clip_name.upper()[:4].ljust(4) if is_sony else None
     interlaced = 'i' in standard
+    if interlaced and not is_sony and not kframe_tga_asks_desk_format(mov_path):
+        # K-Frame TGA: only a progressive source at 50fps or more is woven.
+        # Weaving an already-interlaced source again halved it and mixed
+        # fields from different frames (decision 44, 2026-10-08). Sony TGA
+        # keeps its own behaviour; it was not part of that decision.
+        log(f"  {Path(mov_path).name} is already interlaced or 25fps - "
+            f"frames go through unchanged")
+        interlaced = False
 
     ffmpeg = _get_ffmpeg_path('ffmpeg')
 
@@ -3788,7 +3815,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                          out_name=(cn or None) if clip_names else None,
                                          log=log)
             elif ext == '.eif':
-                if interlaced:
+                weave = interlaced and (target != HULA_TARGET_KFRAME_TGA
+                                        or kframe_tga_asks_desk_format(path))
+                if interlaced and not weave:
+                    # A 25fps EIF already holds woven 50i: K-Frame TGA takes it
+                    # frame for frame instead of refusing (decision 44).
+                    log(f"  {Path(path).name} is 25fps, already interlaced - "
+                        f"frames go through unchanged")
+                if weave:
                     _hula_convert_eif_to_tga_interlaced(
                         path, dest_dir, target=target,
                         clip_name=cn, field_order=field_order, log=log)

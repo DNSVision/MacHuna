@@ -1772,6 +1772,103 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertEqual(int(np.abs(a[:, others]).max()), 0)
 
 
+class TestKFrameTgaFromTheSource(unittest.TestCase):
+    """Decision 44 (2026-10-08), engine half: K-Frame TGA works its output out
+    from the SOURCE. A TGA sequence has no rate or scan of its own - the desk
+    imports frames at whatever it is set to - so the only real choice is for a
+    progressive source at 50fps or more, which a 50i desk wants woven in pairs.
+    Anything already interlaced, or at 25fps, goes through frame for frame.
+
+    The bug this fixes: a 1080i50 standard wove an ALREADY interlaced MOV a
+    second time, giving half the frames with fields from two different frames
+    in each (found 2026-10-07 preparing the desk tests). Driven through
+    _hula_run_batch, the dispatcher both apps call."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            raise unittest.SkipTest('ffmpeg not available')
+        import subprocess
+        from PIL import Image
+        cls.tmp = tempfile.mkdtemp()
+        ff = m._get_ffmpeg_path('ffmpeg')
+
+        def mov(name, fps, interlaced=False):
+            out = os.path.join(cls.tmp, name + '.mov')
+            cmd = [ff, '-y', '-v', 'error', '-t', f'{6 / fps:g}', '-f', 'lavfi',
+                   '-i', f'testsrc=size=192x108:rate={fps}']
+            if interlaced:
+                cmd += ['-vf', 'setfield=tff', '-flags', '+ilme+ildct']
+            subprocess.run(cmd + ['-c:v', 'prores_ks', out], check=True)
+            return out
+        cls.i25 = mov('i25', 25, interlaced=True)
+        cls.p25 = mov('p25', 25)
+        cls.p50 = mov('p50', 50)
+
+        tgas = []
+        for i in range(4):
+            t = os.path.join(cls.tmp, f'f{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (40 * i, 90, 140, 255)).save(t)
+            tgas.append(t)
+        d = os.path.join(cls.tmp, 'eifs')
+        os.makedirs(d)
+        cls.e25 = m.convert_tga_seq_to_eif(tgas, d, 'E', 25.0, log=lambda *a: None, out_name='0025')
+        cls.e50 = m.convert_tga_seq_to_eif(tgas, d, 'E', 50.0, log=lambda *a: None, out_name='0050')
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _tgas(self, src, standard):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], out, m.HULA_TARGET_KFRAME_TGA, standard=standard,
+                          log=lambda *a: None)
+        return sorted(Path(out).rglob('*.tga'))
+
+    def _source_frames(self, src):
+        import numpy as np, subprocess
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', src,
+                              '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'],
+                             capture_output=True, check=True).stdout
+        return np.frombuffer(raw, dtype=np.uint8).reshape(-1, 108, 192, 4)
+
+    def test_an_interlaced_mov_is_never_woven_again(self):
+        import numpy as np
+        from PIL import Image
+        frames = self._tgas(self.i25, '1080i50')
+        src = self._source_frames(self.i25)
+        self.assertEqual(len(frames), len(src), 'an interlaced source must keep every frame')
+        for i, f in enumerate(frames):
+            with self.subTest(frame=i):
+                self.assertTrue(np.array_equal(np.array(Image.open(f).convert('RGBA')), src[i]))
+
+    def test_a_25p_mov_keeps_every_frame_on_an_interlaced_standard(self):
+        self.assertEqual(len(self._tgas(self.p25, '1080i50')), 6)
+
+    def test_a_50p_mov_is_woven_for_an_interlaced_desk(self):
+        self.assertEqual(len(self._tgas(self.p50, '1080i50')), 3)
+
+    def test_a_50p_mov_keeps_every_frame_for_a_progressive_desk(self):
+        self.assertEqual(len(self._tgas(self.p50, '1080p50')), 6)
+
+    def test_a_25fps_eif_goes_through_on_an_interlaced_standard(self):
+        """A 25fps EIF holds woven 50i (the desk stores it that way, 2026-10-07).
+        It used to be refused with an error."""
+        self.assertEqual(len(self._tgas(self.e25, '1080i50')), 4)
+
+    def test_a_50fps_eif_is_woven_for_an_interlaced_desk(self):
+        self.assertEqual(len(self._tgas(self.e50, '1080i50')), 2)
+
+    def test_the_desk_question_is_asked_only_for_fast_progressive_sources(self):
+        """The app asks "Is the desk 50p or 50i?" only when the answer changes
+        the output."""
+        self.assertTrue(m.kframe_tga_asks_desk_format(self.p50))
+        self.assertTrue(m.kframe_tga_asks_desk_format(self.e50))
+        self.assertFalse(m.kframe_tga_asks_desk_format(self.i25))
+        self.assertFalse(m.kframe_tga_asks_desk_format(self.p25))
+        self.assertFalse(m.kframe_tga_asks_desk_format(self.e25))
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
