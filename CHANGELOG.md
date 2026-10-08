@@ -4,7 +4,7 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased
+## v1.12.2 — 2026-10-08
 
 ### Changed
 - **59.94 and 60 are one family everywhere** (David, 8 October). 59.94p already wove into 1080i60, but a 1080i59.94 SWS or a 29.97i clip was refused for 1080i60 (and 60 material for 1080i59.94), though the result is the same 0.1% speed difference. Both are now allowed: the frames pass through untouched, the clip plays 0.1% fast or slow, and the log says so - for the weave too. Other interlaced rate changes are still refused. Matrix: 324 cases, 275 pass every check, 49 refused on purpose.
