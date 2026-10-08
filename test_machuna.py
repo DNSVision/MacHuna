@@ -1866,6 +1866,24 @@ class TestAudioRoutes(unittest.TestCase):
                 self.assertTrue(np.array_equal(b[:n, 0], a[:n, 0]))
                 self.assertEqual(len(b), h.frame_count * int(round(48000 / h.fps)))
 
+    def test_sws_to_sws_rate_conversion_keeps_the_same_frames_as_other_routes(self):
+        """Second review: 50p to 25p kept source frames 1, 3, 5 here but 0, 2, 4
+        on every other route. Checks WHICH frames survive, not just how many."""
+        import numpy as np
+        src = self._sws('stereo24_50', 's2s_phase_src', std='1080p50')
+        out = m.convert_sws_to_sws(src, 6, self._dir('s2s_phase'), '1080p25',
+                                   split_fat32=False, log=lambda *a: None)
+        hs, ho = m.HulaSWSHeader(src), m.HulaSWSHeader(out)
+        ds, do = Path(src).read_bytes(), Path(out).read_bytes()
+        def frame(h, d, k):
+            off = h.data_offset + k * h.plane_size
+            return m._hula_decode_frame(d[off:off + h.plane_size], None, h.width, h.height)[0].astype(int)
+        for k in range(ho.frame_count):
+            o = frame(ho, do, k)
+            diffs = [float(np.abs(o - frame(hs, ds, j)).mean()) for j in range(hs.frame_count)]
+            with self.subTest(output_frame=k):
+                self.assertEqual(int(np.argmin(diffs)), 2 * k, f'diffs {diffs}')
+
     def test_sws_to_sws_include_audio_off_writes_none(self):
         _a, out = self._sws_to_sws('1080p25', '1080p25', include_audio=False)
         self.assertIsNone(_sws_audio(out))

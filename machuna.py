@@ -1251,10 +1251,17 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         elif not same_rate:
             # Decision A (David, 2026-10-08): convert the rate, so the clip keeps
             # its duration and its audio fits. It used to keep every frame and
-            # play at the wrong speed.
-            vf = f"{stamp}fps={_fps_expr(out_fps)}"
+            # play at the wrong speed. Frames are picked by time, exactly as the
+            # EIF routes do (an ffmpeg fps filter here kept 1, 3, 5 where every
+            # other route keeps 0, 2, 4 - second review, 2026-10-08).
+            n = len(frames)
+            out_count = max(1, int(round(n * out_fps / src_hdr.fps)))
+            frames = [frames[min(int(k * src_hdr.fps / out_fps + 1e-9), n - 1)]
+                      for k in range(out_count)]
+            vf = None
             log(f"  {stem}: {src_hdr.standard} → {video_standard}"
-                f" (frame rate {src_hdr.fps:g} → {out_fps:g}, duration kept)")
+                f" (frame rate {src_hdr.fps:g} → {out_fps:g}: {n} → {out_count} frames, "
+                f"duration kept)")
         else:
             vf = None
             log(f"  {stem}: {src_hdr.standard} → {video_standard} (passthrough)")
