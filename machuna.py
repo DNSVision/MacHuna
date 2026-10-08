@@ -3837,15 +3837,27 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
 
     ffmpeg = _get_ffmpeg_path('ffmpeg')
 
+    # Decision I (David, 2026-10-08): 1920x1080 32-bit RGBA, as from SWS and
+    # EIF. Untagged HD is BT.709, not SD colour. Material that goes through
+    # interlaced is scaled a field at a time so the fields never blend; a
+    # source that is about to be woven is progressive, so is scaled whole.
+    info = get_video_info(mov_path)
+    vf = [_UNTAGGED_HD_AS_709] if _assume_709(info) else []
+    if (info.get('width'), info.get('height')) != (1920, 1080):
+        fields = info.get('is_interlaced', False) and not interlaced
+        vf.append('scale=1920:1080' + (':interl=1' if fields else ''))
+        log(f"  Scaling {info.get('width')}×{info.get('height')} → 1920×1080")
+
     if not interlaced:
         # Progressive: extract frames directly to dest with correct naming.
+        vf_tga = ['-vf', ','.join(vf + ['format=bgra'])]
         if is_sony:
             pattern = os.path.join(dest_dir, f"{cn}%04d.tga")
-            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0',
+            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0'] + vf_tga + [
                    '-start_number', '0', pattern]
         else:
             pattern = os.path.join(dest_dir, '%04d.tga')
-            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0',
+            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0'] + vf_tga + [
                    '-start_number', '1', pattern]
         log(f"  Extracting {os.path.basename(mov_path)} → TGA ({standard})...")
         _run_ffmpeg(cmd, check=True)
@@ -3857,6 +3869,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
         with tempfile.TemporaryDirectory() as tmp:
             frame_pat = os.path.join(tmp, 'frame_%06d.png')
             cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0',
+                   '-vf', ','.join(vf + ['format=rgba']),
                    '-start_number', '0', frame_pat]
             _run_ffmpeg(cmd, check=True)
             frames = sorted(Path(tmp).glob('frame_*.png'))

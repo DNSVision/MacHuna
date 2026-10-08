@@ -2305,11 +2305,14 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
         return sorted(Path(out).rglob('*.tga'))
 
     def _source_frames(self, src):
+        """The source frames as decision I says they arrive: 1920x1080 RGBA,
+        an interlaced source scaled a field at a time."""
         import numpy as np, subprocess
         raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', src,
+                              '-vf', 'scale=1920:1080:interl=1',
                               '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'],
                              capture_output=True, check=True).stdout
-        return np.frombuffer(raw, dtype=np.uint8).reshape(-1, 108, 192, 4)
+        return np.frombuffer(raw, dtype=np.uint8).reshape(-1, 1080, 1920, 4)
 
     def test_an_interlaced_mov_is_never_woven_again(self):
         import numpy as np
@@ -2319,7 +2322,10 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
         self.assertEqual(len(frames), len(src), 'an interlaced source must keep every frame')
         for i, f in enumerate(frames):
             with self.subTest(frame=i):
-                self.assertTrue(np.array_equal(np.array(Image.open(f).convert('RGBA')), src[i]))
+                got = np.array(Image.open(f).convert('RGBA'))
+                self.assertTrue(np.array_equal(got, src[i]))
+                if i + 1 < len(src):
+                    self.assertFalse(np.array_equal(got, src[i + 1]), 'frames are not told apart')
 
     def test_a_25p_mov_keeps_every_frame_on_an_interlaced_standard(self):
         self.assertEqual(len(self._tgas(self.p25, '1080i50')), 6)
@@ -2356,7 +2362,10 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
         self.assertEqual([f.name for f in frames], [f'TEST{i:04d}.tga' for i in range(len(src))])
         for i, f in enumerate(frames):
             with self.subTest(frame=i):
-                self.assertTrue(np.array_equal(np.array(Image.open(f).convert('RGBA')), src[i]))
+                got = np.array(Image.open(f).convert('RGBA'))
+                self.assertTrue(np.array_equal(got, src[i]))
+                if i + 1 < len(src):
+                    self.assertFalse(np.array_equal(got, src[i + 1]), 'frames are not told apart')
 
     def test_sony_takes_a_25fps_eif_frame_for_frame(self):
         self.assertEqual(len(self._sony(self.e25, '1080i50')), 4)
@@ -3654,3 +3663,83 @@ class TestSonyNamesAreExactlyFour(unittest.TestCase):
                 m._hula_run_batch([src], out, m.HULA_TARGET_KFRAME_TGA, standard='1080i50',
                                   clip_name='AB', log=lambda *a: None)
                 self.assertEqual(len(os.listdir(out)), 1)
+
+
+class TestMovToTgaIsFullSizeRgba(unittest.TestCase):
+    """Decision I (David, 2026-10-08): K-Frame and Sony TGA from a MOV are
+    1920x1080 32-bit RGBA, as they are from SWS and EIF. They kept the
+    source size, were 24-bit when the source had no alpha, and untagged HD
+    was decoded as SD colour."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _mov(self, name, args):
+        import subprocess
+        out = os.path.join(self.tmp, name + '.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error'] + args + [out], check=True)
+        return out
+
+    def _frames(self, mov, target, std, name='WIPE'):
+        out = os.path.join(self.tmp, 'o_' + Path(mov).stem + target + std)
+        m._hula_run_batch([mov], out, target, standard=std, clip_name=name, log=lambda *a: None)
+        (folder,) = os.listdir(out)
+        return [os.path.join(out, folder, f) for f in sorted(os.listdir(os.path.join(out, folder)))]
+
+    def _read(self, path):
+        """Read with our own code: the TGA header says the pixel depth."""
+        from PIL import Image
+        import numpy as np
+        raw = Path(path).read_bytes()
+        return raw[16], np.asarray(Image.open(path))
+
+    def test_a_small_clip_without_alpha_becomes_full_size_32_bit(self):
+        mov = self._mov('small', ['-f', 'lavfi', '-i', 'testsrc=size=192x108:rate=50',
+                                  '-frames:v', '4', '-c:v', 'prores_ks'])
+        for target in (m.HULA_TARGET_KFRAME_TGA, m.HULA_TARGET_SONY_TGA):
+            for std in ('1080p50', '1080i50'):
+                with self.subTest(target=target, std=std):
+                    frames = self._frames(mov, target, std)
+                    self.assertEqual(len(frames), 4 if std == '1080p50' else 2)
+                    for f in frames:
+                        depth, a = self._read(f)
+                        self.assertEqual(depth, 32, f'{Path(f).name} is {depth}-bit')
+                        self.assertEqual(a.shape, (1080, 1920, 4))
+                        self.assertEqual(int(a[:, :, 3].min()), 255, 'a keyless clip is opaque')
+
+    def test_a_small_keyed_clip_keeps_its_key_scaled(self):
+        mov = self._mov('keyed', ['-f', 'lavfi', '-i', 'testsrc=size=192x108:rate=50', '-frames:v', '2',
+                                  '-vf', "format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,96),4095,0)'",
+                                  '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le'])
+        _, a = self._read(self._frames(mov, m.HULA_TARGET_KFRAME_TGA, '1080p50')[0])
+        self.assertEqual(a.shape, (1080, 1920, 4))
+        self.assertEqual(int(a[540, 400, 3]), 255)
+        self.assertEqual(int(a[540, 1500, 3]), 0)
+
+    def test_interlaced_material_going_through_is_scaled_a_field_at_a_time(self):
+        mov = self._mov('sd25i', ['-t', '0.12', '-f', 'lavfi', '-i', 'color=c=black:size=720x576:rate=25',
+                                  '-vf', "geq=lum='if(mod(Y,2),200,40)':cb=128:cr=128,setfield=tff",
+                                  '-flags', '+ilme+ildct', '-c:v', 'prores_ks'])
+        _, a = self._read(self._frames(mov, m.HULA_TARGET_KFRAME_TGA, '1080i50')[0])
+        self.assertEqual(a.shape, (1080, 1920, 4))
+        col = a[100:120, 960, 0].astype(int)
+        self.assertGreater(abs(col[0] - col[1]), 100, f'fields blended: {col[:6]}')
+
+    def test_untagged_hd_is_decoded_as_bt709(self):
+        import numpy as np, subprocess, json
+        mov = self._mov('hd', ['-t', '0.08', '-f', 'lavfi', '-i', 'color=c=black:size=1920x1080:rate=25',
+                               '-vf', "format=yuv444p10le,geq=lum='300':cb='300':cr='760'",
+                               '-c:v', 'prores_ks', '-profile:v', '3'])
+        cs = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                                        'stream=color_space', '-of', 'json', mov],
+                                       capture_output=True, text=True).stdout)['streams'][0].get('color_space', 'unknown')
+        self.assertIn(cs, ('unknown', None), 'test source must be untagged')
+        y, pb, pr = (300 - 64) / 876, (300 - 512) / 896, (760 - 512) / 896
+        want = np.clip([y + 1.5748 * pr, y - 0.1873 * pb - 0.4681 * pr, y + 1.8556 * pb], 0, 1) * 255
+        _, a = self._read(self._frames(mov, m.HULA_TARGET_KFRAME_TGA, '1080p25')[0])
+        got = a[540, 960, :3].astype(float)
+        self.assertLessEqual(float(np.abs(got - want).max()), 3, f'got {got}, BT.709 says {want.round(1)}')
