@@ -172,15 +172,11 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     leftover `.eaf` would otherwise put an old clip's sound on air with a new
     picture, because the desk pairs them by name alone.
 
-- **Interlaced TGA sequence to EIF disagrees with the desk (found 2026-10-08,
-  reading the code).** `convert_tga_seq_to_eif(source_interlaced=True)`
-  deinterlaces to a 50fps progressive EIF. The desk stores 50i as woven 25fps
-  frames: its own import of TNTS 50i.mov did, and MacHuna's woven 25fps 0912
-  played correctly on a 1080i 25Hz desk (2026-10-07). `convert_clip_to_eif`
-  already passes interlaced material through woven, so the two routes disagree,
-  and the desk has now said which is right. This settles the old "Interlaced EIF
-  reconciliation" item: the TGA route should write woven 25fps. Not yet changed.
-
+- ~~**Interlaced TGA sequence to EIF disagrees with the desk**~~ - **FIXED
+  2026-10-08**: `convert_tga_seq_to_eif(source_interlaced=True)` now writes the
+  woven frames as they are at 25fps (yadif branch removed), scaling non-1080
+  frames one field at a time. Progressive output byte-identical. Settles the
+  old "Interlaced EIF reconciliation" item: the routes now agree with the desk.
 - **Split SWS files drop their audio but the header still declares it
   (pre-existing, found 2026-10-08 during fix 3).** `write_sws` sends anything
   over the FAT32 limit to `_write_sws_split`, which never writes audio
@@ -201,7 +197,9 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   ProRes straight in shifts saturated colours; converting through MacHuna does
   not (desk results 2026-10-07). **USER_MANUAL section 6 must also be rewritten**:
   it still gives the old `.eaf` format (8-channel 16-bit big-endian) and says EIF
-  has no audio, which will stop being true once writing lands.
+  has no audio, which will stop being true once writing lands. **README line
+  ~153 and USER_MANUAL ~321 ("TGA source interlaced")** still say interlaced TGA
+  to EIF deinterlaces to 50fps progressive; it now keeps woven 25fps.
 
 **Known limitations (recorded, not scheduled):**
 - **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one applies the tick to both, so one comes out wrong. David's view (2026-09-09): not a real use case. The v1.8.0 item list makes mixed batches easier to build than the old UI did, which is why it is worth recording. The fix, if ever needed, is a per-row option rather than a batch-wide checkbox.

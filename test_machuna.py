@@ -1896,6 +1896,75 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
         self.assertFalse(m.kframe_tga_asks_desk_format(self.e25))
 
 
+class TestInterlacedTgaToEif(unittest.TestCase):
+    """An interlaced TGA sequence becomes an EIF the way a K-Frame stores 50i:
+    the woven frames as they are, at 25fps. Desk session 2026-10-07: the
+    desk's own import of a 50i MOV stored woven 25fps frames, and MacHuna's
+    woven 25fps EIF (0912) played correctly on a 1080i 25Hz desk. This route
+    used to deinterlace to 50fps progressive, disagreeing with both."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _woven(self, n, size=(1920, 1080)):
+        """Frames whose two fields are different colours, as interlace is."""
+        import numpy as np
+        from PIL import Image
+        paths = []
+        for i in range(n):
+            a = np.zeros((size[1], size[0], 4), dtype=np.uint8)
+            a[0::2] = (200, 30 + 40 * i, 30, 255)      # top field
+            a[1::2] = (30, 30, 200, 255)               # bottom field
+            p = os.path.join(self.tmp, f'w{size[0]}_{i:04d}.tga')
+            Image.fromarray(a, 'RGBA').save(p)
+            paths.append(p)
+        return paths
+
+    def _head(self, eif):
+        h = Path(eif).read_bytes()[:0x100]
+        return (struct.unpack_from('<I', h, 0x06C)[0], struct.unpack_from('<I', h, 0x0FC)[0],
+                struct.unpack_from('<I', h, 0x064)[0])
+
+    def test_woven_frames_are_kept_one_for_one_at_25fps(self):
+        tgas = self._woven(4)
+        for asked in (25.0, 50.0):
+            d = tempfile.mkdtemp(dir=self.tmp)
+            eif = m.convert_tga_seq_to_eif(tgas, d, 'I', asked, log=lambda *a: None,
+                                           out_name='0001', source_interlaced=True)
+            with self.subTest(fps_asked=asked):
+                self.assertEqual(self._head(eif), (4, 40000, 0x00010484))
+
+    def test_the_picture_is_exactly_the_woven_frames(self):
+        """Same bytes as writing those frames as a plain 25fps sequence: no
+        deinterlacing, no field blending."""
+        tgas = self._woven(3)
+        a = m.convert_tga_seq_to_eif(tgas, tempfile.mkdtemp(dir=self.tmp), 'I', 25.0,
+                                     log=lambda *a: None, out_name='0001', source_interlaced=True)
+        b = m.convert_tga_seq_to_eif(tgas, tempfile.mkdtemp(dir=self.tmp), 'I', 25.0,
+                                     log=lambda *a: None, out_name='0001')
+        self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes())
+
+    def test_scaling_keeps_the_fields_apart(self):
+        """A 720-line interlaced source scaled to 1080 must not blend its two
+        fields into each other."""
+        import numpy as np
+        tgas = self._woven(1, size=(1280, 720))
+        eif = m.convert_tga_seq_to_eif(tgas, self.tmp, 'S', 25.0, log=lambda *a: None,
+                                       out_name='0001', source_interlaced=True)
+        h = m.EIFHeader(eif)
+        with open(eif, 'rb') as f:
+            f.seek(h.video_start)
+            w = np.frombuffer(f.read(m._EIF_UNIT_BYTES), dtype='<u4').reshape(360, 1920)
+        y = ((w >> 10) & 0x3FF).astype(int)[:, 960]
+        top, bottom = y[0::2], y[1::2]
+        # The two fields stay distinct all the way down: every top-field line
+        # keeps one value, every bottom-field line the other.
+        self.assertEqual(len(set(top[2:-2])), 1, 'top field lines were blended')
+        self.assertEqual(len(set(bottom[2:-2])), 1, 'bottom field lines were blended')
+        self.assertNotEqual(top[10], bottom[10])
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
@@ -1995,11 +2064,11 @@ class TestEifRateCode(unittest.TestCase):
             tgas.append(p)
         made['tga'] = m.convert_tga_seq_to_eif(tgas, d, f'TGA{fps}', float(fps),
                                                log=self.quiet, out_name=f'tga{fps}')
-        if fps == 50:
-            # The interlaced-TGA writer always produces 50fps (it deinterlaces),
-            # so it can only be checked here; covered so it cannot drift unseen.
+        if fps == 25:
+            # An interlaced TGA sequence is always written at 25fps, woven, as
+            # a K-Frame stores 50i; so it is checked here, even when asked for 50.
             made['tga_interlaced'] = m.convert_tga_seq_to_eif(
-                tgas, d, 'TGAI', 25.0, log=self.quiet, out_name='tgai',
+                tgas, d, 'TGAI', 50.0, log=self.quiet, out_name='tgai',
                 source_interlaced=True)
 
         # convert_sws_to_eif takes its rate from the SWS: 1080i50 is 25fps, 1080p50 is 50.

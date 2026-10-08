@@ -1330,93 +1330,52 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              source_interlaced: bool = False) -> str:
     """Convert a TGA sequence to K-Frame EIF format.
 
-    [UNCONFIRMED: EIF output pending hardware verification on a live K-Frame desk]
+    An interlaced sequence is written the way a K-Frame stores 50i: the woven
+    frames as they are, at 25fps. Desk session 2026-10-07: the desk's own
+    import of a 50i MOV stored woven 25fps frames, and MacHuna's woven 25fps
+    EIF played correctly on a 1080i 25Hz desk. (This route used to deinterlace
+    to 50fps progressive, which disagreed with both and with the MOV route.)
     """
     fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
+    if source_interlaced and fps != 25.0:
+        log("  Interlaced source: written at 25fps, the frame rate of 50i")
+    if source_interlaced:
+        fps = 25.0
     dest_path = os.path.join(dest_dir, (out_name or clip_name) + '.eif')
 
-    if source_interlaced:
-        # Interlaced source → deinterlace with yadif (send_field) to 50fps progressive output.
-        # Each interlaced frame yields 2 progressive frames (one per field), TFF per SMPTE 274M.
-        fps_out = 50.0
-        info = get_video_info(tga_files[0])
-        has_alpha = info['has_alpha']
-        log(f"Converting TGA sequence to EIF (interlaced→progressive via yadif): "
-            f"{len(tga_files)} frame(s) → {os.path.basename(dest_path)}")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            concat_file = os.path.join(tmp, 'concat.txt')
-            with open(concat_file, 'w') as cf:
-                for tga in tga_files:
-                    cf.write(f"file '{tga}'\n")
-
-            fill_v210 = os.path.join(tmp, 'fill.v210')
-            ffmpeg = _get_ffmpeg_path('ffmpeg')
-            needs_scale = info['width'] != 1920 or info['height'] != 1080
-            vf = 'yadif=mode=send_field:parity=tff,scale=1920:1080' if needs_scale else 'yadif=mode=send_field:parity=tff'
-            cmd = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
-                   '-vf', vf, '-colorspace', 'bt709', '-color_range', 'tv',
-                   '-f', 'rawvideo', '-vcodec', 'v210', fill_v210]
-            _run_ffmpeg(cmd, check=True)
-            _byteswap_v210(fill_v210)
-
-            key_v210 = None
-            if has_alpha:
-                key_v210 = os.path.join(tmp, 'key.v210')
-                vf_key = 'alphaextract,yadif=mode=send_field:parity=tff,scale=1920:1080' if needs_scale else 'alphaextract,yadif=mode=send_field:parity=tff'
-                cmd_key = [ffmpeg, '-y', '-f', 'concat', '-safe', '0', '-i', concat_file,
-                           '-vf', vf_key, '-f', 'rawvideo', '-vcodec', 'v210', key_v210]
-                if _run_ffmpeg(cmd_key).returncode != 0:
-                    key_v210 = None
+    frame_count = len(tga_files)
+    log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps"
+        f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
+        f" → {os.path.basename(dest_path)}")
+    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
+    with open(dest_path, 'wb') as out_fh:
+        out_fh.write(header)
+        for i, path in enumerate(tga_files):
+            if cancel_event and cancel_event.is_set():
+                log("  Cancelled.")
+                return dest_path
+            img = Image.open(path)
+            if img.size != (1920, 1080):
+                if source_interlaced:
+                    # Scale each field on its own, then weave them back, so the
+                    # two moments in time never blend into each other.
+                    a = np.asarray(img.convert('RGBA'))
+                    top = np.asarray(Image.fromarray(a[0::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
+                    bot = np.asarray(Image.fromarray(a[1::2], 'RGBA').resize((1920, 540), Image.BILINEAR))
+                    woven = np.empty((1080, 1920, 4), dtype=np.uint8)
+                    woven[0::2], woven[1::2] = top, bot
+                    img = Image.fromarray(woven, 'RGBA')
                 else:
-                    _byteswap_v210(key_v210)
-
-            frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
-            header = _build_eif_header(clip_name[:31].upper(), frame_count, fps_out)
-            key_fh = open(key_v210, 'rb') if key_v210 else None
-            try:
-                with open(dest_path, 'wb') as out_fh, open(fill_v210, 'rb') as fill_fh:
-                    out_fh.write(header)
-                    for i in range(frame_count):
-                        if cancel_event and cancel_event.is_set():
-                            log("  Cancelled.")
-                            return dest_path
-                        yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
-                        kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
-                                if key_fh else None)
-                        u0, u1, u2 = _encode_eif_frame_from_yuv(yuv, kyuv)
-                        out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
-                        if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                            log(f"  Frame {i + 1}/{frame_count}")
-                    out_fh.write(_eif_tail(fps_out))
-            finally:
-                if key_fh:
-                    key_fh.close()
-    else:
-        # Progressive source — fast PIL path
-        frame_count = len(tga_files)
-        log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps → {os.path.basename(dest_path)}")
-        header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
-        with open(dest_path, 'wb') as out_fh:
-            out_fh.write(header)
-            for i, path in enumerate(tga_files):
-                if cancel_event and cancel_event.is_set():
-                    log("  Cancelled.")
-                    return dest_path
-                img = Image.open(path)
-                if img.size != (1920, 1080):
                     img = img.resize((1920, 1080), Image.BILINEAR)
-                img = img.convert('RGBA')
-                rgba = np.array(img)
-                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
-                out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
-                if (i + 1) % 10 == 0 or i + 1 == frame_count:
-                    log(f"  Frame {i + 1}/{frame_count}")
-            out_fh.write(_eif_tail(fps))
+            rgba = np.array(img.convert('RGBA'))
+            u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+            out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
+            if (i + 1) % 10 == 0 or i + 1 == frame_count:
+                log(f"  Frame {i + 1}/{frame_count}")
+        out_fh.write(_eif_tail(fps))
 
     # A TGA sequence carries no sound, so clear any stale companion.
-    _settle_eaf(dest_path, None, frame_count,
-                fps_out if source_interlaced else fps, log)
+    _settle_eaf(dest_path, None, frame_count, fps, log)
     log(f"  Done → {dest_path}")
     return dest_path
 
