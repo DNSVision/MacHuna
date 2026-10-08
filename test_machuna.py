@@ -3812,3 +3812,150 @@ class TestOneFrameRule(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.convert_clip_to_eif(src + '.i.mov', d, log=lambda *a: None, out_name='0001')
         self.assertEqual(os.listdir(d), [])
+
+
+class TestSwsToSwsStaysTenBit(unittest.TestCase):
+    """Decision K (David, 2026-10-08): SWS to SWS stays 10-bit. It went
+    through 8-bit TGAs, so even a passthrough lost precision and moved colour
+    through an RGB round trip. Passthrough, frame picking and weaving are now
+    copies of the source's own bytes; deinterlacing reads the 10-bit planes."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            raise unittest.SkipTest('ffmpeg not available')
+        import subprocess
+        cls.tmp = tempfile.mkdtemp()
+        ff = m._get_ffmpeg_path('ffmpeg')
+
+        def sws(name, std, moving=True, key=False):
+            # The still one has no detail down the picture: yadif fills a
+            # missing line from the lines around it where they differ sharply,
+            # which is deinterlacing, not lost precision.
+            n = "+Y+37*N" if moving else ""
+            fmt, prof, a = (('yuva444p10le', '4444', ":a='if(lt(X,900),1023,0)'") if key
+                            else ('yuv422p10le', '3', ''))
+            src = os.path.join(cls.tmp, name + '.mov')
+            subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=1920x1080:rate=50',
+                            '-vf', f"format={fmt},geq=lum='64+mod(X*3{n},876)':cb='64+mod(X*5,896)':"
+                                   f"cr='64+mod(X*7+{'Y*7' if moving else '0'},896)'{a}",
+                            '-frames:v', '6', '-c:v', 'prores_ks', '-profile:v', prof,
+                            '-pix_fmt', fmt.replace('444', '444') if key else 'yuv422p10le', src], check=True)
+            d = os.path.join(cls.tmp, name); os.makedirs(d)
+            m.convert_clip(src, 1, d, video_standard=std, include_audio=False, split_fat32=False,
+                           log=lambda *a: None)
+            return os.path.join(d, '1.SWS')
+        cls.p50 = sws('p50', '1080p50', key=True)
+        cls.i50 = sws('i50', '1080i50')
+        cls.i50_static = sws('i50s', '1080i50', moving=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    @staticmethod
+    def _planes(sws):
+        h = m.HulaSWSHeader(sws)
+        b = Path(sws).read_bytes()
+        fill = [b[h.data_offset + k * h.plane_size:h.data_offset + (k + 1) * h.plane_size]
+                for k in range(h.frame_count)]
+        key = []
+        if h.has_key:
+            ko = h.data_offset + h.plane_size * h.frame_count
+            key = [b[ko + k * h.plane_size:ko + (k + 1) * h.plane_size] for k in range(h.frame_count)]
+        return h, fill, key
+
+    def _convert(self, src, std, tag):
+        d = os.path.join(self.tmp, tag); os.makedirs(d, exist_ok=True)
+        return m.convert_sws_to_sws(src, 5, d, std, split_fat32=False, log=lambda *a: None)
+
+    def test_a_passthrough_is_byte_exact(self):
+        for src, std, tag in ((self.p50, '1080p50', 'pp'), (self.i50, '1080i50', 'ii')):
+            with self.subTest(std=std):
+                _, sf, sk = self._planes(src)
+                h, of, ok = self._planes(self._convert(src, std, tag))
+                self.assertEqual(h.standard.replace('/', '').replace('.', ''), std)
+                self.assertTrue(of == sf, 'fill changed')
+                self.assertTrue(ok == sk, 'key changed')
+
+    def test_picking_frames_is_byte_exact(self):
+        _, sf, sk = self._planes(self.p50)
+        h, of, ok = self._planes(self._convert(self.p50, '1080p25', 'p25'))
+        self.assertEqual(h.frame_count, 3)
+        self.assertTrue(of == [sf[0], sf[2], sf[4]])
+        self.assertTrue(ok == [sk[0], sk[2], sk[4]])
+
+    def test_weaving_copies_the_source_lines(self):
+        _, sf, sk = self._planes(self.p50)
+        h, of, ok = self._planes(self._convert(self.p50, '1080i50', 'weave'))
+        self.assertEqual(h.frame_count, 3)
+        stride = h.plane_size // 1080
+        lines = lambda plane: [plane[r * stride:(r + 1) * stride] for r in range(1080)]
+        for k in range(3):
+            for out, src in ((of, sf), (ok, sk)):
+                got, a, b = lines(out[k]), lines(src[2 * k]), lines(src[2 * k + 1])
+                with self.subTest(frame=k):
+                    self.assertTrue(got[0::2] == a[0::2], 'top field is not frame 2k')
+                    self.assertTrue(got[1::2] == b[1::2], 'bottom field is not frame 2k+1')
+
+    def test_deinterlacing_keeps_ten_bit_values(self):
+        """A still picture with no vertical detail comes back from yadif
+        exactly as it went in; through 8-bit RGB it moved by many steps."""
+        import numpy as np
+        h0, sf, _ = self._planes(self.i50_static)
+        h, of, _ = self._planes(self._convert(self.i50_static, '1080p50', 'deint'))
+        self.assertEqual(h.frame_count, 2 * h0.frame_count)
+        ref = m._v210_plane_to_yuv(sf[0], 1920, 1080, 1)[0].astype(int)
+        for k in (0, 1, h.frame_count - 1):
+            got = m._v210_plane_to_yuv(of[k], 1920, 1080, 1)[0].astype(int)
+            with self.subTest(frame=k):
+                self.assertLessEqual(int(np.abs(got - ref)[4:-4].max()), 1)
+
+    def _sd_sws(self, std, interlaced_lines, key):
+        """A 720x576 SWS built by hand - MacHuna only writes 1080, but an
+        older file may not be. interlaced_lines: alternate light and dark
+        lines, so a blend of the fields shows."""
+        import subprocess
+        lum = "if(mod(Y,2),800,100)" if interlaced_lines else "64+X"
+        raw = os.path.join(self.tmp, f'sd_{std}.v210')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'color=c=black:size=720x576:rate=25', '-vf',
+                        f"format=yuv422p10le,geq=lum='{lum}':cb=512:cr=512", '-frames:v', '4',
+                        '-f', 'rawvideo', '-c:v', 'v210', raw], check=True)
+        m._byteswap_v210(raw)
+        key_raw = None
+        if key:
+            key_raw = raw + '.key'
+            shutil.copyfile(raw, key_raw)
+        plane = m._v210_plane_size(720, 576)
+        self.assertEqual(os.path.getsize(raw), 4 * plane)
+        hdr = m.build_sws_header(source_filename='sd.mov', clip_name='SD', width=720, height=576,
+                                 frame_count=4, plane_size=plane, video_standard=std,
+                                 is_still=False, fps=m.FORMAT_VARIANT_FPS[m.FORMAT_VARIANTS[std]],
+                                 has_audio=False, has_key=key)
+        d = os.path.join(self.tmp, 'sd_' + std); os.makedirs(d, exist_ok=True)
+        dest = os.path.join(d, '1.SWS')
+        m.write_sws(dest, raw, key_raw, hdr, False, frame_count=4, log=lambda *a: None)
+        h = m.HulaSWSHeader(dest)
+        self.assertEqual((h.width, h.height, h.frame_count), (720, 576, 4))
+        return dest
+
+    def test_a_smaller_interlaced_sws_is_scaled_a_field_at_a_time(self):
+        src = self._sd_sws('1080i50', True, key=True)
+        h, of, ok = self._planes(self._convert(src, '1080i50', 'sd_ii'))
+        self.assertEqual((h.width, h.height, h.frame_count, h.has_key), (1920, 1080, 4, True))
+        y = m._v210_plane_to_yuv(of[0], 1920, 1080, 1)[0][:, 960, 0].astype(int)
+        self.assertGreater(abs(y[500] - y[501]), 500, f'fields blended: {y[498:504]}')
+
+    def test_a_smaller_interlaced_sws_deinterlaced_and_scaled(self):
+        src = self._sd_sws('1080i50', True, key=False)
+        h, of, ok = self._planes(self._convert(src, '1080p50', 'sd_ip'))
+        self.assertEqual((h.width, h.height, h.frame_count, h.has_key), (1920, 1080, 8, False))
+
+    def test_a_smaller_progressive_sws_keeps_ten_bit_steps(self):
+        import numpy as np
+        src = self._sd_sws('1080p25', False, key=True)
+        h, of, ok = self._planes(self._convert(src, '1080p25', 'sd_pp'))
+        self.assertEqual((h.width, h.height, h.frame_count, h.has_key), (1920, 1080, 4, True))
+        y = m._v210_plane_to_yuv(of[0], 1920, 1080, 1)[0][540, :, 0]
+        self.assertTrue(np.any(np.round(y).astype(int) % 4 != 0), 'only 8-bit steps survived')

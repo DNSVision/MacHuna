@@ -1370,6 +1370,56 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
 
 
+def _copy_range(src_path: str, offset: int, length: int, dst_path: str):
+    """Copy length bytes from offset in src_path to a new file, in chunks."""
+    with open(src_path, 'rb') as f, open(dst_path, 'wb') as out:
+        f.seek(offset)
+        left = length
+        while left:
+            chunk = f.read(min(left, 64 * 1024 * 1024))
+            if not chunk:
+                raise ValueError(f"{os.path.basename(src_path)} is shorter than its header says")
+            out.write(chunk)
+            left -= len(chunk)
+
+
+def _weave_v210(path: str, plane_size: int, height: int, field_order: str = 'TFF') -> int:
+    """Weave pairs of progressive v210 frames into interlaced ones, losslessly:
+    each v210 line stands alone, so the lines are copied as they are. TFF takes
+    the even lines from the first frame of each pair and the odd lines from the
+    second, exactly as ffmpeg's tinterlace=interleave_top (checked 2026-10-08);
+    BFF the other way. An odd last frame is dropped. Returns the frame count."""
+    n_out = (os.path.getsize(path) // plane_size) // 2
+    stride = plane_size // height
+    tmp = path + '.weave'
+    with open(path, 'rb') as f, open(tmp, 'wb') as out:
+        for k in range(n_out):
+            f.seek(2 * k * plane_size)
+            a = np.frombuffer(f.read(plane_size), np.uint8).reshape(height, stride)
+            b = np.frombuffer(f.read(plane_size), np.uint8).reshape(height, stride)
+            o = a.copy()
+            if field_order == 'BFF':
+                o[0::2] = b[0::2]
+            else:
+                o[1::2] = b[1::2]
+            out.write(o.tobytes())
+    os.replace(tmp, path)
+    return n_out
+
+
+def _v210_through_ffmpeg(path: str, width: int, height: int, fps: float, vf: str):
+    """Run a raw big-endian v210 file through an ffmpeg filter and back,
+    10-bit 4:2:2 all the way: ffmpeg reads v210 itself, so nothing passes
+    through 8-bit or RGB."""
+    out = path + '.ff'
+    _byteswap_v210(path)                    # ffmpeg's v210 is little-endian
+    _run_ffmpeg([_get_ffmpeg_path('ffmpeg'), '-y', '-f', 'v210',
+                 '-video_size', f'{width}x{height}', '-framerate', _fps_expr(fps),
+                 '-i', path, '-vf', vf, '-f', 'rawvideo', '-c:v', 'v210', out], check=True)
+    _byteswap_v210(out)
+    os.replace(out, path)
+
+
 def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        video_standard: str, split_fat32: bool = True, log=print,
                        ignore_alpha: bool = False, auto_play: bool = False,
@@ -1378,81 +1428,133 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
 
     The routing was written out twice - in the Tk GUI and in MacHuna 2.0's
     bridge - and both dropped the audio. It lives here now, once (2026-10-08).
-    Frames go out through a TGA intermediate exactly as before; the source's
-    programme audio (channels 1 and 3) goes straight into the new SWS at the
-    output's frame rate. The duration is kept on every route (a rate change is
-    converted, decision A), so the audio carries across unchanged.
+    The duration is kept on every route (a rate change is converted, decision
+    A), so the source's programme audio carries across unchanged.
+
+    Decision K (David, 2026-10-08): 10-bit throughout. The planes are taken
+    from the source as they are. A passthrough, a frame pick (decision H) and a
+    weave copy the source's own bytes; deinterlacing and scaling a source that
+    is not 1920x1080 run ffmpeg on the v210 itself. It used to go through 8-bit
+    TGAs, which lost precision and clipped colours RGB cannot hold.
     """
-    src_hdr = HulaSWSHeader(sws_path)
-    src_interlaced = 'i' in src_hdr.standard
+    src = HulaSWSHeader(sws_path)
+    src_interlaced = 'i' in src.standard
     out_interlaced = 'i' in video_standard
+    out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+    same_rate = abs(src.fps - out_fps) < 0.01
     stem = Path(sws_path).stem
+    n = src.frame_count
+    if n == 0:
+        raise ValueError(f"{Path(sws_path).name} holds no frames")
+    # Follow the source's key state; ignore_alpha drops it.
+    keep_key = src.has_key and not ignore_alpha
+
+    # Decide the route (and refuse what cannot be done) before any work.
+    if src_interlaced and out_interlaced:
+        # Already woven. Weaving again halved the clip and mixed fields from
+        # different frames (matrix + review, 2026-10-08). Same rate passes
+        # through; another interlaced rate is a field-rate standards
+        # conversion, refused as progressive-to-interlaced is.
+        if not same_rate:
+            raise ValueError(
+                f"{Path(sws_path).name} is {src.standard} and cannot become "
+                f"{video_standard}: MacHuna does not convert one interlaced rate "
+                f"to another. Convert the source to the target rate first.")
+        route = 'passthrough'
+        log(f"  {stem}: {src.standard} → {video_standard} (interlaced, passed through)")
+    elif src_interlaced:
+        route = 'deinterlace'
+        log(f"  {stem}: {src.standard} → {video_standard} (interlaced→progressive via yadif)")
+    elif out_interlaced:
+        # Weave only if the source runs at the field rate; a same-rate or
+        # cross-rate source is refused, not doubled.
+        _p_to_i_field_map(src.fps, video_standard)
+        route = 'weave' if n >= 2 else 'passthrough'
+        log(f"  {stem}: {src.standard} → {video_standard} (progressive→interlaced TFF)"
+            if n >= 2 else f"  {stem}: a single frame - kept as it is (nothing to weave)")
+    elif not same_rate:
+        route = 'pick'
+    else:
+        route = 'passthrough'
+        log(f"  {stem}: {src.standard} → {video_standard} (passthrough)")
+
     stereo = _sws_stereo24(sws_path) if include_audio else None
+    W, H = src.width, src.height
     with tempfile.TemporaryDirectory() as tmp:
-        tga_dir = _hula_convert_tga(sws_path, tmp, target=HULA_TARGET_KFRAME_TGA, log=log)
-        frames = sorted(str(p) for p in Path(tga_dir).glob('*.tga'))
-        if not frames:
-            raise ValueError(f"No frames extracted from {Path(sws_path).name}")
-        out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
-        same_rate = abs(src_hdr.fps - out_fps) < 0.01
-        # The intermediate TGAs carry no rate (ffmpeg's concat assumes 25fps),
-        # so any filter that converts the rate is told the source's real one.
-        stamp = f"setpts=N/(({_fps_expr(src_hdr.fps)})*TB),"
-        src_as_interlaced = False
-        if src_interlaced and out_interlaced:
-            # Already woven. Weaving again halved the clip and mixed fields from
-            # different frames (matrix + review, 2026-10-08). Same rate passes
-            # through; another interlaced rate is a field-rate standards
-            # conversion, refused as progressive-to-interlaced is.
-            if not same_rate:
-                raise ValueError(
-                    f"{Path(sws_path).name} is {src_hdr.standard} and cannot become "
-                    f"{video_standard}: MacHuna does not convert one interlaced rate "
-                    f"to another. Convert the source to the target rate first.")
-            vf = None
-            src_as_interlaced = True
-            log(f"  {stem}: {src_hdr.standard} → {video_standard} (interlaced, passed through)")
-        elif src_interlaced and not out_interlaced:
-            # Source SWS's own header fps drives the rate decision, so a
-            # cross-rate target (i50 to p60, i5994 to p25) gets the fps resample
-            # it needs instead of playing at the wrong speed.
-            vf = _i_to_p_filter(src_hdr.fps, video_standard, parity='tff')
-            if 'fps=' in vf:
-                vf = stamp + vf
-            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
-                f" (interlaced→progressive via yadif)")
-        elif not src_interlaced and out_interlaced:
-            # Weave only if the source runs at the field rate; a same-rate or
-            # cross-rate source is blocked, not doubled.
-            vf = _p_to_i_field_map(src_hdr.fps, video_standard)
-            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
-                f" (progressive→interlaced TFF)")
-        elif not same_rate:
-            # Decision A (David, 2026-10-08): convert the rate, so the clip keeps
-            # its duration and its audio fits. It used to keep every frame and
-            # play at the wrong speed. Frames are picked by time, exactly as the
-            # EIF routes do (an ffmpeg fps filter here kept 1, 3, 5 where every
-            # other route keeps 0, 2, 4 - second review, 2026-10-08).
-            n = len(frames)
-            frames = [frames[i] for i in _pick_frames(n, src_hdr.fps, out_fps)]
-            out_count = len(frames)
-            vf = None
-            log(f"  {stem}: {src_hdr.standard} → {video_standard}"
-                f" (frame rate {src_hdr.fps:g} → {out_fps:g}: {n} → {out_count} frames, "
-                f"duration kept)")
-        else:
-            vf = None
-            log(f"  {stem}: {src_hdr.standard} → {video_standard} (passthrough)")
+        fill = os.path.join(tmp, 'fill.v210')
+        key  = os.path.join(tmp, 'key.v210') if keep_key else None
+        _copy_range(sws_path, src.data_offset, src.plane_size * n, fill)
+        if key:
+            _copy_range(sws_path, src.data_offset + src.plane_size * n, src.plane_size * n, key)
+        planes = [p for p in (fill, key) if p]
+
+        # Decision G: every SWS is 1920x1080. A source that is not is scaled
+        # in 10-bit - a field at a time if it is interlaced and stays so; one
+        # being deinterlaced is scaled after yadif, as a progressive picture.
+        rescale = (W, H) != (1920, 1080)
+        if rescale and route != 'deinterlace':
+            for p in planes:
+                _v210_through_ffmpeg(p, W, H, src.fps,
+                                     'scale=1920:1080' + (':interl=1' if src_interlaced else ''))
+            log(f"  Scaling {W}×{H} → 1920×1080")
+            W, H = 1920, 1080
+        plane_size = _v210_plane_size(W, H)
+
+        rate = src.fps    # the rate of the frames in hand
+        if route == 'deinterlace':
+            vf, rate, _t = _i_to_p_plan(src.fps, video_standard, parity='tff')
+            if rescale:
+                vf += ',scale=1920:1080'
+            for p in planes:
+                _v210_through_ffmpeg(p, W, H, src.fps, vf)
+            if rescale:
+                log(f"  Scaling {W}×{H} → 1920×1080")
+                W, H = 1920, 1080
+                plane_size = _v210_plane_size(W, H)
+            if abs(rate - out_fps) <= 0.5:   # 59.94 and 60 are one family
+                rate = out_fps
+        elif route == 'weave':
+            for p in planes:
+                _weave_v210(p, plane_size, H)
+            rate = out_fps
+
+        count = os.path.getsize(fill) // plane_size
+        if abs(rate - out_fps) >= 0.01 and count:
+            index = _pick_frames(count, rate, out_fps)
+            for p in planes:
+                _remap_v210(p, plane_size, index)
+            if route == 'pick':
+                log(f"  {stem}: {src.standard} → {video_standard} (frame rate {src.fps:g} → "
+                    f"{out_fps:g}: {count} → {len(index)} frames, duration kept)")
+            count = len(index)
+        if count == 0:
+            raise ValueError(f"{Path(sws_path).name}: the conversion produced no frames, "
+                             f"so nothing was written.")
+
+        audio_raw = None
         if stereo is not None:
+            audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'), stereo, count, out_fps)
             log(f"  {stem}: audio carried through")
-        return convert_tga_sequence(
-            frames, file_number, dest_dir, video_standard, split_fat32, False, log,
-            # Follow the source's key state: the extractor always writes an
-            # opaque alpha, so a keyless source must not gain a key here.
-            ignore_alpha=ignore_alpha or not src_hdr.has_key,
-            auto_play=auto_play, loop_play=loop_play, write_log=False,
-            source_interlaced=src_as_interlaced, _vf_override=vf, clip_name_override=stem,
-            _audio_stereo24=stereo)
+        log(f"  clip name: {stem}   key: {'yes' if key else 'none'}   frames: {count}")
+        hdr = build_sws_header(
+            source_filename=os.path.basename(sws_path),
+            clip_name=stem,
+            width=W, height=H,
+            frame_count=count,
+            plane_size=plane_size,
+            video_standard=video_standard,
+            is_still=False,
+            fps=out_fps,
+            has_audio=audio_raw is not None,
+            has_key=key is not None,
+            auto_play=auto_play,
+            loop_play=loop_play,
+        )
+        dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
+        write_sws(dest_path, fill, key, hdr, split_fat32,
+                  frame_count=count, audio_raw=audio_raw, log=log)
+    log(f"  Done → {dest_path}")
+    return dest_path
 
 
 # ─────────────────────────────────────────────────────────────

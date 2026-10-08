@@ -277,6 +277,13 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
       SWS/EIF (they kept the source size, and were 24-bit without alpha).
     - **K. SWS to SWS stays 10-bit throughout**, lossless where no processing is
       needed (it went through an 8-bit TGA intermediate).
+      DONE: the planes are copied from the source. Passthrough, frame picks and
+      the TFF weave copy the source's own bytes (the weave copies v210 lines -
+      even from frame 2k, odd from 2k+1, matching ffmpeg's interleave_top,
+      checked); deinterlacing and scaling a non-1080 source run ffmpeg on the
+      v210 itself (`-f v210`). The 8-bit route moved a test pattern by up to 416
+      10-bit steps (RGB clipped colours it cannot hold); a still now comes back
+      from yadif within 1. Needs the Kahuna session: i50 SWS to SWS outputs.
     - **L. EIF writes are atomic**: written to a temporary file and renamed into
       place on success, so a cancel or failure leaves the previous pair intact
       and never a half-written file.
