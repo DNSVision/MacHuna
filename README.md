@@ -10,8 +10,9 @@ A macOS application for converting video and still image files to the Grass Vall
 > serves **MacHuna 2.0**, a native Mac app in [`DNSVision/MacHuna-Swift`](https://github.com/DNSVision/MacHuna-Swift)
 > which drives this engine. `machuna.py` is the reference implementation and the
 > base for the Windows fork. **v1.12.0 (2026-10-08) carries the fixes from the
-> K-Frame desk session of 2026-10-07**; MacHuna 2.0 picks them up when it moves to
-> this engine version. Everything below describes v1.12.0.
+> K-Frame desk session of 2026-10-07, and v1.12.1 (the same day) the fixes from a
+> full conversion matrix, three reviews and a black-box pass**; MacHuna 2.0 picks
+> them up when it moves to this engine version. Everything below describes v1.12.1.
 
 MacHuna is a macOS application for broadcast graphics conversion. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 
@@ -25,7 +26,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - **Reads and writes Grass Valley K-Frame `.eif` native clips, with their `.eaf` audio** - confirmed on a live K-Frame (2026-10-07) at 1080p50 and 1080i 25Hz
   - Converts MOV, TGA sequences, and SWS files to `.eif` (slot naming 0001.eif, 0002.eif…)
   - Converts `.eif` files back to Kahuna SWS (lossless direct YCbCr repack), K-Frame TGA, or Sony TGA
-- Converts `.SWS` files to other standards within the same format - interlaced↔progressive SWS re-encoding using `tinterlace` (P→I) or `yadif` (I→P); source interlace auto-detected from the SWS header; audio carried through (v1.12.0)
+- Converts `.SWS` files to other standards within the same format - interlaced↔progressive SWS re-encoding, 10-bit throughout (v1.12.1); source interlace auto-detected from the SWS header; audio carried through (v1.12.0)
 - Converts TGA sequences and video clips to TGA Sequence output — interlaced↔progressive conversion; frames written to a named subfolder
 - Extracts `.SWS` files to K-Frame TGA or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian

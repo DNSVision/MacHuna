@@ -4,9 +4,11 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased — the full conversion matrix, two independent reviews and a black-box pass (to become v1.12.1)
+## v1.12.1 — 2026-10-08
 
-After v1.12.0, every input was converted to every output, with and without audio, driven through MacHuna 2.0's own bridge, and each result read back from disk and checked against the source. Separately, fresh agents reviewed every change looking for faults, and a different model tested the engine blind from a written specification. All three found real problems, some old and some new in v1.12.0. After these fixes the matrix runs 324 conversions, now including 59.94p and 29.97i sources: all 273 that go ahead pass every check (duration, frame rate, standard, key, audio presence, audio channels, audio length and content), and the 51 that are refused are refused on purpose. Decisions A-M were made by David on 8 October.
+**The engine-soundness release:** the full conversion matrix, three independent reviews and a black-box pass.
+
+After v1.12.0, every input was converted to every output, with and without audio, driven through MacHuna 2.0's own bridge, and each result read back from disk and checked against the source. Separately, fresh agents reviewed every change looking for faults, and a different model tested the engine blind from a written specification. All three found real problems, some old and some new in v1.12.0. After these fixes (312 tests) the matrix runs 324 conversions, now including 59.94p and 29.97i sources: all 273 that go ahead pass every check (duration, frame rate, standard, key, audio presence, audio channels, audio length and content), and the 51 that are refused are refused on purpose. Decisions A-M were made by David on 8 October.
 
 ### Fixed
 - **SWS to SWS between interlaced standards wove the fields a second time.** 1080i50 to 1080i50 came out at half length (3 frames became 1 in testing) with fields from different frames mixed, and half its audio. Present since this routing lived in the v1.11.0 app. Same rate now passes straight through; another interlaced rate is refused.
@@ -40,6 +42,11 @@ A different model (Fable) was given only a specification of the formats and the 
 - **SWS to SWS stays 10-bit** (decision K). It went through 8-bit TGA files, which lost precision and clipped colours that RGB cannot hold (a test pattern moved by up to 416 of 1023 levels). A passthrough, a frame-rate change and a weave now copy the source's own data exactly; deinterlacing and scaling work on the 10-bit pictures.
 - **EIF writing is atomic** (decision L). The `.eif` and its `.eaf` are written under temporary names and put in place together only when both are complete. A cancel or a failure - in the picture or in the audio - now leaves the previous clip of that name exactly as it was, instead of deleting it, and leaves nothing half-written. A read-only existing clip is still refused before any work.
 - **Sony TGA clip names must be exactly four letters or digits** (decision M). A shorter name was padded with spaces in every frame name (`AB  0000.tga`) under a folder called `AB`; a longer one was cut short without a word. Both are now refused before anything is written.
+
+### Found by a third review of decisions H-M, and fixed
+- If an EIF's audio could not be put in place after its new picture was, the new picture could be left beside an old clip's sound. The new picture is now removed instead, and the log says why.
+- SWS to SWS now refuses a source whose header plane size is not the standard v210 size, instead of silently losing frames.
+- Byte-swapping the 10-bit pictures works in blocks, so memory no longer grows with the length of the clip.
 
 ### Corrected
 - The v1.12.0 entry on Sony TGA overstated the fix for video clips; see the corrected wording there.

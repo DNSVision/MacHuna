@@ -43,7 +43,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.12.0"
+VERSION = "1.12.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
