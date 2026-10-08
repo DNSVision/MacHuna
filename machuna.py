@@ -5621,21 +5621,27 @@ def launch_gui():
                 try:
                     if item['type'] == 'tga_seq':
                         base = item['base'].rstrip('._- ') or 'CLIP'
-                        convert_tga_seq_to_eif(
+                        made = convert_tga_seq_to_eif(
                             item['files'], d, base, fps,
                             log=log, cancel_event=batch_cancel_event,
                             out_name=out_name,
                             source_interlaced=source_interlaced_var.get())
                     elif item['type'] == 'clip':
-                        convert_clip_to_eif(
+                        made = convert_clip_to_eif(
                             item['path'], d,
                             log=log, cancel_event=batch_cancel_event,
                             out_name=out_name)
                     elif item['type'] == 'sws':
-                        convert_sws_to_eif(
+                        made = convert_sws_to_eif(
                             item['path'], d,
                             log=log, cancel_event=batch_cancel_event,
                             out_name=out_name)
+                    if made is None:
+                        # Cancelled: the partial file is gone. Leave the row
+                        # pending so a re-run converts it, rather than 'done'.
+                        log(f"  {name}: cancelled - not converted")
+                        cancelled = True
+                        break
                     results.append((out_name, name, 'OK'))
                 except Exception as e:
                     import traceback

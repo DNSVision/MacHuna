@@ -1839,6 +1839,16 @@ class TestAudioRoutes(unittest.TestCase):
                 self.assertFalse(os.path.exists(os.path.join(d, '0001.eif')),
                                  'a cancelled conversion left a partial .eif')
 
+    def test_the_tk_app_does_not_mark_a_cancelled_eif_done(self):
+        """Independent review, 2026-10-08: the EIF converters return None when
+        cancelled (and delete the partial file), but the Tk batch appended 'OK'
+        regardless, so the row showed done and a re-run skipped it."""
+        src = Path(m.__file__).read_text()
+        body = src[src.index('        def _run_to_eif():'):]
+        body = body[:body.index('        def _run_to_tga_seq():')]
+        self.assertIn('made is None', body, 'the converter result must be checked')
+        self.assertLess(body.index('made is None'), body.index("results.append((out_name, name, 'OK'))"))
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
