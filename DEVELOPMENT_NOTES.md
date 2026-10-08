@@ -317,7 +317,8 @@ Fix 14 (clip→EIF speed, v1.6.11) cleared the last item that could be done with
 
 The single most important outstanding work in the project. When a live K-Frame ClipStore / Image Store is available, run the "Priority hardware test steps" above and, in the same visit, capture what's needed to close the other unknowns. Get through as much of this checklist as the desk time allows:
 
-- [ ] **THE `0x60` AUDIO-FLAG TEST — the highest-value question on the list.** *(Kept out of these docs until 2026-09-17 so an unproven finding was not recorded as fact. David asked for it written down; it is a question to answer, not an established conclusion.)*
+- [x] **THE `0x60` AUDIO-FLAG TEST — the highest-value question on the list.** *(Kept out of these docs until 2026-09-17 so an unproven finding was not recorded as fact. David asked for it written down; it is a question to answer, not an established conclusion.)*
+  **RESULT 2026-10-07:** the desk does not care. 0912 carries `0x07` with no `.eaf` and played correctly on a 1080i desk. Bit 2 does mean audio (confirmed by desk-made 50fps files). Since 2026-10-08 MacHuna writes it truthfully.
 
   **The finding, unproven.** Across all 28 real K-Frame files, `.eif` header byte `0x60` bit 2 (`0x04`) predicts the presence of a companion `.eaf` with no exceptions: `0x07` on every clip that has one, `0x03` on every clip and still that does not. Of 18,260 header bytes, exactly one was constant across the six audio clips and different in the audio-less one, against 10,818 bytes that differ between two clips that *both* have audio. That is not noise.
 
@@ -336,11 +337,12 @@ The single most important outstanding work in the project. When a live K-Frame C
 
   **Do not "fix" this byte beforehand** (David, 2026-09-09, restated 2026-09-17): people are happy with what they have and it is not worth risking on a hypothesis.
 
-- [ ] **THE KNOCKOUT_WIPE ROUND TRIP — do this first.** David's plan, and the highest-value test on the list: load one known MOV into the K-Frame, let the desk convert it natively, then analyse what the desk produced against the source. It answers several questions at once and needs no MacHuna output to be correct first. Full baseline below.
+- [x] **THE KNOCKOUT_WIPE ROUND TRIP — do this first.** David's plan, and the highest-value test on the list: load one known MOV into the K-Frame, let the desk convert it natively, then analyse what the desk produced against the source. It answers several questions at once and needs no MacHuna output to be correct first. Full baseline below.
+  **RESULT 2026-10-07:** done (slot 0900). Settled the `.eaf` layout and channel mapping and the colour finding; see "KNOCKOUT_WIPE round-trip RESULTS".
 
 - [x] ~~**Should a keyless source get a key plane at all?**~~ **ANSWERED 2026-09-18 on a live Kahuna: no.** The flat plane loads as a black key and keys out to nothing; the file without one loads Fill-only and is labelled `C` not `CK` in the desk's file list. Changed in v1.11.0 — every keyless file halves. Original question below for the record.
 
-- [ ] ~~Should a keyless source get a key plane at all?~~ *(superseded — see above)* (David's question, 2026-09-17.) Today, converting a source with no alpha while **Ignore alpha is unticked** writes a *full, flat* key plane (constant Y=64) and declares it in the header (`has_key=True`, `0x1A8` = frame count). Only ticking **Ignore alpha** produces a file with no key plane. David's stated requirement is the simpler contract: **no key in, no key out**, whatever the tickbox says.
+- [x] ~~Should a keyless source get a key plane at all?~~ *(superseded — see above)* (David's question, 2026-09-17.) Today, converting a source with no alpha while **Ignore alpha is unticked** writes a *full, flat* key plane (constant Y=64) and declares it in the header (`has_key=True`, `0x1A8` = frame count). Only ticking **Ignore alpha** produces a file with no key plane. David's stated requirement is the simpler contract: **no key in, no key out**, whatever the tickbox says.
 
   **The test, about two minutes:** convert one keyless source twice — once as now (flat key plane) and once with Ignore alpha ticked (no key plane) — load both, and see whether the desk behaves any differently.
 
@@ -351,22 +353,30 @@ The single most important outstanding work in the project. When a live K-Frame C
 
   **Why it has not simply been changed:** K-Watch writes the flat key in this case (evidence in "Outstanding review items" 4), so changing it would be MacHuna's first deliberate divergence from the reference. Same shape as the `0x60` EIF flag: cheap to settle at a desk, not worth guessing at.
 
-- [ ] **EIF write, 50fps (core go/no-go)** — Convert a known short 50fps TGA sequence to `0001.eif`, import, verify: file appears, frame count correct, plays at correct speed, colours correct, key correct.
-- [ ] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
-- [ ] **Capture a real 25fps `.eif`** produced by the K-Frame itself → hex-compare offset 0x8DC to verify or correct the assumed `b'RIFFRIFF'` movi chunk tag (the 50fps value is already confirmed).
-- [ ] **Capture a real interlaced `.eif`**, or otherwise establish how the desk stores originally-interlaced content (50p progressive, 25p field-pairs, or other). Settles the "1080i in EIF" unknown and tells us which write path's interlaced handling is correct.
+- [x] **EIF write, 50fps (core go/no-go)** — Convert a known short 50fps TGA sequence to `0001.eif`, import, verify: file appears, frame count correct, plays at correct speed, colours correct, key correct.
+  **RESULT 2026-10-07:** 0901 (from KNOCKOUT_WIPE.mov) looked identical to the desk's own import at 1080p50: loads, frame count, speed, colour and key correct.
+- [x] **EIF write, 25fps** — Same with a 25fps source. Confirms the 25fps write path.
+  **RESULT 2026-10-07:** 0912 (TNTS 50i, woven 25fps) played correctly at 1080i 25Hz once the `0x064` rate code was fixed; 0911 with the old code played too fast.
+- [x] **Capture a real 25fps `.eif`** produced by the K-Frame itself → hex-compare offset 0x8DC to verify or correct the assumed `b'RIFFRIFF'` movi chunk tag (the 50fps value is already confirmed).
+  **RESULT 2026-10-07:** the desk wrote `0x8DC` as `RIFF` + zeros, and MacHuna's `RIFFRIFF` is accepted (0912 played correctly). No change needed.
+- [x] **Capture a real interlaced `.eif`**, or otherwise establish how the desk stores originally-interlaced content (50p progressive, 25p field-pairs, or other). Settles the "1080i in EIF" unknown and tells us which write path's interlaced handling is correct.
+  **RESULT 2026-10-07:** the desk stores 50i as woven 25fps frames (0908, and 0912 accepted). MacHuna's MOV route already did; the TGA route was changed to match on 2026-10-08.
 - [x] ~~**Capture a real `.eaf`**~~ - **DONE, and it never needed the desk.** Six real `.eaf` files were already on David's Mac in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`-`0007`, `0022`). Found 2026-09-09 by searching the machine rather than re-reading the note that said they were unobtainable.
-- [ ] **Confirm the `.eaf` channel mapping** - the one part still needing a desk. Programme audio sits on channels **1 and 3 (zero-indexed)** in all six reference files; channels 0 and 2 carry loud non-audio spikes and 4-7 are silent. Reading is solved and confirmed by ear (2026-09-17). What is still unknown is which channels a K-Frame *expects* when reading, which is needed before MacHuna can *write* an `.eaf`. **The KNOCKOUT_WIPE round trip below should answer this outright.**
-- [ ] **Tail length** — obtain one reference file with frame_count < 36 and one with ≥ 36 → confirm whether the desk cares about the 128 vs 140-byte tail.
-- [ ] **Clip name / slot rules** — try importing with a clip name (0x004) that does not match the filename stem, and with non-contiguous / non-`0001` start slots → learn whether the desk enforces either.
-- [ ] **While a desk is available, verify the other unconfirmed extraction outputs too:** EIF→SWS (lossless), EIF→K-Frame TGA, EIF→Sony TGA, K-Frame TGA output, and Sony MVS 25i field order. **QuickTime MOV is deliberately not on this list** - it is an ordinary ProRes file, verified by opening it, with no desk behaviour to confirm. See the two hardware-unknowns tables above.
+- [x] **Confirm the `.eaf` channel mapping** - the one part still needing a desk. Programme audio sits on channels **1 and 3 (zero-indexed)** in all six reference files; channels 0 and 2 carry loud non-audio spikes and 4-7 are silent. Reading is solved and confirmed by ear (2026-09-17). What is still unknown is which channels a K-Frame *expects* when reading, which is needed before MacHuna can *write* an `.eaf`. **The KNOCKOUT_WIPE round trip below should answer this outright.**
+  **RESULT 2026-10-07:** the reading was wrong: the body is 4 x 32-bit LE words (24-bit sample + channel tag), programme L/R on channels 1 and 2. Proven bit-exact; reader fixed and writer built 2026-10-08.
+- [x] **Tail length** — obtain one reference file with frame_count < 36 and one with ≥ 36 → confirm whether the desk cares about the 128 vs 140-byte tail.
+  **RESULT 2026-10-07:** the desk accepted MacHuna's 128-byte tail on clips of 30 and 85 frames, with and without an `.eaf`. No change needed.
+- [x] **Clip name / slot rules** — try importing with a clip name (0x004) that does not match the filename stem, and with non-contiguous / non-`0001` start slots → learn whether the desk enforces either.
+  **RESULT 2026-10-07:** 0901 carried the clip name KNOCKOUT_WIPE in file `0901.eif` and loaded; the desk shows the header clip name and takes the slot from the file name. Slots 0900-0922, non-contiguous, all worked.
+- [x] **While a desk is available, verify the other unconfirmed extraction outputs too:** EIF→SWS (lossless), EIF→K-Frame TGA, EIF→Sony TGA, K-Frame TGA output, and Sony MVS 25i field order. **QuickTime MOV is deliberately not on this list** - it is an ordinary ProRes file, verified by opening it, with no desk behaviour to confirm. See the two hardware-unknowns tables above.
+  **RESULT 2026-10-07:** K-Frame TGA from MOV, EIF and SWS confirmed. EIF to SWS and EIF to Sony TGA were not loaded on their desks (no Kahuna or Sony present); all user-facing warnings were lifted on 2026-10-08, Sony on David's judgement.
 
-#### Priority 2 — code follow-ups, unlocked by the test results (do NOT build speculatively)
+#### Priority 2 — code follow-ups - ALL DONE 2026-10-08
 
-- **EIF audio (.eaf)** — the format is decoded (below). **Reading can be implemented now**; writing needs the channel-mapping answer.
-- **Interlaced EIF reconciliation** — once the desk's interlaced storage is known, fix whichever of `convert_clip_to_eif` (currently passes interlaced through untouched) or `convert_tga_seq_to_eif` (deinterlaces to 50p via yadif) is wrong, so the two paths agree.
-- **25fps movi tag** — correct the 8 bytes at 0x8DC if the hex compare shows the `b'RIFFRIFF'` assumption is wrong.
-- **Tail length** — extend the tail to 140 bytes for all files if the desk turns out to be strict about it.
+- ~~**EIF audio (.eaf)**~~ - reading corrected and writing built; see `CHANGELOG.md` "Unreleased".
+- ~~**Interlaced EIF reconciliation**~~ - the desk stores woven 25fps; the TGA route now matches the MOV route.
+- ~~**25fps movi tag**~~ - accepted as written; no change.
+- ~~**Tail length**~~ - 128 bytes accepted; no change.
 
 #### Priority 3 — pure code, no hardware needed (lowest priority — no demand yet)
 
@@ -727,29 +737,20 @@ Worked out from six real files in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`–`000
 
 **Lesson:** a documented blocker is not evidence. Check before repeating one.
 
-### EIF Hardware Unknowns and Roadmap
-
-All EIF write paths are coded and verified against real Kayenne reference files by hex analysis. None have been tested on live K-Frame hardware. The following items need hardware or reference-file access to resolve:
+### EIF Hardware Unknowns and Roadmap - settled on a live K-Frame, 2026-10-07
 
 | Item | Status | Detail |
 |------|--------|--------|
-| **EIF write — K-Frame hardware test** | UNCONFIRMED | Generated `.eif` files have never been loaded on a live K-Frame ClipStore or Image Store. Header matches real clips byte-for-byte (excluding timestamp and clip name). Priority: HIGH — the most important test to run. |
-| **25fps EIF movi chunk tag** | UNCONFIRMED | The 8-byte movi chunk tag at 0x8DC for 25fps EIF is assumed to be `b'RIFFRIFF'` (i.e. the ASCII bytes `RIFF` repeated). No 25fps reference files were available. The 50fps value `\x00\x02\x01\x04\x00\x02\x01\x04` is confirmed. Fix requires a real 25fps K-Frame-produced `.eif` file for hex comparison. |
-| **Tail length: 128 vs 140 bytes** | KNOWN GAP | MacHuna-generated files have a 128-byte tail sentinel. Real K-Frame files with frame_count ≥ 36 have 140-byte tails (difference is 12 bytes of unknown content). Unknown if K-Frame validates tail length. Low risk — the extra bytes may be padding. |
-| **EIF→K-Frame TGA** | UNCONFIRMED | Coded and working by analysis; never loaded on a K-Frame Image Store. |
-| **EIF→Sony TGA** | UNCONFIRMED | Coded and working by analysis; never imported on a Sony MVS. |
-| **EIF→Kahuna SWS (lossless)** | UNCONFIRMED | Round-trip verified in software (Video Player confirms correct output). Unconfirmed on Kahuna hardware. |
-| **EIF audio (.eaf companion files)** | NOT IMPLEMENTED, but **no longer blocked** | Format decoded 2026-09-09 from six real files. `has_audio` is still always False and EIF output is still silent — the code is simply not written yet. See "EAF format" below. |
-| **1080i content in EIF** | UNKNOWN | EIF is always stored progressively. How a K-Frame desk handles originally-interlaced content (whether it stores as 50fps progressive, 25fps field-pairs, or some other format) is unknown. This affects the interlaced TGA→EIF path (currently uses frame duplication). |
-| **Embedded clip name on K-Frame import** | UNKNOWN | Whether the K-Frame reads or validates the clip name at header offset 0x004 is unconfirmed. MacHuna writes the source filename stem. If K-Frame enforces specific naming, the clip name field may need to match the slot filename stem. |
-| **Slot number range and contiguity** | UNKNOWN | Whether the K-Frame requires EIF clips to be numbered from a specific starting slot (e.g. 0001) or requires contiguous numbers is unconfirmed. MacHuna uses the slot spinbox value as the starting number. |
-
-**Priority hardware test steps:**
-1. Use MacHuna to convert a known short TGA sequence (e.g. 10 frames, 50fps) to EIF → name it `0001.eif`
-2. Copy to a USB drive formatted correctly for K-Frame
-3. Import on a live K-Frame ClipStore / Image Store
-4. Verify: file appears, frame count correct, playback correct speed, colours correct, key correct
-5. `.eaf` files are no longer needed — six are already held. What the desk is needed for is the **channel mapping**: which of the eight channels a K-Frame treats as programme audio
+| **EIF write** | **CONFIRMED** | 50fps (0901) and 25fps/50i (0912, after the `0x064` rate-code fix), with and without an `.eaf` (0922). |
+| **25fps `0x8DC` tag** | **ACCEPTED** | Desk writes `RIFF` + zeros; MacHuna's `RIFFRIFF` plays correctly. |
+| **Tail length** | **ACCEPTED** | 128 bytes accepted at 30 and 85 frames, with and without audio. The desk itself writes an audio-sized tail on clips with sound; not required. |
+| **EIF to K-Frame TGA** | **CONFIRMED** | Folder `0912` loaded via Image Store > Library, "Sequence". |
+| **EIF to Sony TGA** | Warning lifted by David | Never imported on a Sony MVS in testing. |
+| **EIF to Kahuna SWS** | SWS output confirmed on Kahuna; this route not loaded | Lossless picture repack; now carries `.eaf` audio (2026-10-08). |
+| **EIF audio (`.eaf`)** | **CONFIRMED, read and write** | 4 x 32-bit LE words, 24-bit sample + tag, L/R on 1/2; a MacHuna-written `.eaf` was accepted and exported back byte-identical. |
+| **1080i content in EIF** | **SETTLED** | Stored as woven 25fps frames. |
+| **Clip name at `0x004`** | **SETTLED** | Need not match the file name; the desk displays it. |
+| **Slot numbers** | **SETTLED** | Taken from the file name; non-contiguous slots fine. |
 
 ### Standalone repo (archived)
 
