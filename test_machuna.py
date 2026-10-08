@@ -2043,6 +2043,74 @@ class TestAudioRoutes(unittest.TestCase):
                 for fn in encoders:
                     setattr(m, fn, real[fn])
 
+    def _two_track_mov(self, name, t1, t2, layout1=None, layout2=None, stereo2=None):
+        """A MOV with two audio tracks of known samples. t1/t2: int16 arrays;
+        stereo2: a second channel for track 2 (making it stereo); layout1/2:
+        ffmpeg channel-layout labels to stamp on each track."""
+        import subprocess, wave, numpy as np
+        out = os.path.join(self.tmp, name + '.mov')
+        w1, w2 = os.path.join(self.tmp, name + '_1.wav'), os.path.join(self.tmp, name + '_2.wav')
+        def wav(path, chans):
+            a = np.stack(chans, 1).astype('<i2')
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(a.shape[1]); w.setsampwidth(2); w.setframerate(48000)
+                w.writeframes(a.tobytes())
+        wav(w1, [t1]); wav(w2, [t2] if stereo2 is None else [t2, stereo2])
+        graph = []
+        maps = ['-map', '0:v']
+        for i, lay in ((1, layout1), (2, layout2)):
+            if lay:
+                graph.append(f'[{i}:a]aformat=channel_layouts={lay}[a{i}]'); maps += ['-map', f'[a{i}]']
+            else:
+                maps += ['-map', f'{i}:a']
+        cmd = [m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.24', '-f', 'lavfi',
+               '-i', 'testsrc=size=192x108:rate=25', '-i', w1, '-i', w2]
+        if graph:
+            cmd += ['-filter_complex', ';'.join(graph)]
+        subprocess.run(cmd + maps + ['-c:v', 'prores_ks', '-c:a', 'pcm_s16le', out], check=True)
+        return out
+
+    def _sws_and_eaf_lr(self, src, tag):
+        import numpy as np
+        d = self._dir(f'tt_{tag}')
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        a = _sws_audio(os.path.join(d, '1.SWS'))
+        eif = m.convert_clip_to_eif(src, self._dir(f'tt_{tag}_eif'), log=lambda *a: None,
+                                    out_name='0001')
+        self.assertTrue(os.path.exists(m.eaf_path_for(eif)), 'the EIF must carry its audio')
+        e = self._eaf24(eif) >> 8
+        return a[:, 0], a[:, 2], e[:, 0], e[:, 1]
+
+    def test_dual_mono_survives_a_stereo_second_track_and_channel_labels(self):
+        """Second review, 2026-10-08: ffmpeg's track merge reorders channels by
+        their labels. A stereo second track lost track 1; FR/FL-labelled tracks
+        swapped; FC+FL gave an EIF with no audio at all."""
+        import numpy as np
+        L, R, X = self.L16, self.R16, (self.L16 // 2)
+        cases = {
+            'mono_then_stereo': dict(t1=L, t2=R, stereo2=X),
+            'labelled_FR_FL': dict(t1=L, t2=R, layout1='FR', layout2='FL'),
+            'labelled_FC_FL': dict(t1=L, t2=R, layout1='FC', layout2='FL'),
+        }
+        for name, kw in cases.items():
+            src = self._two_track_mov(name, **kw)
+            sl, sr, el, er = self._sws_and_eaf_lr(src, name)
+            with self.subTest(case=name):
+                self.assertTrue(np.array_equal(sl, L), 'SWS left must be track 1')
+                self.assertTrue(np.array_equal(sr, R), 'SWS right must be track 2')
+                self.assertTrue(np.array_equal(el[:len(L)], L), 'EIF left must be track 1')
+                self.assertTrue(np.array_equal(er[:len(R)], R), 'EIF right must be track 2')
+
+    def test_dual_mono_with_a_shorter_second_track_keeps_all_of_track_1(self):
+        import numpy as np
+        src = self._two_track_mov('short_t2', t1=self.L16, t2=self.R16[:3000])
+        sl, sr, el, er = self._sws_and_eaf_lr(src, 'short_t2')
+        self.assertTrue(np.array_equal(sl, self.L16), 'track 1 was cut short')
+        self.assertTrue(np.array_equal(sr[:3000], self.R16[:3000]))
+        self.assertEqual(int(np.abs(sr[3000:]).max()), 0, 'right must be silent after track 2 ends')
+        self.assertTrue(np.array_equal(el[:len(self.L16)], self.L16))
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np

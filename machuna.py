@@ -546,8 +546,16 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
     # Mono goes to BOTH programme channels (David, 2026-10-08). The stereo rule
     # has no second input channel to send right, so v1.11.0 left mono on the
     # left only. Stereo and multichannel are unchanged, byte for byte.
-    # Dual mono (two mono tracks) is track 1 left, track 2 right (decision E).
-    audio_args, _ = _programme_audio_filter(get_video_info(input_path), '16c', 'c0', 'c2')
+    info = get_video_info(input_path)
+    if _is_dual_mono(info):
+        # Dual mono: track 1 left, track 2 right (decision E), decoded track by
+        # track so nothing is reordered or cut short.
+        stereo = _dual_mono_stereo24(input_path)
+        if stereo is None:
+            return False
+        _write_sws_pcm(output_path, stereo, frame_count, fps)
+        return True
+    audio_args, _ = _programme_audio_filter(info, '16c', 'c0', 'c2')
     cmd = [ffmpeg, '-y', '-i', input_path,
            '-vn'] + audio_args + [
            '-acodec', 'pcm_s16le',
@@ -805,22 +813,52 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
     return dest_path
 
 
+def _is_dual_mono(info: dict) -> bool:
+    """A mono first audio track with a second track beside it - common in
+    broadcast ProRes: track 1 is left, track 2 is right (decision E)."""
+    streams = info.get('audio_streams') or []
+    return len(streams) > 1 and streams[0] == 1
+
+
 def _programme_audio_filter(info: dict, layout: str, left: str, right: str):
-    """ffmpeg -filter_complex arguments that take a source's programme left and
+    """ffmpeg arguments that take a single-track source's programme left and
     right into `layout` on output channels `left` and `right` (e.g. '16c', 'c0',
     'c2'). Stereo or more: the first two channels. Mono: the one channel to both
-    sides (David, 2026-10-08). Dual mono - a mono first track with a second
-    track beside it, common in broadcast ProRes - track 1 left, track 2 right
-    (decision E). Returns (args, output_label)."""
+    sides (David, 2026-10-08). Dual mono is NOT handled here - see
+    _dual_mono_stereo24 - because ffmpeg's merge reorders channels by their
+    labels (second review, 2026-10-08). Returns (args, output_label)."""
     streams = info.get('audio_streams') or [info.get('audio_channels') or 2]
-    if streams[0] == 1 and len(streams) > 1:
-        graph = (f"[0:a:0][0:a:1]amerge=inputs=2,"
-                 f"pan={layout}|{left}=c0|{right}=c1[aout]")
-    elif streams[0] == 1:
-        graph = f"[0:a:0]pan={layout}|{left}=c0|{right}=c0[aout]"
-    else:
-        graph = f"[0:a:0]pan={layout}|{left}=c0|{right}=c1[aout]"
+    src = "c0" if streams[0] == 1 else "c1"
+    graph = f"[0:a:0]pan={layout}|{left}=c0|{right}={src}[aout]"
     return ['-filter_complex', graph, '-map', '[aout]'], '[aout]'
+
+
+def _track_channel0_24(input_path: str, track: int):
+    """The first channel of one audio track, as signed 24-bit values at 48kHz.
+    Decoded on its own, so no merge can reorder it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = os.path.join(tmp, f'track{track}.s32')
+        result = _run_ffmpeg([_get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error',
+                              '-i', input_path, '-vn', '-map', f'0:a:{track}',
+                              '-af', 'pan=mono|c0=c0', '-ar', str(EAF_SAMPLE_RATE),
+                              '-c:a', 'pcm_s32le', '-f', 's32le', raw])
+        if result.returncode != 0 or not os.path.exists(raw):
+            return None
+        return np.fromfile(raw, dtype='<i4').astype(np.int64) >> 8
+
+
+def _dual_mono_stereo24(input_path: str):
+    """Dual mono as 24-bit left/right: track 1 left, track 2 right (its first
+    channel if it is stereo). Each track is decoded separately and the shorter
+    is padded with silence, so neither is cut short or reordered."""
+    left, right = _track_channel0_24(input_path, 0), _track_channel0_24(input_path, 1)
+    if left is None or right is None:
+        return None
+    n = max(len(left), len(right))
+    out = np.zeros((n, 2), dtype=np.int64)
+    out[:len(left), 0] = left
+    out[:len(right), 1] = right
+    return out
 
 
 def _fps_expr(fps: float) -> str:
@@ -3813,6 +3851,8 @@ def _source_stereo24(input_path: str):
     info = get_video_info(input_path)
     if not info.get('has_audio'):
         return None
+    if _is_dual_mono(info):
+        return _dual_mono_stereo24(input_path)
     audio_args, _ = _programme_audio_filter(info, 'stereo', 'c0', 'c1')
     with tempfile.TemporaryDirectory() as tmp:
         raw = os.path.join(tmp, 'audio.s32')
