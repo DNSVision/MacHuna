@@ -6,9 +6,9 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** commit `e7e7ce3` plus the K-Frame desk-session commit that follows it - 2026-10-07. Docs only; **`machuna.py` is still untouched** (0 commits against it since the `v1.11.0` tag).
+**Understanding baseline:** tag `v1.12.0` - 2026-10-08. **v1.12.0 is the K-Frame desk-session release**: every engine fix from the 2026-10-07 desk session, each its own commit with fail-first outcome tests (242 tests). Built to `dist/` only; `/Applications` is MacHuna 2.0 and was not touched; nothing published.
 
-**THE K-FRAME DESK SESSION HAPPENED ON 2026-10-07.** Full results in `DEVELOPMENT_NOTES.md`, from "KNOCKOUT_WIPE round-trip RESULTS" onwards; files in `MacHuna-Swift/testmedia/desk/2026-10-07-kframe/`. Confirmed on the desk: EIF at 50fps; EIF at 25fps/50i once the `0x064` rate-code bug is fixed; K-Frame TGA via the MOV route; a MacHuna-written `.eaf`. Engine fixes now due (Python first, then move the Swift `engine/` pin): the 25fps rate code, `read_eaf_stereo` (the `.eaf` is 4ch 24-bit-in-32-bit LE, not 8ch 16-bit BE), `.eaf` writing, the MOV-to-TGA 1080i50 pair-weave, and lifting the UNCONFIRMED warnings for what was proven. The EIF- and SWS-route K-Frame TGA test also passed (right way up), so **all three K-Frame TGA routes are confirmed. Nothing from the session is outstanding.**
+**NEXT: MacHuna 2.0's engine move to `v1.12.0`.** The Swift checklist is in `DEVELOPMENT_NOTES.md` (roadmap, "Swift bridge changes that MUST land with the engine pin move"): pass `include_audio` on the EIF routes and EIF to SWS, replace the bridge's own SWS-to-SWS routing with `convert_sws_to_sws`, remove `Item.swift`'s copy of the hardware warnings, update the Swift app's own manual to match, run `--selftest`. Then build decisions 42-44 (`MacHuna-Swift/DESIGN_DECISIONS.md`). That unblocks the promo film.
 
 **`publish.sh` IN THIS REPO NOW REFUSES TO RUN.** Documentation alone was not enough: on 2026-09-26 a dry run printed "Ready to publish v1.11.0" with every one of its guards satisfied, because all of them compare this repo against *itself* and nothing here knows what is live. Publishing it would have put v1.11.0 over MacHuna 2.0 and offered every user a downgrade. **The procedure now lives in `MacHuna-Swift/PUBLISHING.md` and nowhere else.** Its header documents the deliberate manual route for restoring the old 1.11.0 zip to the bucket without announcing it as an update.
 
@@ -399,7 +399,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna:** v1.11.0
+- **MacHuna (engine):** v1.12.0 (2026-10-08), the K-Frame desk-session release. MacHuna 2.0 still pins v1.11.0 until its engine move.
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

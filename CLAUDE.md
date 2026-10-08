@@ -1,6 +1,6 @@
 # MacHuna — Claude Code Instructions
 
-> **PARKED at v1.11.0 (tag `v1.11.0`) as of 2026-09-24.** Active development has
+> **PARKED as an app (last released v1.12.0, tag `v1.12.0`, 2026-10-08).** Active development has
 > moved to **`DNSVision/MacHuna-Swift`**, a native SwiftUI interface that drives
 > this engine. **`machuna.py` is frozen: not a line of it changes**, by David's
 > standing instruction, so that every K-Frame desk finding is fixed in one place.
