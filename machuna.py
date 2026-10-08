@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import errno
 import gc
 import json
 import os
@@ -1647,17 +1648,14 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         stereo = _source_stereo24(input_path) if include_audio else None
         header = _build_eif_header(clip_name, frame_count, fps,
                                    has_audio=stereo is not None)
-        output_open = [False]
         try:
             key_fh = open(key_path, 'rb') if key_path else None
             try:
-                with open(fill_v210, 'rb') as fill_fh, open(dest_path, 'wb') as out:
-                    output_open[0] = True   # only now is the old file overwritten
+                with open(fill_v210, 'rb') as fill_fh, _open_eif_output(dest_path) as out:
                     out.write(header)
                     for i in range(frame_count):
                         if cancel_event and cancel_event.is_set():
-                            _discard_cancelled_eif(dest_path, out, log)
-                            return None
+                            raise _EifCancelled()
                         yuv  = _v210_plane_to_yuv(fill_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
                         kyuv = (_v210_plane_to_yuv(key_fh.read(_EIF_PLANE_SIZE), 1920, 1080, 1)[0]
                                 if key_fh else None)
@@ -1669,11 +1667,12 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
             finally:
                 if key_fh:
                     key_fh.close()
-        except BaseException:
-            if output_open[0]:   # a failure before that leaves the old file alone
-                _discard_failed_eif(dest_path, log)
+            _commit_eif(dest_path, stereo, frame_count, fps, log)
+        except BaseException as e:
+            _abandon_eif(dest_path, e, log)
+            if isinstance(e, _EifCancelled):
+                return None
             raise
-        _settle_eaf(dest_path, stereo, frame_count, fps, log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -1703,15 +1702,12 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
         f" → {os.path.basename(dest_path)}")
     header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
-    output_open = [False]
     try:
-        with open(dest_path, 'wb') as out_fh:
-            output_open[0] = True   # only now is the old file overwritten
+        with _open_eif_output(dest_path) as out_fh:
             out_fh.write(header)
             for i, path in enumerate(tga_files):
                 if cancel_event and cancel_event.is_set():
-                    _discard_cancelled_eif(dest_path, out_fh, log)
-                    return None
+                    raise _EifCancelled()
                 img = Image.open(path)
                 if img.size != (1920, 1080):
                     if source_interlaced:
@@ -1731,12 +1727,13 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
                     log(f"  Frame {i + 1}/{frame_count}")
             out_fh.write(_eif_tail(fps))
-    except BaseException:
-        if output_open[0]:   # a failure before that leaves the old file alone
-            _discard_failed_eif(dest_path, log)
+        # A TGA sequence carries no sound, so any stale companion goes.
+        _commit_eif(dest_path, None, frame_count, fps, log)
+    except BaseException as e:
+        _abandon_eif(dest_path, e, log)
+        if isinstance(e, _EifCancelled):
+            return None
         raise
-    # A TGA sequence carries no sound, so clear any stale companion.
-    _settle_eaf(dest_path, None, frame_count, fps, log)
     log(f"  Done → {dest_path}")
     return dest_path
 
@@ -1783,15 +1780,12 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
-    output_open = [False]
     try:
-        with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
-            output_open[0] = True   # only now is the old file overwritten
+        with open(sws_path, 'rb') as sws_fh, _open_eif_output(dest_path) as out:
             out.write(header)
             for n, i in enumerate(src_index):
                 if cancel_event and cancel_event.is_set():
-                    _discard_cancelled_eif(dest_path, out, log)
-                    return None
+                    raise _EifCancelled()
                 sws_fh.seek(fill_off + i * h.plane_size)
                 fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
                 key_yuv  = None
@@ -1815,11 +1809,12 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                 if (n + 1) % 10 == 0 or n + 1 == out_count:
                     log(f"  Frame {n + 1}/{out_count}")
             out.write(_eif_tail(fps))
-    except BaseException:
-        if output_open[0]:   # a failure before that leaves the old file alone
-            _discard_failed_eif(dest_path, log)
+        _commit_eif(dest_path, stereo, out_count, fps, log)
+    except BaseException as e:
+        _abandon_eif(dest_path, e, log)
+        if isinstance(e, _EifCancelled):
+            return None
         raise
-    _settle_eaf(dest_path, stereo, out_count, fps, log)
 
     log(f"  Done → {dest_path}")
     return dest_path
@@ -4034,44 +4029,72 @@ def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str
     return pcm_path
 
 
-def _discard_failed_eif(eif_path: str, log=print):
-    """A conversion that FAILED partway leaves a half-written picture: remove
-    it and any .eaf beside it, as a cancel does (independent review,
-    2026-10-08). The error itself is still raised to the caller."""
-    for p in (eif_path, eaf_path_for(eif_path)):
-        try:
-            if os.path.exists(p):
-                os.remove(p)
-        except OSError:
-            pass
-    log(f"  Failed - removed the incomplete {os.path.basename(eif_path)}")
+class _EifCancelled(Exception):
+    """Raised inside an EIF writer's frame loop when the user cancels."""
 
 
-def _discard_cancelled_eif(eif_path: str, fh, log=print):
-    """A cancelled conversion leaves a half-written picture. A partial file
-    with a valid slot name could be loaded onto a desk by mistake, so it goes,
-    and so does any .eaf beside it (David, 2026-10-08)."""
-    fh.close()
-    for p in (eif_path, eaf_path_for(eif_path)):
-        if os.path.exists(p):
-            os.remove(p)
-    log(f"  Cancelled - removed the incomplete {os.path.basename(eif_path)}")
+def _eif_partial_path(path: str) -> str:
+    """Where an EIF output is written before it is finished: hidden, beside
+    the destination (so the rename is on the same disk), and without the
+    .eif/.eaf ending, so nothing reads it as a clip."""
+    d, b = os.path.split(path)
+    return os.path.join(d, f'.{b}.partial')
 
 
-def _settle_eaf(eif_path: str, stereo24, frame_count: int, fps: float, log=print):
-    """The .eif and its .eaf are one output (David, 2026-10-08): write fresh
-    audio, or remove a stale .eaf of the same name. A leftover .eaf would pair
-    an old clip's sound with a new picture, because the desk matches them by
-    name alone."""
-    eaf = eaf_path_for(eif_path)
-    if stereo24 is not None:
-        write_eaf(eaf, stereo24, frame_count, fps)
+def _drop(path: str):
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _open_eif_output(dest_path: str):
+    """Decision L (David, 2026-10-08): EIF writes are atomic. The picture is
+    written to a partial file and only renamed into place by _commit_eif, so a
+    cancel or failure leaves the previous .eif/.eaf pair exactly as it was.
+
+    A rename replaces a read-only file without complaint, so a locked
+    existing pair is refused here, before any work, as writing over it was."""
+    for p in (dest_path, eaf_path_for(dest_path)):
+        if os.path.exists(p) and not os.access(p, os.W_OK):
+            raise PermissionError(errno.EACCES, 'Existing file is read-only', p)
+    return open(_eif_partial_path(dest_path), 'wb')
+
+
+def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=print):
+    """Put a finished EIF and its audio in place together. The .eif and its
+    .eaf are one output (David, 2026-10-08): the desk pairs them by name
+    alone, so fresh audio is written, or a stale .eaf of the same name goes.
+    The audio is written in full before either file is replaced."""
+    tmp_eif = _eif_partial_path(dest_path)
+    eaf     = eaf_path_for(dest_path)
+    tmp_eaf = _eif_partial_path(eaf) if stereo24 is not None else None
+    try:
+        if tmp_eaf:
+            write_eaf(tmp_eaf, stereo24, frame_count, fps)
+        os.replace(tmp_eif, dest_path)
+    except BaseException:
+        _drop(tmp_eaf)
+        raise
+    if tmp_eaf:
+        os.replace(tmp_eaf, eaf)
         log(f"  Audio → {os.path.basename(eaf)} (24-bit, "
             f"{frame_count * _samples_per_frame(fps)} samples)")
     elif os.path.exists(eaf):
         os.remove(eaf)
         log(f"  Removed {os.path.basename(eaf)} left from an earlier conversion "
             f"- this clip has no audio")
+
+
+def _abandon_eif(dest_path: str, exc, log=print):
+    """Throw away an unfinished EIF. Anything already at dest_path is untouched."""
+    _drop(_eif_partial_path(dest_path))
+    _drop(_eif_partial_path(eaf_path_for(dest_path)))
+    if isinstance(exc, _EifCancelled):
+        log(f"  Cancelled - {os.path.basename(dest_path)} not written")
+    else:
+        log(f"  Failed - {os.path.basename(dest_path)} not written")
 
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,

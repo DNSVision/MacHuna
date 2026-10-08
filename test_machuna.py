@@ -1896,34 +1896,93 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertIn('convert_sws_to_sws(', gui)
         self.assertFalse('does not carry audio through' in src)
 
-    def test_a_cancelled_eif_does_not_leave_a_stale_eaf(self):
-        """Cancelling leaves a half-written picture; the old .eaf beside it
-        must not survive to be paired with it."""
-        import numpy as np, threading
+    # ── Decision L: EIF writes are atomic ──────────────────────────────────
+    def _eif_routes(self, d, tag, cancel=None):
         from PIL import Image
-        cancel = threading.Event(); cancel.set()
-        d = self._dir('e_cancel')
-        stale = os.path.join(d, '0001.eaf')
-        t = os.path.join(d, 'f0000.tga')
+        t = os.path.join(self.tmp, tag + '_t.tga')
         Image.new('RGBA', (1920, 1080), (1, 2, 3, 255)).save(t)
-        routes = {
+        sws = self._sws('stereo16', tag + '_sws')
+        return {
             'clip': lambda: m.convert_clip_to_eif(self.src['stereo24'], d, log=lambda *a: None,
                                                   out_name='0001', cancel_event=cancel),
-            'sws': lambda: m.convert_sws_to_eif(self._sws('stereo16', 'e_cancel_sws'), d,
-                                                log=lambda *a: None, out_name='0001',
+            'sws': lambda: m.convert_sws_to_eif(sws, d, log=lambda *a: None, out_name='0001',
                                                 cancel_event=cancel),
             'tga': lambda: m.convert_tga_seq_to_eif([t], d, 'T', 25.0, log=lambda *a: None,
                                                     out_name='0001', cancel_event=cancel),
         }
-        for route, run in routes.items():
-            m.write_eaf(stale, np.full((1920, 2), 77, dtype=np.int64), 1, 25.0)
-            run()
+
+    def _previous_pair(self, d):
+        import numpy as np
+        Path(d, '0001.eif').write_bytes(b'previous good picture')
+        m.write_eaf(os.path.join(d, '0001.eaf'), np.full((1920, 2), 77, dtype=np.int64), 1, 25.0)
+        return Path(d, '0001.eaf').read_bytes()
+
+    def _assert_untouched(self, d, eaf_bytes):
+        self.assertEqual(Path(d, '0001.eif').read_bytes(), b'previous good picture',
+                         'the previous .eif was changed')
+        self.assertEqual(Path(d, '0001.eaf').read_bytes(), eaf_bytes, 'the previous .eaf was changed')
+        self.assertEqual(sorted(os.listdir(d)), ['0001.eaf', '0001.eif'], 'something was left behind')
+
+    def test_a_cancelled_eif_leaves_the_previous_pair_as_it_was(self):
+        """Decision L. A cancel used to delete the half-written picture - and
+        with it the previous good clip of that name. Nothing changes now."""
+        import threading
+        cancel = threading.Event(); cancel.set()
+        d = self._dir('e_cancel')
+        for route, run in self._eif_routes(d, 'e_cancel', cancel).items():
+            eaf = self._previous_pair(d)
             with self.subTest(route=route):
-                self.assertFalse(os.path.exists(stale))
-                # Nor the half-written picture: a partial file with a valid slot
-                # name could be loaded onto a desk by mistake (David, 2026-10-08).
-                self.assertFalse(os.path.exists(os.path.join(d, '0001.eif')),
-                                 'a cancelled conversion left a partial .eif')
+                self.assertIsNone(run())
+                self._assert_untouched(d, eaf)
+
+    def test_a_cancel_into_an_empty_folder_leaves_nothing(self):
+        """A partial file with a valid slot name could be loaded onto a desk
+        by mistake (David, 2026-10-08)."""
+        import threading
+        cancel = threading.Event(); cancel.set()
+        d = self._dir('e_cancel_empty')
+        for route, run in self._eif_routes(d, 'e_cancel_empty', cancel).items():
+            with self.subTest(route=route):
+                self.assertIsNone(run())
+                self.assertEqual(os.listdir(d), [])
+
+    def test_a_failure_midway_leaves_the_previous_pair_as_it_was(self):
+        from unittest import mock
+        d = self._dir('e_fail')
+        routes = self._eif_routes(d, 'e_fail')
+        boom = mock.Mock(side_effect=RuntimeError('encoder failed'))
+        for route, run in routes.items():
+            eaf = self._previous_pair(d)
+            with self.subTest(route=route), \
+                    mock.patch.object(m, '_encode_eif_frame_from_yuv', boom), \
+                    mock.patch.object(m, '_encode_eif_frame_from_rgba', boom):
+                with self.assertRaises(RuntimeError):
+                    run()
+                self._assert_untouched(d, eaf)
+
+    def test_a_failed_eaf_write_leaves_the_previous_pair_as_it_was(self):
+        """The picture finished but the sound did not: neither may replace
+        the previous pair, or a new picture would play an old clip's sound."""
+        from unittest import mock
+        d = self._dir('e_fail_eaf')
+        routes = self._eif_routes(d, 'e_fail_eaf')
+        for route in ('clip', 'sws'):
+            eaf = self._previous_pair(d)
+            with self.subTest(route=route), \
+                    mock.patch.object(m, 'write_eaf', mock.Mock(side_effect=OSError('disk full'))):
+                with self.assertRaises(OSError):
+                    routes[route]()
+                self._assert_untouched(d, eaf)
+
+    def test_a_finished_eif_replaces_the_previous_pair_and_leaves_no_partial(self):
+        d = self._dir('e_ok')
+        for route, run in self._eif_routes(d, 'e_ok').items():
+            self._previous_pair(d)
+            with self.subTest(route=route):
+                out = run()
+                self.assertEqual(m.EIFHeader(out).frame_count > 0, True)
+                want = ['0001.eaf', '0001.eif'] if route != 'tga' else ['0001.eif']
+                self.assertEqual(sorted(os.listdir(d)), want)
 
     def test_the_tk_app_does_not_mark_a_cancelled_eif_done(self):
         """Independent review, 2026-10-08: the EIF converters return None when
@@ -2022,7 +2081,7 @@ class TestAudioRoutes(unittest.TestCase):
 
     def test_a_failed_eif_leaves_nothing_half_written(self):
         """Independent review, 2026-10-08: a failure partway through (not a
-        cancel) left a partial .eif with a valid slot name, and any old .eaf."""
+        cancel) left a partial .eif with a valid slot name."""
         import numpy as np
         from PIL import Image
         d = self._dir('e_fail')
@@ -2056,7 +2115,10 @@ class TestAudioRoutes(unittest.TestCase):
                     with self.assertRaises(OSError):
                         run()
                     self.assertFalse(os.path.exists(os.path.join(d, '0001.eif')), 'partial .eif left')
-                    self.assertFalse(os.path.exists(os.path.join(d, '0001.eaf')), 'old .eaf left')
+                    # Decision L: a failure changes nothing, so an existing
+                    # .eaf stays as it was and no partial file is left.
+                    self.assertTrue(os.path.exists(os.path.join(d, '0001.eaf')), 'old .eaf deleted')
+                    self.assertEqual([f for f in os.listdir(d) if f.startswith('.')], [])
             finally:
                 for fn in encoders:
                     setattr(m, fn, real[fn])
