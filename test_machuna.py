@@ -2138,6 +2138,23 @@ class TestAudioRoutes(unittest.TestCase):
                 self.assertEqual(Path(good).read_bytes(), b'previous good picture')
                 self.assertTrue(os.path.exists(os.path.join(d, '0001.eaf')), 'the previous .eaf was deleted')
 
+    def test_the_tk_app_does_not_mark_a_cancelled_eif_to_sws_done(self):
+        """Second review: the sibling of the EIF-output fix. A cancelled EIF to
+        SWS returned an empty result but the Tk batch appended 'OK'."""
+        src = Path(m.__file__).read_text()
+        body = src[src.index('        def _run_to_sws():'):]
+        body = body[:body.index("results.append((fnum, Path(item['path']).stem, 'OK'))")]
+        self.assertIn('if not made', body[body.index("if item['type'] == 'eif':"):])
+
+    def test_a_cancelled_eif_to_sws_returns_nothing_and_writes_nothing(self):
+        import threading
+        cancel = threading.Event(); cancel.set()
+        eif = self._eif('stereo24', 'c_e2s_src')
+        d = self._dir('c_e2s')
+        self.assertIsNone(m.convert_eif_to_sws(eif, 7, d, split_fat32=False, log=lambda *a: None,
+                                               cancel_event=cancel))
+        self.assertFalse(os.path.exists(os.path.join(d, '7.SWS')))
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np

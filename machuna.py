@@ -1821,7 +1821,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
             for o, srcs in enumerate(plan):
                 if cancel_event and cancel_event.is_set():
                     log("  Cancelled.")
-                    return ''
+                    return None      # nothing written: the SWS is only assembled at the end
                 if len(srcs) == 1:
                     fill_be, key_be = frame(srcs[0])
                 else:
@@ -5768,12 +5768,17 @@ def launch_gui():
                 fnum = id_map[_bespoke_key(item)]
                 try:
                     if item['type'] == 'eif':
-                        convert_eif_to_sws(
+                        made = convert_eif_to_sws(
                             item['path'], fnum, d,
                             video_standard=std_var.get(),
                             split_fat32=split_var.get(),
                             log=log, cancel_event=batch_cancel_event,
                             include_audio=include_audio_var.get())
+                        if not made:
+                            # Cancelled: nothing written. Leave the row pending.
+                            log(f"  {Path(item['path']).stem}: cancelled - not converted")
+                            cancelled = True
+                            break
                         results.append((fnum, Path(item['path']).stem, 'OK'))
                     elif item['type'] == 'tga_seq':
                         convert_tga_sequence(

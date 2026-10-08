@@ -209,8 +209,10 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     drops audio) with one call to `m.convert_sws_to_sws(...,
     include_audio=...)`.
   - Run `--selftest` after the move: it pins some behaviour against the engine.
-  - `_to_eif`: a cancelled conversion now returns None (and the partial file is
-    deleted); report the row as cancelled, not done with an empty path.
+  - `_to_eif` and `_to_sws` (EIF source): a cancelled conversion now returns None
+    (the partial EIF is deleted; an EIF-to-SWS writes nothing). The bridge
+    ignores return values today, so cancelled rows show "done" with an empty
+    path. Report them as cancelled (second review, 2026-10-08).
   - A still sent to K-Frame TGA should be refused cleanly ("stills convert to
     Kahuna SWS only"); today it is routed as an extraction, fails, and leaves an
     empty folder.
