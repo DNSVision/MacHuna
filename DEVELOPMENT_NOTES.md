@@ -154,9 +154,11 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   bit depth, length against frame count, and content against the source.
   Bit-exact where nothing is lost (e.g. 16-bit into `.eaf` is the sample `<< 8`);
   where something must be lost (24-bit into 16-bit SWS) the test pins down the
-  exact rule. **Known failure today:** anything read from an `.eaf` (EIF to SWS,
-  EIF to MOV) is reduced to 8-bit by `read_eaf_stereo`. SWS to EIF and MOV to EIF
-  carry no audio at all until `.eaf` writing exists.
+  exact rule. **State on 2026-10-08:** EIF to MOV was reduced to 8-bit by
+  `read_eaf_stereo` - FIXED (now 24-bit, bit-exact, proven end to end from the
+  desk's own KNOCKOUT_WIPE clip). **EIF to SWS carries no audio at all** (an
+  earlier note here wrongly said it came through at 8-bit; it never reads the
+  `.eaf`). SWS to EIF and MOV to EIF carry no audio until `.eaf` writing exists.
 
 - **Interlaced TGA sequence to EIF disagrees with the desk (found 2026-10-08,
   reading the code).** `convert_tga_seq_to_eif(source_interlaced=True)`
@@ -172,7 +174,9 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour
   advice:** a K-Frame's own MOV import treats all ProRes as BT.601, so loading
   ProRes straight in shifts saturated colours; converting through MacHuna does
-  not (desk results 2026-10-07).
+  not (desk results 2026-10-07). **USER_MANUAL section 6 must also be rewritten**:
+  it still gives the old `.eaf` format (8-channel 16-bit big-endian) and says EIF
+  has no audio, which will stop being true once writing lands.
 
 **Known limitations (recorded, not scheduled):**
 - **"TGA source interlaced" is per batch, not per item.** A batch mixing an interlaced TGA sequence with a progressive one applies the tick to both, so one comes out wrong. David's view (2026-09-09): not a real use case. The v1.8.0 item list makes mixed batches easier to build than the old UI did, which is why it is worth recording. The fix, if ever needed, is a per-row option rather than a batch-wide checkbox.
@@ -645,6 +649,19 @@ This is implemented in `_eif_frame_to_v210be(u0, u1, u2)`. The round-trip is los
 | `_hula_convert_eif_to_tga_interlaced(...)` | EIF → interlaced TGA (field-woven pairs) |
 
 ### EAF format (K-Frame clip audio) — decoded 2026-09-09
+
+> **SUPERSEDED 2026-10-07 - the body layout below is WRONG.** Proven on a live
+> K-Frame, bit-exact against sources with known audio: the body is **4 channels
+> of 32-bit little-endian words**, each a signed 24-bit sample in bits 23:0 with
+> a tag in bits 31:24 (channel number in the high nibble, plus status bits on
+> SDI-recorded clips). Programme L/R are channels **1 and 2** (zero-indexed 0
+> and 1). `0x60` is the rate code (`0x0484` at 25fps, `0x04A4` at 50fps) and
+> `0x62` is samples per frame (1920 / 960). Reading the body as 8 x 16-bit
+> big-endian took the top 8 bits of each sample plus the tag byte: "channels 1
+> and 3" were those, "channels 0 and 2" were the low bytes of real samples, and
+> the "peak 16" of silent 0022 was the tag. Reader corrected in the v1.12.0 desk
+> fixes. Full detail under "KNOCKOUT_WIPE round-trip RESULTS". The 2026-09-09
+> analysis is kept below as a record.
 
 Worked out from six real files in `~/Desktop/TEST WIPES/50i/EIF/` (`0003`–`0007`, `0022`), verified with exact byte accounting on every one. **The long-standing note that no `.eaf` had ever been obtained was simply wrong** — they had been on the machine all along, and nobody looked.
 

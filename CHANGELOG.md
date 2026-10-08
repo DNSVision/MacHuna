@@ -12,6 +12,10 @@ Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; t
 - **25fps (50i) EIF clips no longer play too fast on a K-Frame.** The header's rate code at `0x064` is `0x10484` at 25fps and `0x104A4` at 50fps in every desk-made file. MacHuna built it as `0x104A4 | 0x84`, and since `0xA4` already contains every bit of `0x84`, **every 25fps EIF MacHuna has written carried the 50fps code**. On the desk, a MacHuna file with the wrong code played too fast and the same file with only that field corrected played correctly. 50fps output was never affected.
   - Proved through all four EIF writers (MOV, TGA sequence, interlaced TGA sequence, SWS) by reading the written file back, and against all 28 desk-made reference files.
   - A fresh conversion of the desk test clip is now **byte-identical** to the file that played correctly on the K-Frame.
+- **EIF to QuickTime MOV audio is now full quality: 24-bit and bit-exact.** The `.eaf` audio format had been misread. It is four channels of 32-bit words, each carrying a 24-bit sample plus a channel tag, not eight channels of 16-bit big-endian. The old reader kept only the top 8 bits of each sample and let the tag into the right channel as a small constant offset. Loud material sounded fine, which is how it passed a listening check; quiet passages and fades would have been gritty.
+  - The MOV now carries 24-bit PCM, so everything the `.eaf` holds survives. SWS to MOV is unchanged at 16-bit, because SWS audio is 16-bit.
+  - Proved against files the K-Frame itself wrote from sources with known audio (KNOCKOUT_WIPE, and generated 24-bit stereo and four-channel tests), and end to end: the desk's own KNOCKOUT_WIPE clip converted to MOV gives back the original audio, all 81,600 samples on both channels, bit for bit.
+  - The old tests were replaced, not adjusted: they built test files in the same mistaken layout the reader assumed, so the two agreed perfectly while both were wrong.
 
 ---
 

@@ -1282,104 +1282,187 @@ class TestOutputLabelsMatchTheirNotes(unittest.TestCase):
                 self.assertIn(key, labels, f"{key!r} is not a dropdown label")
 
 
+DESK_2026_10_07 = Path(os.path.expanduser(
+    '~/Developer/MacHuna-Swift/testmedia/desk/2026-10-07-kframe'))
+KNOCKOUT_WIPE = Path(os.path.expanduser(
+    '~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov'))
+
+
+def _write_eaf(path, samples24, frames, spf=1920, tag_extra=0):
+    """Write an .eaf in the layout PROVEN on a live K-Frame on 2026-10-07: four
+    channels of 32-bit little-endian words, a signed 24-bit sample in bits
+    23:0 and a tag in bits 31:24 (channel << 4, plus status bits on
+    SDI-recorded clips). The desk accepted a file written exactly this way and
+    exported it back byte-identical (0922), so this helper is anchored to the
+    desk, not to the reader it tests. samples24: int array, shape (n, 4)."""
+    import numpy as np
+    s = np.asarray(samples24, dtype=np.int64)
+    n = s.shape[0]
+    words = np.zeros((n, 4), dtype=np.uint32)
+    for ch in range(4):
+        words[:, ch] = ((s[:, ch] & 0xFFFFFF).astype(np.uint32)
+                        | np.uint32(((ch << 4) | tag_extra) << 24))
+    head = bytearray(128)
+    struct.pack_into('<I', head, 0x00, 285365)
+    struct.pack_into('<H', head, 0x60, 0x0484 if spf == 1920 else 0x04A4)
+    struct.pack_into('<H', head, 0x62, spf)
+    struct.pack_into('<I', head, 0x64, n)
+    struct.pack_into('<I', head, 0x6A, frames)
+    Path(path).write_bytes(bytes(head) + words.astype('<u4').tobytes())
+
+
+def _stereo24(pcm_bytes):
+    """read_eaf_stereo's output: interleaved little-endian s32, the 24-bit
+    sample in the top 24 bits. Returned as 24-bit values, shape (n, 2)."""
+    import numpy as np
+    return np.frombuffer(pcm_bytes, dtype='<i4').reshape(-1, 2).astype(np.int64) >> 8
+
+
 class TestEafAudio(unittest.TestCase):
-    """The .eaf reader, tested on files whose correct answer is known.
+    """The .eaf reader.
 
-    Endianness here was got wrong once and only caught by David listening to
-    the result, so these assert on the decoded samples themselves rather than
-    on the fact that something was returned.
+    The first reader and its tests shared one misunderstanding (8 channels of
+    16-bit big-endian), so they agreed perfectly and both were wrong: EIF to
+    MOV audio came out at 8-bit resolution with a DC offset on the right. The
+    format was settled on a live K-Frame on 2026-10-07. These tests assert on
+    decoded samples, and the most important ones compare against files the
+    DESK wrote from sources whose audio is known exactly.
     """
-
-    @staticmethod
-    def _build_eaf(path, channel_data, samples):
-        """Write a syntactically real .eaf carrying the given channels."""
-        import numpy as np
-        head = bytearray(m.EAF_HEADER_BYTES)
-        struct.pack_into('<I', head, m.EAF_OFF_SAMPLES, samples)
-        struct.pack_into('<I', head, m.EAF_OFF_FRAMES, samples // 1920)
-        body = np.zeros((samples, m.EAF_CHANNELS), dtype='>i2')
-        for ch, data in channel_data.items():
-            body[:, ch] = data
-        Path(path).write_bytes(bytes(head) + body.tobytes())
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def _tone(self, n, period=64, amp=8000):
+    def _tone(self, n, period, amp):
         import numpy as np
-        return (amp * np.sin(np.arange(n) * 2 * np.pi / period)).astype('>i2')
+        rng = np.random.default_rng(period)
+        s = np.round(amp * np.sin(np.arange(n) * 2 * np.pi / period)).astype(np.int64)
+        return (s & ~0xFF) | rng.integers(0, 256, n)     # genuinely 24-bit
 
-    def test_reads_programme_channels_sample_for_sample(self):
+    def test_reads_left_and_right_as_full_24_bit_samples(self):
         import numpy as np
         n = 1920 * 3
-        left, right = self._tone(n, 64), self._tone(n, 96)
+        left, right = self._tone(n, 64, 3_000_000), self._tone(n, 96, -2_500_000)
         p = os.path.join(self.tmp, 'a.eaf')
-        self._build_eaf(p, {1: left, 3: right}, n)
-        pcm = m.read_eaf_stereo(p, log=lambda *a: None)
-        self.assertIsNotNone(pcm)
-        got = np.frombuffer(pcm, dtype='<i2').reshape(-1, 2)
-        # Exact equality: a byte-order slip would still "work" but be wrong.
-        self.assertTrue(np.array_equal(got[:, 0], left.astype('<i2')))
-        self.assertTrue(np.array_equal(got[:, 1], right.astype('<i2')))
+        _write_eaf(p, np.stack([left, right, np.zeros(n), np.zeros(n)], 1), 3)
+        got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+        self.assertTrue(np.array_equal(got[:, 0], left), 'left is not bit-exact')
+        self.assertTrue(np.array_equal(got[:, 1], right), 'right is not bit-exact')
 
-    def test_big_endian_is_not_negotiable(self):
-        # Reading the same body as little-endian gives different samples. If
-        # this ever passes, the reader has silently swapped byte order.
+    def test_the_tag_byte_never_reaches_the_audio(self):
+        """The old reader put the tag in the right channel's low byte: a DC
+        offset of 16. Silence must decode as silence, on both channels, even
+        with the status bits SDI-recorded clips carry (0x44, 0x4C seen)."""
         import numpy as np
         n = 1920
-        left = self._tone(n, 64)
-        p = os.path.join(self.tmp, 'b.eaf')
-        self._build_eaf(p, {1: left, 3: left}, n)
-        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
-                            dtype='<i2').reshape(-1, 2)
-        self.assertFalse(np.array_equal(got[:, 0], left.view('<i2')),
-                         "reader produced the little-endian reading")
+        for extra in (0x0, 0x4, 0xC, 0x40 | 0xC):
+            p = os.path.join(self.tmp, f'tag{extra}.eaf')
+            _write_eaf(p, np.zeros((n, 4)), 1, tag_extra=extra)
+            got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+            with self.subTest(status_bits=hex(extra)):
+                self.assertEqual(int(np.abs(got).max()), 0)
 
-    def test_loud_non_audio_channels_are_never_chosen(self):
-        """Channels 0 and 2 carry near-full-scale spikes that are not audio.
-
-        Picking "the loudest" channels would put that garbage in the file.
-        This is the exact flaw the first implementation had.
-        """
+    def test_negative_samples_keep_their_sign(self):
         import numpy as np
-        n = 1920 * 2
-        spikes = np.zeros(n, dtype='>i2')
-        spikes[::7] = 32000                      # loud, but uncorrelated
-        p = os.path.join(self.tmp, 'c.eaf')
-        self._build_eaf(p, {0: spikes, 2: spikes, 1: self._tone(n), 3: self._tone(n)}, n)
-        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
-                            dtype='<i2').reshape(-1, 2)
-        self.assertLess(int(np.abs(got).max()), 30000,
-                        "the spike channels were selected as programme audio")
-
-    def test_a_silent_eaf_stays_silent(self):
-        """0022 in the reference set is effectively silent (peak 16).
-
-        The reader must return that silence, not go hunting for signal in the
-        non-audio channels.
-        """
-        import numpy as np
-        n = 1920 * 2
-        spikes = np.zeros(n, dtype='>i2')
-        spikes[::7] = 32000
-        quiet = np.full(n, 12, dtype='>i2')
-        p = os.path.join(self.tmp, 'd.eaf')
-        self._build_eaf(p, {0: spikes, 2: spikes, 1: quiet, 3: quiet}, n)
-        got = np.frombuffer(m.read_eaf_stereo(p, log=lambda *a: None),
-                            dtype='<i2').reshape(-1, 2)
-        self.assertLessEqual(int(np.abs(got).max()), 12)
+        vals = np.array([-1, -256, -(1 << 23), (1 << 23) - 1, 1, 0], dtype=np.int64)
+        n = len(vals)
+        p = os.path.join(self.tmp, 'sign.eaf')
+        _write_eaf(p, np.stack([vals, -vals.clip(-(1 << 23) + 1), np.zeros(n), np.zeros(n)], 1), 1)
+        got = _stereo24(m.read_eaf_stereo(p, log=lambda *a: None))
+        self.assertEqual(got[:, 0].tolist(), vals.tolist())
 
     def test_truncated_and_missing_files_return_none(self):
         self.assertIsNone(m.read_eaf_stereo(os.path.join(self.tmp, 'nope.eaf')))
         short = os.path.join(self.tmp, 'short.eaf')
-        head = bytearray(m.EAF_HEADER_BYTES)
-        struct.pack_into('<I', head, m.EAF_OFF_SAMPLES, 99999)
+        head = bytearray(128)
+        struct.pack_into('<I', head, 0x64, 99999)
         Path(short).write_bytes(bytes(head) + b'\x00' * 100)
         self.assertIsNone(m.read_eaf_stereo(short, log=lambda *a: None))
 
     def test_companion_path_swaps_the_extension(self):
         self.assertTrue(m.eaf_path_for('/x/0003.eif').endswith('0003.eaf'))
+
+
+@unittest.skipUnless(DESK_2026_10_07.is_dir(),
+                     'K-Frame desk-session files (2026-10-07) not on this machine')
+class TestEafAgainstTheDesk(unittest.TestCase):
+    """Files a live K-Frame wrote from sources whose audio is known exactly.
+    The ground truth for the reader."""
+
+    def _read(self, name):
+        p = DESK_2026_10_07 / name
+        if not p.exists():
+            self.skipTest(f'{name} not present')
+        return _stereo24(m.read_eaf_stereo(str(p), log=lambda *a: None))
+
+    def test_0922_our_own_file_returned_by_the_desk_is_bit_exact_24_bit(self):
+        import numpy as np
+        got = self._read('audio/desk_0922.eaf')
+        want = np.load(DESK_2026_10_07 / 'audio' / '0922_samples.npy')
+        self.assertTrue(np.array_equal(got, want))
+
+    def test_0920_short_24_bit_stereo_imported_by_the_desk(self):
+        """The desk's MOV import keeps the top 16 bits and zero-pads to the
+        clip length. The reader must return exactly that."""
+        import numpy as np
+        got = self._read('audio/desk_0920.eaf')
+        src = np.load(DESK_2026_10_07 / 'audio' / '0920_samples.npy')
+        self.assertEqual(len(got), 30 * 1920)
+        self.assertTrue(np.array_equal(got[:len(src)], src & ~0xFF))
+        self.assertEqual(int(np.abs(got[len(src):]).max()), 0, 'padding must be silent')
+
+    def test_0921_first_two_of_four_channels_are_left_and_right(self):
+        import numpy as np
+        got = self._read('audio/desk_0921.eaf')
+        src = np.load(DESK_2026_10_07 / 'audio' / '0921_samples.npy')
+        self.assertTrue(np.array_equal(got, src[:, :2] & ~0xFF))
+
+    def test_0900_knockout_wipe_matches_its_source_mov(self):
+        import numpy as np, subprocess
+        if not KNOCKOUT_WIPE.exists():
+            self.skipTest('KNOCKOUT_WIPE.mov not present')
+        got = self._read('0900.eaf')
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', str(KNOCKOUT_WIPE),
+                              '-map', '0:a:0', '-f', 's16le', '-'], capture_output=True, check=True).stdout
+        src = np.frombuffer(raw, dtype='<i2').reshape(-1, 2).astype(np.int64) << 8
+        self.assertTrue(np.array_equal(got, src))
+
+
+class TestEifToMovAudio(unittest.TestCase):
+    """End to end through the real conversion: an EIF with an .eaf becomes a
+    MOV whose audio is the .eaf's left and right, bit for bit, at 24-bit."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_mov_audio_is_the_eaf_left_and_right_bit_for_bit(self):
+        import numpy as np, subprocess
+        from PIL import Image
+        tgas = []
+        for i in range(2):
+            t = os.path.join(self.tmp, f'f{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (10, 20, 30, 255)).save(t)
+            tgas.append(t)
+        eif = m.convert_tga_seq_to_eif(tgas, self.tmp, 'AUD', 25.0,
+                                       log=lambda *a: None, out_name='0001')
+        n = 2 * 1920
+        rng = np.random.default_rng(7)
+        left = rng.integers(-(1 << 23), 1 << 23, n)
+        right = rng.integers(-(1 << 23), 1 << 23, n)
+        _write_eaf(m.eaf_path_for(eif), np.stack([left, right, np.zeros(n), np.zeros(n)], 1), 2)
+        out = os.path.join(self.tmp, 'mov')
+        os.makedirs(out)
+        mov = m._hula_convert_eif_to_mov(eif, out, include_audio=True, log=lambda *a: None)
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', mov, '-map', '0:a:0',
+                              '-f', 's32le', '-c:a', 'pcm_s32le', '-'],
+                             capture_output=True, check=True).stdout
+        got = np.frombuffer(raw, dtype='<i4').reshape(-1, 2).astype(np.int64) >> 8
+        self.assertEqual(len(got), n)
+        self.assertTrue(np.array_equal(got[:, 0], left), 'MOV left is not the .eaf left')
+        self.assertTrue(np.array_equal(got[:, 1], right), 'MOV right is not the .eaf right')
 
 
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
@@ -1411,7 +1494,7 @@ class TestEafAgainstRealFiles(unittest.TestCase):
             if pcm is None:
                 continue
             h = m.EIFHeader(str(eif))
-            audio_s = (len(pcm) // 4) / float(m.EAF_SAMPLE_RATE)
+            audio_s = (len(pcm) // 8) / float(m.EAF_SAMPLE_RATE)   # stereo s32: 8 bytes per sample
             video_s = h.frame_count / h.fps
             with self.subTest(clip=eif.name):
                 self.assertAlmostEqual(audio_s, video_s, places=2)

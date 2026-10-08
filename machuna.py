@@ -3023,9 +3023,9 @@ UNVERIFIED_OUTPUT_NOTES = {
 
 
 # Not "unverified" but "not written yet". A K-Frame carries clip audio in a
-# companion .eaf file. That format was decoded from real files on 2026-09-09
-# (8ch 16-bit big-endian 48k) but the read/write code is not built yet, so EIF
-# output is silent, always. Worth saying out loud: it is the one limitation
+# companion .eaf file. Its layout was proven on a live K-Frame on 2026-10-07
+# (see the .eaf section below) and reading it is built, but WRITING is not yet,
+# so EIF output is silent, always. Worth saying out loud: it is the one limitation
 # David is certain of, as opposed to merely unproven.
 MISSING_FEATURE_NOTES = {
     "K-Frame EIF": "EIF output carries no audio. A K-Frame stores clip audio in a "
@@ -3423,20 +3423,23 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
 # ── .eaf companion audio (Kayenne/K-Frame clip audio) ────────────────────────
 #
 # A K-Frame clip's picture is the .eif; its sound, when it has any, is a
-# separate .eaf of the same name beside it. Decoded 2026-09-09 from six real
-# files (0003-0007, 0022 in ~/Desktop/TEST WIPES/50i/EIF/), with exact byte
-# accounting on every one. See DEVELOPMENT_NOTES.md "EAF format".
+# separate .eaf of the same name beside it.
 #
-# Reading is solved. WRITING an .eaf is deliberately not implemented: which
-# channels a desk *expects* is still an open question for the hardware session,
-# and so is the .eif audio flag at 0x60 bit 2. Do not add a writer here without
-# that answer.
+# Layout PROVEN on a live K-Frame on 2026-10-07 (bit-exact against sources whose
+# audio was known, at 25 and 50fps): a 128-byte header, then FOUR channels of
+# 32-bit little-endian words. Each word holds a signed 24-bit sample in bits
+# 23:0 and a tag in bits 31:24 - the channel number in the high nibble (0x00,
+# 0x10, 0x20, 0x30), plus status bits on clips recorded from SDI. Programme
+# left and right are channels 1 and 2. The first reading (2026-09-09: "8 channels
+# of 16-bit big-endian, audio on 1 and 3") was wrong and gave 8-bit audio; see
+# DEVELOPMENT_NOTES.md "KNOCKOUT_WIPE round-trip RESULTS".
 EAF_HEADER_BYTES   = 128
-EAF_CHANNELS       = 8
+EAF_CHANNELS       = 4
+EAF_WORD_BYTES     = 4       # one 32-bit word per channel per sample
 EAF_SAMPLE_RATE    = 48000
-EAF_OFF_SAMPLES    = 0x64    # uint32: total sample count
+EAF_OFF_SAMPLES    = 0x64    # uint32: total sample count (padded to the clip)
 EAF_OFF_FRAMES     = 0x6A    # uint32: frame count, matches the paired .eif
-EAF_PROGRAMME_CHANS = (1, 3)  # observed in all six reference files
+EAF_PROGRAMME_CHANS = (0, 1)  # left, right
 
 
 def eaf_path_for(eif_path: str) -> str:
@@ -3444,80 +3447,41 @@ def eaf_path_for(eif_path: str) -> str:
     return str(Path(eif_path).with_suffix('.eaf'))
 
 
-def _channel_correlations(arr) -> list:
-    """Sample-to-sample correlation per channel: ~0.99 for real audio, ~0 for
-    anything else. Used to identify which channels of a .eaf carry programme
-    audio without being fooled by the loud non-audio channels."""
-    out = []
-    for c in range(arr.shape[1]):
-        x = arr[:, c].astype(np.float64)
-        if x.size < 2 or x.std() == 0:
-            out.append(0.0)
-            continue
-        a, b = x[:-1], x[1:]
-        if a.std() == 0 or b.std() == 0:
-            out.append(0.0)
-            continue
-        out.append(abs(float(np.corrcoef(a, b)[0, 1])))
-    return out
-
-
 def read_eaf_stereo(eaf_path: str, log=print):
-    """Read a .eaf and return interleaved little-endian stereo s16 bytes.
+    """Read a .eaf and return its left and right as interleaved little-endian
+    signed 32-bit bytes, each sample's 24 bits in the top 24 (sample << 8), so
+    nothing the file holds is lost on the way to a 24-bit MOV.
 
-    Returns None if the file is absent or does not parse as an .eaf. The body
-    is 8 channels of 16-bit BIG-endian at 48kHz; programme audio sits on
-    channels 1 and 3 in every reference file. Channels 0 and 2 carry
-    near-full-scale spikes that are not audio, so they are never chosen by
-    accident - the pair is only overridden if 1 and 3 are silent and something
-    else clearly is not.
+    Returns None if the file is absent or does not parse as an .eaf.
     """
     if not eaf_path or not os.path.exists(eaf_path):
         return None
-    size = os.path.getsize(eaf_path)
-    if size <= EAF_HEADER_BYTES:
+    if os.path.getsize(eaf_path) <= EAF_HEADER_BYTES:
         return None
     with open(eaf_path, 'rb') as f:
         head = f.read(EAF_HEADER_BYTES)
         body = f.read()
     samples = struct.unpack_from('<I', head, EAF_OFF_SAMPLES)[0]
     frames  = struct.unpack_from('<I', head, EAF_OFF_FRAMES)[0]
-    expect  = samples * EAF_CHANNELS * 2
-    if samples == 0 or expect == 0 or len(body) < expect:
+    expect  = samples * EAF_CHANNELS * EAF_WORD_BYTES
+    if samples == 0 or len(body) < expect:
         log(f"  .eaf does not parse (declares {samples} samples, "
             f"body is {len(body)} bytes) - audio skipped")
         return None
-    arr = np.frombuffer(body[:expect], dtype='>i2').reshape(-1, EAF_CHANNELS)
-
-    # Choose the programme pair. Loudness is the wrong test here: channels 0
-    # and 2 carry near-full-scale spikes that are NOT audio, so picking "the
-    # loudest" would put garbage in the file. Sample-to-sample correlation
-    # tells them apart cleanly - real audio sits around 0.99, anything
-    # misread or non-audio collapses to about 0. That is the method that found
-    # the endianness error in the first place.
+    words = np.frombuffer(body[:expect], dtype='<u4').reshape(-1, EAF_CHANNELS)
     left_i, right_i = EAF_PROGRAMME_CHANS
-    corr = _channel_correlations(arr)
-    if corr[left_i] < 0.5 and corr[right_i] < 0.5:
-        ranked = [c for c in np.argsort(corr)[::-1] if corr[c] >= 0.9]
-        if len(ranked) >= 2:
-            left_i, right_i = int(min(ranked[:2])), int(max(ranked[:2]))
-            log(f"  .eaf: channels {EAF_PROGRAMME_CHANS} do not look like audio, "
-                f"using {left_i} and {right_i} instead")
-        else:
-            # Nothing in the file looks like audio. A genuinely silent .eaf is
-            # normal (0022 in the reference set is one), so take the expected
-            # pair and stay quiet rather than inventing a signal.
-            pass
-    stereo = np.empty((arr.shape[0], 2), dtype='<i2')
-    stereo[:, 0] = arr[:, left_i]
-    stereo[:, 1] = arr[:, right_i]
+    # Shifting the tag byte out and the 24-bit sample up leaves sample << 8 as a
+    # signed 32-bit value: sign-correct, and the tag can never reach the audio.
+    stereo = np.empty((samples, 2), dtype='<u4')
+    stereo[:, 0] = words[:, left_i] << 8
+    stereo[:, 1] = words[:, right_i] << 8
     log(f"  .eaf: {samples} samples, {frames} frame(s), "
-        f"{samples / float(EAF_SAMPLE_RATE):.2f}s, channels {left_i}/{right_i}")
+        f"{samples / float(EAF_SAMPLE_RATE):.2f}s, 24-bit")
     return stereo.tobytes()
 
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
-                stereo_pcm: str, out_path: str) -> list:
+                stereo_pcm: str, out_path: str, pcm_24bit: bool = False) -> list:
     """The one ProRes 4444 encode used by every MOV path.
 
     Kept in one place so SWS, EIF and TGA sources cannot drift apart in
@@ -3528,16 +3492,19 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
            '-f', 'rawvideo', '-pix_fmt', 'rgba',
            '-s', f"{width}x{height}",
            '-r', fps_str, '-i', raw_rgba]
+    # pcm_24bit: the PCM is s32le carrying 24-bit samples (from an .eaf) and is
+    # written as 24-bit, so nothing is lost. Otherwise s16le in, 16-bit out.
     if stereo_pcm:
-        cmd += ['-f', 's16le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
-                '-i', stereo_pcm]
+        cmd += ['-f', 's32le' if pcm_24bit else 's16le',
+                '-ar', str(EAF_SAMPLE_RATE), '-ac', '2', '-i', stereo_pcm]
     cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
             '-pix_fmt', 'yuva444p10le',
             '-color_primaries', 'bt709',
             '-color_trc', 'bt709',
             '-colorspace', 'bt709']
     if stereo_pcm:
-        cmd += ['-c:a', 'pcm_s16le', '-ar', str(EAF_SAMPLE_RATE)]
+        cmd += ['-c:a', 'pcm_s24le' if pcm_24bit else 'pcm_s16le',
+                '-ar', str(EAF_SAMPLE_RATE)]
     cmd.append(out_path)
     return cmd
 
@@ -3578,7 +3545,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                 log("  No companion .eaf - MOV will be silent")
         log("  Encoding ProRes 4444...")
         _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, f"{h.fps:.6g}",
-                                stereo_pcm, out_path), check=True)
+                                stereo_pcm, out_path, pcm_24bit=True), check=True)
     log(f"  Done → {out_path}")
     return out_path
 
