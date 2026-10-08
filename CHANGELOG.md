@@ -34,6 +34,8 @@ Fixes found on a live K-Frame on 7 October 2026. Each lands as its own commit; t
 
 ### Removed
 - **Every hardware warning is gone.** K-Frame EIF and K-Frame TGA were confirmed on a live K-Frame on 7 October (EIF at 50fps and 50i, with and without audio; TGA from MOV, EIF and SWS). The Sony TGA warning was lifted by David on 8 October on his own judgement. The batch log no longer prints them, and the Tk app no longer asks "has not been tested on hardware... Proceed anyway?" before EIF output or MOV to TGA. The mechanism for such notes stays, empty, for the next new output.
+- **The Video Player plays EIF audio.** It used to play every EIF silent: the EIF header reader said "no audio" unconditionally, with a note that the audio had not been decoded. It now reads the companion `.eaf`. Checked in the real app on the desk's own KNOCKOUT_WIPE clip: "Loaded 85 frames with audio", left and right exactly the original. MacHuna 2.0's player plays EIF audio through its own bridge and gets the 24-bit-correct reading from the engine move.
+- **Include audio is offered, and honoured, for EIF to SWS.** A folder of EIFs always reported "no audio", so the Tk app never showed the box for them; an EIF with a companion `.eaf` now counts as having audio.
 
 ### Changed
 - **A mono source now plays on both left and right**, in SWS as well as EIF (David, 8 October). Until now SWS put mono on the left only, an accident of the channel routing, never hardware-confirmed. **Stereo and multichannel SWS output is byte-identical to before** (proved on stereo, four-channel, 44.1kHz and 24-bit sources, timestamps aside); for mono, the only bytes that change are the right channel's audio.

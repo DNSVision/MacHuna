@@ -2034,6 +2034,66 @@ class TestInterlacedTgaToEif(unittest.TestCase):
         self.assertNotEqual(top[10], bottom[10])
 
 
+class TestTkPlayerEifAudio(unittest.TestCase):
+    """The Tk Video Player played EIF clips silent: EIFHeader.has_audio was a
+    hard-coded False with a "not decoded yet" TODO. It now plays the .eaf."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _eif_with_audio(self):
+        import numpy as np
+        from PIL import Image
+        t = os.path.join(self.tmp, 'f0000.tga')
+        Image.new('RGBA', (1920, 1080), (5, 6, 7, 255)).save(t)
+        eif = m.convert_tga_seq_to_eif([t], self.tmp, 'P', 25.0, log=lambda *a: None, out_name='0001')
+        rng = np.random.default_rng(9)
+        stereo = rng.integers(-(1 << 23), 1 << 23, (1920, 2))
+        m.write_eaf(m.eaf_path_for(eif), stereo, 1, 25.0)
+        return eif, stereo
+
+    def test_the_player_gets_the_eaf_on_its_kahuna_channels(self):
+        import numpy as np
+        eif, stereo = self._eif_with_audio()
+        pcm = m._player_audio_for_eif(eif)
+        self.assertIsNotNone(pcm)
+        a = np.frombuffer(pcm, dtype='<i2').reshape(-1, 16)
+        self.assertTrue(np.array_equal(a[:, 0], stereo[:, 0] >> 8))
+        self.assertTrue(np.array_equal(a[:, 2], stereo[:, 1] >> 8))
+        self.assertEqual(int(np.abs(a[:, [1] + list(range(3, 16))]).max()), 0)
+
+    def test_eif_header_reports_its_companion(self):
+        eif, _ = self._eif_with_audio()
+        self.assertTrue(m.EIFHeader(eif).has_audio)
+        os.remove(m.eaf_path_for(eif))
+        self.assertFalse(m.EIFHeader(eif).has_audio)
+        self.assertIsNone(m._player_audio_for_eif(eif))
+
+    def test_a_folder_of_eifs_with_audio_says_so(self):
+        """The Tk app shows Include audio only when the scan reports audio;
+        EIF folders always said none, so EIF to SWS could not offer it."""
+        eif, _ = self._eif_with_audio()
+        _items, itype, has_aud, _seq = m._scan_folder_unified(self.tmp)
+        self.assertEqual(itype, 'from_eif')
+        self.assertTrue(has_aud)
+        os.remove(m.eaf_path_for(eif))
+        self.assertFalse(m._scan_folder_unified(self.tmp)[2])
+
+    def test_the_tk_app_passes_include_audio_to_eif_to_sws(self):
+        src = Path(m.__file__).read_text()
+        gui = src[src.index('def launch_gui'):]
+        call = gui[gui.index('convert_eif_to_sws('):]
+        call = call[:call.index('results.append')]     # the whole call
+        self.assertIn('include_audio=include_audio_var.get()', call)
+
+    def test_the_player_loader_uses_it(self):
+        src = Path(m.__file__).read_text()
+        body = src[src.index('    def _load_eif(self, path: str):'):]
+        body = body[:body.index('\n    def ', 10)]
+        self.assertIn('_player_audio_for_eif(', body)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

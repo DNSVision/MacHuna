@@ -1888,9 +1888,8 @@ class EIFHeader:
         dur_us           = struct.unpack_from('<I', raw, 0x0FC)[0]
         self.fps         = round(1_000_000.0 / dur_us, 6) if dur_us else 25.0
         self.has_key     = True
-        # TODO: locate audio section — companion .eaf files are believed to carry
-        # audio; tail bytes after video_end have not yet been decoded.
-        self.has_audio   = False
+        # A K-Frame clip's sound is its companion .eaf, paired by name.
+        self.has_audio   = os.path.exists(eaf_path_for(path))
         self.loop_play   = False
         self.auto_play   = False
 
@@ -2219,6 +2218,24 @@ def _find_tga_sequences(folder: str) -> list:
     return result
 
 
+def _player_pcm_from_stereo16(raw_stereo: bytes) -> bytes:
+    """Interleaved LE s16 stereo into the player's audio format: 16 channels
+    of 16-bit LE at 48kHz, left on channel 1 and right on 3 (the SWS layout)."""
+    stereo   = np.frombuffer(raw_stereo, dtype='<i2')
+    stereo   = stereo[:len(stereo) // 2 * 2].reshape(-1, 2)
+    expanded = np.zeros((len(stereo), 16), dtype='<i2')
+    expanded[:, 0] = stereo[:, 0]   # L → ch0  (K-Watch mapping)
+    expanded[:, 2] = stereo[:, 1]   # R → ch2  (K-Watch mapping)
+    return expanded.tobytes()
+
+
+def _player_audio_for_eif(eif_path: str):
+    """An EIF clip's .eaf in the player's audio format, or None. The player
+    used to play every EIF silent: its header said "no audio" unconditionally."""
+    pcm = read_eaf_stereo(eaf_path_for(eif_path), log=lambda *a: None)
+    return _player_pcm_from_stereo16(pcm) if pcm else None
+
+
 def _load_tga_frames(tga_files: list, progress_cb=None):
     """Load TGA sequence into (frames, has_key).
     frames = list of [fill_img, key_img, comp_img] PIL Images at PANEL_W × PANEL_H.
@@ -2348,11 +2365,7 @@ def _load_video_frames(path: str, progress_cb=None):
     )
     raw_stereo = audio_result.stdout
     if raw_stereo:
-        stereo   = np.frombuffer(raw_stereo, dtype='<i2').reshape(-1, 2)
-        expanded = np.zeros((len(stereo), 16), dtype='<i2')
-        expanded[:, 0] = stereo[:, 0]   # L → ch0  (K-Watch mapping)
-        expanded[:, 2] = stereo[:, 1]   # R → ch2  (K-Watch mapping)
-        audio_pcm = expanded.tobytes()
+        audio_pcm = _player_pcm_from_stereo16(raw_stereo)
 
     if progress_cb:
         progress_cb(100, "Ready.")
@@ -2729,9 +2742,12 @@ class SWSPlayer(tk.Toplevel):
                 self.after(0, lambda: self._on_progress(pct, msg))
             try:
                 frames = _load_eif_frames(path, header, progress)
-                hdr    = _PlayerHeader(fps=fps, frame_count=n, has_key=True)
+                pcm    = _player_audio_for_eif(path)
+                hdr    = _PlayerHeader(fps=fps, frame_count=n, has_key=True,
+                                       has_audio=pcm is not None)
                 cache  = _GenericFrameCache(path, hdr)
-                cache.frames = frames
+                cache.frames    = frames
+                cache.audio_pcm = pcm
                 self.after(0, lambda: self._on_load_complete(cache, hdr))
             except Exception as e:
                 import traceback; traceback.print_exc()
@@ -3947,8 +3963,12 @@ def _scan_folder_unified(folder: str) -> tuple:
 
     if has_eif and not has_vid and not has_stills and not has_seqs:
         if has_sws:
-            return eif_items + sws_items, 'mixed_eif_sws', False, False
-        return eif_items, 'from_eif', False, False
+            mixed_aud = any(os.path.exists(eaf_path_for(i['path'])) for i in eif_items) \
+                or any(HulaSWSHeader(i['path']).has_audio for i in sws_items
+                       if os.path.isfile(i['path']))
+            return eif_items + sws_items, 'mixed_eif_sws', mixed_aud, False
+        eif_aud = any(os.path.exists(eaf_path_for(i['path'])) for i in eif_items)
+        return eif_items, 'from_eif', eif_aud, False
 
     if has_sws and (has_vid or has_stills or has_seqs):
         return [], 'mixed_error', False, False
@@ -5475,7 +5495,8 @@ def launch_gui():
                             item['path'], fnum, d,
                             video_standard=std_var.get(),
                             split_fat32=split_var.get(),
-                            log=log, cancel_event=batch_cancel_event)
+                            log=log, cancel_event=batch_cancel_event,
+                            include_audio=include_audio_var.get())
                         results.append((fnum, Path(item['path']).stem, 'OK'))
                     elif item['type'] == 'tga_seq':
                         convert_tga_sequence(
