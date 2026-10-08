@@ -190,14 +190,10 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   after deciding whether the file splits, or support audio in split files once a
   reference exists.
 
-- **Sony TGA weaves an already-interlaced MOV a second time (found 2026-10-08,
-  fix 4).** Same flaw K-Frame TGA had: `_hula_convert_mov_to_tga` with a 1080i
-  standard weaves pairs of an interlaced source, giving half the frames with
-  fields from different moments (TNTS 50i to Sony at 1080i50: 15 frames from
-  30). Fix 4 corrected it for K-Frame only, because decision 44 covered K-Frame
-  TGA; Sony was left exactly as it was. **Needs David's decision** before
-  changing, and ideally a Sony desk to confirm 25i field handling.
-
+- ~~**Sony TGA weaves an already-interlaced MOV a second time**~~ - **FIXED
+  2026-10-08 at David's instruction**, same rule as K-Frame TGA: only a
+  progressive source at 50fps or more is woven. TNTS 50i to Sony at 1080i50 now
+  30 frames (was 15). Sony output itself is still unconfirmed on a Sony desk.
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour

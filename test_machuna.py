@@ -1859,6 +1859,33 @@ class TestKFrameTgaFromTheSource(unittest.TestCase):
     def test_a_50fps_eif_is_woven_for_an_interlaced_desk(self):
         self.assertEqual(len(self._tgas(self.e50, '1080i50')), 2)
 
+    # ── Sony TGA follows the same rule (David, 2026-10-08) ─────────────────
+    def _sony(self, src, standard):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], out, m.HULA_TARGET_SONY_TGA, standard=standard,
+                          clip_name='TEST', log=lambda *a: None)
+        return sorted(p.name for p in Path(out).rglob('*.tga'))
+
+    def test_sony_never_weaves_an_interlaced_mov_again(self):
+        import numpy as np
+        from PIL import Image
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([self.i25], out, m.HULA_TARGET_SONY_TGA, standard='1080i50',
+                          clip_name='TEST', log=lambda *a: None)
+        frames = sorted(Path(out).rglob('*.tga'))
+        src = self._source_frames(self.i25)
+        self.assertEqual([f.name for f in frames], [f'TEST{i:04d}.tga' for i in range(len(src))])
+        for i, f in enumerate(frames):
+            with self.subTest(frame=i):
+                self.assertTrue(np.array_equal(np.array(Image.open(f).convert('RGBA')), src[i]))
+
+    def test_sony_takes_a_25fps_eif_frame_for_frame(self):
+        self.assertEqual(len(self._sony(self.e25, '1080i50')), 4)
+
+    def test_sony_still_weaves_a_50p_source(self):
+        self.assertEqual(self._sony(self.p50, '1080i50'), [f'TEST{i:04d}.tga' for i in range(3)])
+        self.assertEqual(len(self._sony(self.e50, '1080i50')), 2)
+
     def test_the_desk_question_is_asked_only_for_fast_progressive_sources(self):
         """The app asks "Is the desk 50p or 50i?" only when the answer changes
         the output."""
