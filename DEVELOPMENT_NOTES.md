@@ -206,6 +206,29 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   K-Frame TGA, Sony TGA). All three must go, to match the engine (lifted
   2026-10-08). The Swift app never used the engine's notes.
 
+- **Matrix + independent review decisions (David, 2026-10-08, "go with all your
+  recommendations"):** found by the full conversion matrix (254 cases through
+  MacHuna 2.0's bridge) and an independent review of v1.11.0..v1.12.0.
+  - **A. Progressive at a different rate is rate-converted** (frames dropped or
+    repeated so duration and audio stay right) on SWS, SWS to SWS and SWS to EIF,
+    as EIF output already did. Interlaced to interlaced at a different rate
+    (i50 to i59.94) is refused, as progressive to interlaced already was.
+  - **B. Interlaced TGA sequence to a 25/30p SWS** gives one deinterlaced frame per
+    interlaced frame (it doubled the frames and played at half speed).
+  - **C. A keyless EIF to SWS writes no key plane** ("no key in, no key out"): an
+    EIF whose key is fully opaque throughout counts as keyless.
+  - **D. EIF to SWS honours the chosen standard** where it can: 25fps EIF to
+    1080p25 or 1080i50 (woven frames as they are); 50fps EIF to 1080p50, or
+    1080i50 by weaving pairs; other progressive rates rate-converted per A;
+    other interlaced rates refused.
+  - **E. Dual-mono MOVs** (two mono audio tracks): track 1 is left, track 2 right.
+  - **F. A split SWS (over 4GB) is written without audio**, says so in the log,
+    and its header tells the truth (no audio claimed).
+  - Plus, no decision needed: the SWS-to-SWS i-to-i double weave, the EIF+SWS
+    folder scan crash on unreadable `.sws` (my v1.12.0 fault), the SWS header
+    total size with audio (my v1.12.0 fault), the Tk app marking a cancelled EIF
+    row done, and deleting a partial `.eif` after a failure as well as a cancel.
+
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour
