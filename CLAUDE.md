@@ -128,7 +128,7 @@ Results are in `DEVELOPMENT_NOTES.md` from "KNOCKOUT_WIPE round-trip RESULTS" on
 
 **Lessons for the next desk session:** run from source, not `dist/`. Check the desk's format before planning tests; after changing it, switch back and forth until a known-good clip plays correctly (until then every 25fps clip played double speed with a green bar). Image Store sequence import needs "Sequence" selected. A desk's own export is the best reference there is - get one from a known source first.
 
-**Still needs hardware:** P to I field order on a genuine 1080i **Kahuna** (files waiting in `~/Documents/DNS Vision/Wipes/MacHuna/DESK TESTS/`). Sony TGA has never been loaded on a Sony desk in testing; its warning was lifted on David's judgement (2026-10-08).
+**Still needs hardware:** the full, current list is in `DEVELOPMENT_NOTES.md` -> Roadmap -> "STILL UNTESTED ON HARDWARE". In short: the v1.12.x changes to SWS routes, anything at 59.94/60, and TFF field order on a genuine 1080i **Kahuna**; Sony TGA on a Sony desk (never loaded; warning lifted on David's judgement 2026-10-08).
 
 ## Key constraints
 
