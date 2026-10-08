@@ -1516,10 +1516,12 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         stereo = _source_stereo24(input_path) if include_audio else None
         header = _build_eif_header(clip_name, frame_count, fps,
                                    has_audio=stereo is not None)
+        output_open = [False]
         try:
             key_fh = open(key_path, 'rb') if key_path else None
             try:
-                with open(dest_path, 'wb') as out, open(fill_v210, 'rb') as fill_fh:
+                with open(fill_v210, 'rb') as fill_fh, open(dest_path, 'wb') as out:
+                    output_open[0] = True   # only now is the old file overwritten
                     out.write(header)
                     for i in range(frame_count):
                         if cancel_event and cancel_event.is_set():
@@ -1537,7 +1539,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                 if key_fh:
                     key_fh.close()
         except BaseException:
-            _discard_failed_eif(dest_path, log)
+            if output_open[0]:   # a failure before that leaves the old file alone
+                _discard_failed_eif(dest_path, log)
             raise
         _settle_eaf(dest_path, stereo, frame_count, fps, log)
 
@@ -1569,8 +1572,10 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
         f" → {os.path.basename(dest_path)}")
     header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
+    output_open = [False]
     try:
         with open(dest_path, 'wb') as out_fh:
+            output_open[0] = True   # only now is the old file overwritten
             out_fh.write(header)
             for i, path in enumerate(tga_files):
                 if cancel_event and cancel_event.is_set():
@@ -1596,7 +1601,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                     log(f"  Frame {i + 1}/{frame_count}")
             out_fh.write(_eif_tail(fps))
     except BaseException:
-        _discard_failed_eif(dest_path, log)
+        if output_open[0]:   # a failure before that leaves the old file alone
+            _discard_failed_eif(dest_path, log)
         raise
     # A TGA sequence carries no sound, so clear any stale companion.
     _settle_eaf(dest_path, None, frame_count, fps, log)
@@ -1646,8 +1652,10 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
+    output_open = [False]
     try:
         with open(sws_path, 'rb') as sws_fh, open(dest_path, 'wb') as out:
+            output_open[0] = True   # only now is the old file overwritten
             out.write(header)
             for n, i in enumerate(src_index):
                 if cancel_event and cancel_event.is_set():
@@ -1677,7 +1685,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                     log(f"  Frame {n + 1}/{out_count}")
             out.write(_eif_tail(fps))
     except BaseException:
-        _discard_failed_eif(dest_path, log)
+        if output_open[0]:   # a failure before that leaves the old file alone
+            _discard_failed_eif(dest_path, log)
         raise
     _settle_eaf(dest_path, stereo, out_count, fps, log)
 

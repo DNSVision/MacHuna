@@ -2111,6 +2111,33 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertEqual(int(np.abs(sr[3000:]).max()), 0, 'right must be silent after track 2 ends')
         self.assertTrue(np.array_equal(el[:len(self.L16)], self.L16))
 
+    def test_a_failure_before_writing_does_not_delete_the_previous_eif(self):
+        """Second review: the failure cleanup wrapped the opening of the output
+        itself, so a read-only existing 0001.eif made the conversion fail AND
+        deleted that good file and its .eaf, logging a false message."""
+        import numpy as np, stat
+        d = self._dir('e_ro')
+        good = os.path.join(d, '0001.eif')
+        Path(good).write_bytes(b'previous good picture')
+        m.write_eaf(os.path.join(d, '0001.eaf'), np.ones((1920, 2), dtype=np.int64), 1, 25.0)
+        os.chmod(good, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        self.addCleanup(os.chmod, good, stat.S_IRUSR | stat.S_IWUSR)
+        sws = self._sws('stereo16', 'e_ro_sws')
+        from PIL import Image
+        t = os.path.join(self.tmp, 'ro_t.tga'); Image.new('RGBA', (1920, 1080)).save(t)
+        routes = {
+            'clip': lambda: m.convert_clip_to_eif(self.src['stereo24'], d, log=lambda *a: None, out_name='0001'),
+            'sws': lambda: m.convert_sws_to_eif(sws, d, log=lambda *a: None, out_name='0001'),
+            'tga': lambda: m.convert_tga_seq_to_eif([t], d, 'T', 25.0, log=lambda *a: None, out_name='0001'),
+        }
+        for route, run in routes.items():
+            with self.subTest(route=route):
+                with self.assertRaises(PermissionError):
+                    run()
+                self.assertTrue(os.path.exists(good), 'the previous .eif was deleted')
+                self.assertEqual(Path(good).read_bytes(), b'previous good picture')
+                self.assertTrue(os.path.exists(os.path.join(d, '0001.eaf')), 'the previous .eaf was deleted')
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
