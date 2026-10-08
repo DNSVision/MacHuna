@@ -604,6 +604,18 @@ def write_sws(dest_path: str,
     total      = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
     if split_fat32 and total > FAT32_LIMIT:
+        if audio_raw:
+            # Decision F (David, 2026-10-08): the split layout's audio is unknown,
+            # so a split clip carries none. Say so, and stop the header claiming
+            # audio it does not contain (it used to, silently).
+            header = bytearray(header)
+            struct.pack_into('>H', header, 0x1C2, 0)
+            struct.pack_into('>I', header, 0x1E8, 0)
+            struct.pack_into('>I', header, 0x1EC, 0)
+            header = bytes(header)
+            log("  NOTE: over 4GB, so this clip is split - and a split SWS cannot "
+                "carry audio. Written without audio. Keep clips with sound under "
+                "the split size.")
         _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log)
     else:
         with open(dest_path, 'wb') as out:

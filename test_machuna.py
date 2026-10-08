@@ -1982,6 +1982,26 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertTrue(np.array_equal(got[:, 0], self.L16 << 8), 'EIF left is not track 1')
         self.assertTrue(np.array_equal(got[:, 1], self.R16 << 8), 'EIF right is not track 2')
 
+    def test_a_split_sws_says_it_has_no_audio_and_the_log_says_why(self):
+        """Decision F (David, 2026-10-08): a split SWS (over 4GB) cannot carry
+        audio - the split layout's audio is unknown - so it is written without,
+        the log says so, and the header no longer claims audio it lacks."""
+        eif = self._eif('stereo24', 'split_src')
+        d = self._dir('split_out')
+        lines = []
+        old_limit = m.FAT32_LIMIT
+        m.FAT32_LIMIT = 1024 * 1024          # force a split on a small clip
+        try:
+            m.convert_eif_to_sws(eif, 5, d, split_fat32=True, log=lines.append)
+        finally:
+            m.FAT32_LIMIT = old_limit
+        chunks = sorted(Path(d, '5.SWS').glob('01_OF_*'))
+        self.assertTrue(chunks, 'the clip should have been split')
+        self.assertFalse(m.HulaSWSHeader(str(chunks[0])).has_audio,
+                         'a split SWS must not claim audio it does not contain')
+        self.assertTrue(any('audio' in l.lower() and 'split' in l.lower() for l in lines),
+                        'the log must say the audio was left out')
+
     def test_mono_to_sws_goes_to_both_kahuna_channels(self):
         """Decision 2026-10-08. v1.11.0 put mono on the left only."""
         import numpy as np
