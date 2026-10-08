@@ -4011,3 +4011,71 @@ class TestThirdReviewFixes(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.convert_sws_to_sws(src, 2, out, '1080p50', split_fat32=False, log=lambda *a: None)
         self.assertEqual(os.listdir(out), [])
+
+
+class TestFiftyNineNinetyFourAndSixtyAreOneFamily(unittest.TestCase):
+    """David, 2026-10-08: 59.94 and 60 are one family everywhere, so
+    interlaced 59.94 material may go to 1080i60 (and 60 to 1080i59.94) as
+    59.94p already weaves into 1080i60. Frames pass through untouched; the
+    clip plays 0.1% fast (or slow), and the log says so."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _mov(self, name, rate, interlaced, n=6):
+        import subprocess
+        out = os.path.join(self.tmp, name + '.mov')
+        extra = ['-vf', 'setfield=tff', '-flags', '+ilme+ildct'] if interlaced else []
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        f'testsrc=size=1920x1080:rate={rate}', '-f', 'lavfi', '-i', 'sine=sample_rate=48000',
+                        '-frames:v', str(n), '-t', '0.25', *extra,
+                        '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', out], check=True)
+        return out
+
+    def _sws(self, src, std, tag, logs):
+        d = os.path.join(self.tmp, tag); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard=std, include_audio=True, split_fat32=False,
+                       log=lambda *a: logs.append(' '.join(map(str, a))))
+        return os.path.join(d, '1.SWS')
+
+    @staticmethod
+    def _planes(sws):
+        h = m.HulaSWSHeader(sws)
+        b = Path(sws).read_bytes()
+        return h, b[h.data_offset:h.data_offset + h.plane_size * h.frame_count]
+
+    def test_a_2997i_clip_goes_to_1080i60_frame_for_frame(self):
+        logs = []
+        sws = self._sws(self._mov('i2997', '30000/1001', True), '1080i60', 'c', logs)
+        h = m.HulaSWSHeader(sws)
+        self.assertEqual((h.frame_count, h.fps), (6, 30.0))
+        self.assertEqual(len(_sws_audio(sws)), 6 * 1600)
+        self.assertTrue(any('0.1% fast' in l for l in logs), logs)
+
+    def test_interlaced_sws_crosses_between_5994_and_60_untouched(self):
+        for src_std, rate, out_std, word in (('1080i5994', '30000/1001', '1080i60', 'fast'),
+                                             ('1080i60', '30', '1080i5994', 'slow')):
+            with self.subTest(src=src_std, out=out_std):
+                logs = []
+                src = self._sws(self._mov('s' + src_std, rate, True), src_std, 'src' + src_std, [])
+                d = os.path.join(self.tmp, 'o' + out_std); os.makedirs(d)
+                out = m.convert_sws_to_sws(src, 2, d, out_std, split_fat32=False,
+                                           log=lambda *a: logs.append(' '.join(map(str, a))))
+                hs, ps = self._planes(src)
+                ho, po = self._planes(out)
+                self.assertEqual(ho.frame_count, hs.frame_count)
+                self.assertTrue(po == ps, 'the frames must pass through untouched')
+                self.assertEqual(len(_sws_audio(out)), ho.frame_count * round(48000 / ho.fps))
+                self.assertTrue(any(f'0.1% {word}' in l for l in logs), logs)
+
+    def test_the_existing_5994p_weave_into_1080i60_now_says_so(self):
+        logs = []
+        self._sws(self._mov('p5994', '60000/1001', False), '1080i60', 'w', logs)
+        self.assertTrue(any('0.1% fast' in l for l in logs), logs)
+
+    def test_other_interlaced_rates_are_still_refused(self):
+        with self.assertRaises(ValueError):
+            self._sws(self._mov('i25', '25', True), '1080i5994', 'r', [])

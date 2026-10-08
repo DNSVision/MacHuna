@@ -307,7 +307,7 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
       the end, so sync holds for the whole clip; the rounding is about 15 ms of
       extra silence per minute, at the end. UNCONFIRMED against K-Watch: there is
       no 59.94 K-Watch reference SWS, and the Kahuna has never played one.
-    - **OPEN QUESTION for David (found by the matrix, 2026-10-08):** decision (a)
+    - **ANSWERED - David, 2026-10-08: "yes, allow both please".** Interlaced 59.94 <-> 60 now passes through untouched (`_family_note`), logged as 0.1% fast/slow; the weave logs it too. Was: decision (a)
       makes 59.94p WEAVE into 1080i60 (one family), but an existing 1080i59.94
       SWS is REFUSED for 1080i60, and so is a 29.97i clip (interlaced to another
       interlaced rate uses a strict 0.01fps test). Both give the same 0.1% speed

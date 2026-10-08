@@ -174,6 +174,16 @@ def _p_to_i_field_map(source_fps: float, video_standard: str,
         f"conversion — convert the source to {field_fps:.0f}p (or {frame_fps:.0f}p) first.")
 
 
+def _family_note(src_fps: float, out_fps: float):
+    """59.94 and 60 are one family (David, 2026-10-08): material at one may go
+    to a standard at the other with its frames untouched, playing 0.1% fast or
+    slow - invisible on a clip. Returns the log line saying so, or None."""
+    if abs(src_fps - out_fps) < 0.01 or abs(src_fps - out_fps) > 0.5:
+        return None
+    return (f"  Note: {src_fps:.2f}fps material on a {out_fps:.2f}fps standard - plays "
+            f"0.1% {'fast' if out_fps > src_fps else 'slow'} (59.94 and 60 are one family)")
+
+
 def _exact_fps(fps: float):
     """A frame rate as an exact fraction: 30000/1001 and 60000/1001 for 29.97
     and 59.94 (and 24000/1001), so frame arithmetic never drifts."""
@@ -1027,6 +1037,9 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             vf_tinterlace, output_frame_count = '', 1
             log("  A single frame - kept as it is (nothing to weave)")
         log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
+        note = _family_note(fps / 2, output_fps)
+        if note:
+            log(note)
     elif do_i_to_p:
         # Deinterlace interlaced source to progressive output.
         # The SWS format variant determines playback fps, so we must produce the
@@ -1049,6 +1062,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             vf_tinterlace      = ''
             output_frame_count = frame_count
             output_fps         = fps
+        elif info['is_interlaced'] and _family_note(fps, target_fps):
+            # 59.94 and 60 are one family (David, 2026-10-08): the woven
+            # frames go through as they are.
+            vf_tinterlace      = ''
+            output_frame_count = frame_count
+            output_fps         = target_fps
+            log(_family_note(fps, target_fps))
         elif info['is_interlaced']:
             # Interlaced to another interlaced rate is a field-rate standards
             # conversion; refused, as progressive to interlaced already is.
@@ -1467,13 +1487,15 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         # different frames (matrix + review, 2026-10-08). Same rate passes
         # through; another interlaced rate is a field-rate standards
         # conversion, refused as progressive-to-interlaced is.
-        if not same_rate:
+        if not same_rate and not _family_note(src.fps, out_fps):
             raise ValueError(
                 f"{Path(sws_path).name} is {src.standard} and cannot become "
                 f"{video_standard}: MacHuna does not convert one interlaced rate "
                 f"to another. Convert the source to the target rate first.")
         route = 'passthrough'
         log(f"  {stem}: {src.standard} → {video_standard} (interlaced, passed through)")
+        if not same_rate:
+            log(_family_note(src.fps, out_fps))
     elif src_interlaced:
         route = 'deinterlace'
         log(f"  {stem}: {src.standard} → {video_standard} (interlaced→progressive via yadif)")
@@ -1481,6 +1503,8 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         # Weave only if the source runs at the field rate; a same-rate or
         # cross-rate source is refused, not doubled.
         _p_to_i_field_map(src.fps, video_standard)
+        if _family_note(src.fps / 2, out_fps):
+            log(_family_note(src.fps / 2, out_fps))
         route = 'weave' if n >= 2 else 'passthrough'
         log(f"  {stem}: {src.standard} → {video_standard} (progressive→interlaced TFF)"
             if n >= 2 else f"  {stem}: a single frame - kept as it is (nothing to weave)")
@@ -1513,6 +1537,8 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         plane_size = _v210_plane_size(W, H)
 
         rate = src.fps    # the rate of the frames in hand
+        if route == 'passthrough' and _family_note(src.fps, out_fps):
+            rate = out_fps    # 59.94 <-> 60: frames go through untouched
         if route == 'deinterlace':
             vf, rate, _t = _i_to_p_plan(src.fps, video_standard, parity='tff')
             if rescale:
