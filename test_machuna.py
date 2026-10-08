@@ -2157,6 +2157,37 @@ class TestEifEncodingFromRgb(unittest.TestCase):
                 self.assertLess(float(np.abs(Y - ry).mean()), 0.2)
 
 
+class TestEifFromAKeyedClipOfAnySize(unittest.TestCase):
+    """Found by the full conversion matrix, 2026-10-08, and present since EIF
+    output began: a MOV with a key that was not already 1920x1080 crashed on
+    the way to EIF. The picture was scaled to 1920x1080 but the key was
+    extracted at the source size, so the key ran out a few lines in."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_small_keyed_clip_becomes_an_eif_with_its_key_in_place(self):
+        import numpy as np, subprocess
+        src = os.path.join(self.tmp, 'small.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-t', '0.12', '-f', 'lavfi',
+                        '-i', 'testsrc2=size=192x108:rate=25', '-vf',
+                        "format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,96),4095,0)'",
+                        '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', src], check=True)
+        eif = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0001')
+        h = m.EIFHeader(eif)
+        self.assertEqual(h.frame_count, 3)
+        with open(eif, 'rb') as f:
+            f.seek(h.video_start + 3 * m._EIF_UNIT_BYTES)       # second frame
+            w = np.frombuffer(f.read(3 * m._EIF_UNIT_BYTES), dtype='<u4').reshape(1080, 1920)
+        key = ((w >> 20) & 0x3FF).astype(int)
+        # Opaque on the left half, clear on the right, scaled with the picture.
+        self.assertGreater(key[540, 400], 900)
+        self.assertLess(key[540, 1500], 100)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 

@@ -487,6 +487,11 @@ def convert_to_v210(input_path: str, output_path: str,
         # Extract alpha, convert to clean limited-range luma (64=black, 940=white)
         # vf_extra (e.g. tinterlace) must be appended so key frame count matches fill.
         vf_key = 'alphaextract,format=yuv420p,colorspace=bt709,scale=out_range=tv'
+        # Scale the key exactly as the fill. Without this a keyed source that was
+        # not already the output size gave a source-sized key under a scaled
+        # fill, and EIF output crashed reading past its end (found 2026-10-08).
+        if width and height:
+            vf_key += f',scale={width}:{height}'
         if vf_extra:
             vf_key += f',{vf_extra}'
         cmd_key = [ffmpeg, '-y', '-i', input_path,
@@ -496,6 +501,8 @@ def convert_to_v210(input_path: str, output_path: str,
         if result.returncode != 0 or not os.path.exists(alpha_path) or os.path.getsize(alpha_path) == 0:
             # Simpler fallback
             vf_key_fallback = 'alphaextract'
+            if width and height:
+                vf_key_fallback += f',scale={width}:{height}'
             if vf_extra:
                 vf_key_fallback += f',{vf_extra}'
             cmd_key = [ffmpeg, '-y', '-i', input_path,

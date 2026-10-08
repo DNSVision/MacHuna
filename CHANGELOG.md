@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased — found by the full conversion matrix (to become v1.12.1)
+
+### Fixed
+- **A keyed clip that was not already 1920×1080 crashed on the way to K-Frame EIF.** The picture was scaled to 1920×1080 but the key was extracted at the source's own size, so the key ran out a few lines in. Present since EIF output began; never seen because every desk and test file had been full HD. The key is now scaled exactly as the picture. Full-HD sources are unchanged (KNOCKOUT_WIPE's EIF is identical to the desk-proven one apart from the audio flag).
+
+### Corrected
+- The v1.12.0 entry on Sony TGA overstated the fix for video clips; see the corrected wording there.
+
+---
+
 ## v1.12.0 — 2026-10-08
 
 **The K-Frame desk-session release.** Everything here comes from testing on a live Grass Valley K-Frame on 7 October 2026, or from following up what that testing found. K-Frame EIF and K-Frame TGA are now confirmed on hardware, EIF output carries audio, and every hardware warning is gone. **25fps (50i) EIF files from earlier versions play too fast on a K-Frame: convert them again.**
@@ -28,7 +38,7 @@ All notable changes to MacHuna are documented here.
 - **K-Frame TGA no longer halves an interlaced source.** With a 1080i standard, a MOV that was already interlaced was woven a second time: half the frames, each mixing fields from two different moments. K-Frame TGA now works its output out from the source (decision 44): only a progressive source at 50fps or more is woven, for a 50i desk; anything already interlaced, or at 25fps, goes through frame for frame. TNTS 50i at 1080i50 now gives 30 frames, **byte-identical to the TGAs that loaded correctly on the K-Frame on 7 October**, where it used to give 15.
   - A **25fps EIF** to K-Frame TGA on an interlaced standard used to be refused with an error; it now goes through frame for frame, since a 25fps EIF already holds woven 50i.
   - SWS sources already followed this rule and are unchanged.
-  - **Sony TGA gets the same fix** (David, 8 October): an interlaced MOV or a 25fps EIF goes through frame for frame instead of being woven again or refused. TNTS 50i to Sony at 1080i50 now gives `TNTS0000.tga` to `TNTS0029.tga`, 30 frames where it gave 15. A 50p source is still woven, honouring the TFF/BFF toggle. Sony output remains unconfirmed on a Sony desk.
+  - **Sony TGA gets the same rule** (David, 8 October). In practice this changes **EIF to Sony TGA**: a 25fps EIF on an interlaced standard now goes through frame for frame instead of being refused. Video clips to Sony TGA were already handled correctly by both apps, which route them separately (corrected 8 October: an earlier version of this entry said interlaced clips to Sony were being woven twice; that was true only of the engine function, which neither app used for that route). Sony output remains unconfirmed on a Sony desk.
   - New `kframe_tga_asks_desk_format(path)` tells the app when to ask "Is the desk 50p or 50i?": only for a progressive source at 50fps or more. It applies to Sony TGA too.
 - **An interlaced TGA sequence becomes an EIF the way a K-Frame stores 50i: the woven frames as they are, at 25fps.** With **TGA source interlaced** ticked, this route used to deinterlace to 50fps progressive, which disagreed with the MOV route and with the desk itself: the K-Frame's own import of a 50i MOV stored woven 25fps frames, and MacHuna's woven 25fps EIF played correctly on a 1080i desk on 7 October. Non-1080 interlaced frames are now scaled one field at a time, so the two fields never blend. Progressive TGA sequences are byte-identical to before.
 
