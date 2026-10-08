@@ -158,6 +158,15 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   EIF to MOV) is reduced to 8-bit by `read_eaf_stereo`. SWS to EIF and MOV to EIF
   carry no audio at all until `.eaf` writing exists.
 
+- **Interlaced TGA sequence to EIF disagrees with the desk (found 2026-10-08,
+  reading the code).** `convert_tga_seq_to_eif(source_interlaced=True)`
+  deinterlaces to a 50fps progressive EIF. The desk stores 50i as woven 25fps
+  frames: its own import of TNTS 50i.mov did, and MacHuna's woven 25fps 0912
+  played correctly on a 1080i 25Hz desk (2026-10-07). `convert_clip_to_eif`
+  already passes interlaced material through woven, so the two routes disagree,
+  and the desk has now said which is right. This settles the old "Interlaced EIF
+  reconciliation" item: the TGA route should write woven 25fps. Not yet changed.
+
 - **Release shape for the desk fixes (2026-10-08):** each engine fix is its own
   commit; one engine release (v1.12.0) at the end with the full checklist, then
   the Swift `engine/` pin moves once. **USER_MANUAL must gain the ProRes colour

@@ -4,6 +4,13 @@
 > moved to **`DNSVision/MacHuna-Swift`**, a native SwiftUI interface that drives
 > this engine. **`machuna.py` is frozen: not a line of it changes**, by David's
 > standing instruction, so that every K-Frame desk finding is fixed in one place.
+>
+> **2026-10-08: the K-Frame desk session has happened (2026-10-07), and its
+> fixes are now going into `machuna.py` at David's direction.** That is the
+> exception the freeze was kept for: desk findings only, each its own commit with
+> a fail-first outcome test, released together as v1.12.0, then the Swift
+> `engine/` pin moves. Nothing else changes here. The list is the "Unreleased"
+> section of `CHANGELOG.md` and the roadmap in `DEVELOPMENT_NOTES.md`.
 > Documentation here may still be updated. Read
 > `MacHuna-Swift/DESIGN_DECISIONS.md` before doing any Swift work, and see
 > "Swift Rewrite" in `HANDOVER_NOTES.md`.
