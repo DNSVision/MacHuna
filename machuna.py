@@ -3584,11 +3584,26 @@ def _hula_extract_audio_stereo(sws_path: str, header: HulaSWSHeader,
     return stereo_path
 
 
+def sony_clip_name(name) -> str:
+    """A Sony clip name: exactly four ASCII letters or digits, uppercased.
+
+    Decision M (David, 2026-10-08). It names the folder and starts every frame
+    name (WIPE0000.tga). A shorter name used to be padded with spaces in the
+    frame names and a longer one cut short without a word, so both are now
+    refused before anything is written."""
+    v = (name or '').strip()
+    if len(v) != 4 or not (v.isascii() and v.isalnum()):
+        raise ValueError(f"Sony clip names are exactly 4 letters or digits - "
+                         f"{v!r} is not one")
+    return v.upper()
+
+
 def _hula_convert_tga(sws_path: str, dest_parent: str,
                       target: str, clip_name: str = 'WIPE', log=print):
     """Convert one SWS to a TGA sequence subfolder."""
     stem     = Path(sws_path).stem
-    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
@@ -3615,7 +3630,6 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
             if target == HULA_TARGET_KFRAME_TGA:
                 filename = f"{i + 1:04d}.tga"
             else:  # Sony TGA
-                cn = clip_name.upper()[:4].ljust(4)
                 filename = f"{cn}{i:04d}.tga"
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
@@ -3632,10 +3646,10 @@ def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
         target = HULA_TARGET_KFRAME_TGA
     h    = EIFHeader(eif_path)
     stem = Path(eif_path).stem
-    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
-    cn = clip_name.upper()[:4].ljust(4)
     log(f"  {h.frame_count} frame(s) @ {h.fps:.0f}fps  clip: {h.clip_name or stem}")
     log(f"  Decoding {h.frame_count} frame(s)...")
     with open(eif_path, 'rb') as f:
@@ -3667,10 +3681,10 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
             f"interlaced output requires a 50fps source."
         )
     stem      = Path(eif_path).stem
-    folder    = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    cn        = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    folder    = cn or stem
     dest_dir  = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
-    cn        = clip_name.upper()[:4].ljust(4)
     n         = h.frame_count
     out_count = n // 2
     if n % 2:
@@ -3712,7 +3726,8 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     K-Frame TGA confirmed on a live K-Frame, 2026-10-07.
     """
     stem     = Path(sws_path).stem
-    folder   = clip_name.upper()[:4] if target == HULA_TARGET_SONY_TGA else stem
+    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
     header   = HulaSWSHeader(sws_path)
@@ -3730,7 +3745,6 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     fill_off = header.data_offset
     key_off  = header.data_offset + header.plane_size * n
     log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
-    cn = clip_name.upper()[:4].ljust(4)
     with open(sws_path, 'rb') as f:
         for i in range(out_count):
             f.seek(fill_off + (2 * i) * header.plane_size)
@@ -3807,10 +3821,10 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     """
     stem      = Path(mov_path).stem
     is_sony   = target == HULA_TARGET_SONY_TGA
-    folder    = clip_name.upper()[:4] if is_sony else stem
+    cn        = sony_clip_name(clip_name) if is_sony else None
+    folder    = cn or stem
     dest_dir  = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
-    cn        = clip_name.upper()[:4].ljust(4) if is_sony else None
     interlaced = 'i' in standard
     if interlaced and not kframe_tga_asks_desk_format(mov_path):
         # Only a progressive source at 50fps or more is woven. Weaving an
@@ -4479,9 +4493,10 @@ def normalise_bespoke_value(raw, mode: str):
             v = v[:-4]
         return v or None
     if mode == BESPOKE_MODE_SONY:
-        if len(v) != 4 or not v.isalnum():
+        try:
+            return sony_clip_name(v)
+        except ValueError:
             return None
-        return v.upper()
     if not v.isdigit():
         return None
     n = int(v)

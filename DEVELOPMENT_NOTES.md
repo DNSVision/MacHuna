@@ -210,9 +210,17 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     include_audio=...)`.
   - Run `--selftest` after the move: it pins some behaviour against the engine.
   - `_to_eif` and `_to_sws` (EIF source): a cancelled conversion now returns None
-    (the partial EIF is deleted; an EIF-to-SWS writes nothing). The bridge
+    (nothing is written and any previous `.eif`/`.eaf` pair is kept, decision L;
+    an EIF-to-SWS writes nothing). The bridge
     ignores return values today, so cancelled rows show "done" with an empty
     path. Report them as cancelled (second review, 2026-10-08).
+  - The bridge's own MOV/TGA-sequence to TGA routes (`_to_tga_seq`, ~lines
+    516-610) duplicate engine work and miss three Fable-pass fixes. Either call
+    the engine (`_hula_convert_mov_to_tga`) or apply each: read TGA input through
+    `m._tga_input_args` (TGAs are never guessed - a byte-9 frame was misread as
+    CD+G); Sony names through `m.sony_clip_name` (decision M - it builds
+    `f"{clip_name}%04d.tga"` itself); untagged HD as BT.709 and 1920x1080 32-bit
+    RGBA output (decision I).
   - A still sent to K-Frame TGA should be refused cleanly ("stills convert to
     Kahuna SWS only"); today it is routed as an extraction, fails, and leaves an
     empty folder.

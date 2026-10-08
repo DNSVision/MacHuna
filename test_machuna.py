@@ -3589,3 +3589,68 @@ class TestExact5994(unittest.TestCase):
         n = len(ref)
         self.assertTrue(np.array_equal(a[:n, 0], ref))
         self.assertEqual(int(np.abs(a[n:]).max()), 0)
+
+
+class TestSonyNamesAreExactlyFour(unittest.TestCase):
+    """Decision M (David, 2026-10-08): a Sony clip name is exactly four
+    letters or digits. A shorter one used to be padded with spaces in the
+    frame names ('AB  0000.tga') under a folder called 'AB'; a longer one
+    was cut short without a word."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        import subprocess
+        self.mov = os.path.join(self.tmp, 'src.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=50', '-frames:v', '4',
+                        '-c:v', 'prores_ks', self.mov], check=True)
+        d = os.path.join(self.tmp, 'sws'); os.makedirs(d)
+        m.convert_clip(self.mov, 1, d, video_standard='1080p50', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        self.sws = os.path.join(d, '1.SWS')
+        self.eif = m.convert_clip_to_eif(self.mov, d, log=lambda *a: None, out_name='0001')
+
+    def test_the_rule(self):
+        self.assertEqual(m.sony_clip_name('wipe'), 'WIPE')
+        self.assertEqual(m.sony_clip_name(' AB12 '), 'AB12')
+        for bad in ('', 'AB', 'ABC', 'ABCDE', 'AB D', 'AB-1', 'ÉCLA', None):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                m.sony_clip_name(bad)
+        self.assertIsNone(m.normalise_bespoke_value('ÉCLA', m.BESPOKE_MODE_SONY))
+
+    def _run(self, src, name, std='1080p50'):
+        out = os.path.join(self.tmp, 'out_' + Path(src).suffix[1:] + std + (name or '_'))
+        logs = []
+        m._hula_run_batch([src], out, m.HULA_TARGET_SONY_TGA, standard=std,
+                          clip_name=name, log=lambda *a: logs.append(' '.join(map(str, a))))
+        return out, logs
+
+    def test_every_route_refuses_a_short_or_long_name_and_writes_nothing(self):
+        for src in (self.sws, self.eif, self.mov):
+            for std in ('1080p50', '1080i50'):
+                for name in ('AB', 'ABCDE'):
+                    with self.subTest(src=Path(src).suffix, std=std, name=name):
+                        out, logs = self._run(src, name, std)
+                        self.assertEqual(os.listdir(out), [], 'something was written')
+                        self.assertTrue(any('4' in l and 'name' in l.lower() for l in logs), logs)
+
+    def test_every_route_names_folder_and_frames_from_a_good_name(self):
+        for src in (self.sws, self.eif, self.mov):
+            for std in ('1080p50', '1080i50'):
+                with self.subTest(src=Path(src).suffix, std=std):
+                    out, _ = self._run(src, 'wipe', std)
+                    self.assertEqual(os.listdir(out), ['WIPE'])
+                    frames = sorted(os.listdir(os.path.join(out, 'WIPE')))
+                    self.assertTrue(frames)
+                    self.assertTrue(all(len(f) == 12 and f.startswith('WIPE') for f in frames), frames)
+
+    def test_a_short_shared_name_does_not_stop_a_kframe_tga_job(self):
+        for src in (self.sws, self.eif, self.mov):
+            with self.subTest(src=Path(src).suffix):
+                out = os.path.join(self.tmp, 'kf_' + Path(src).suffix[1:])
+                m._hula_run_batch([src], out, m.HULA_TARGET_KFRAME_TGA, standard='1080i50',
+                                  clip_name='AB', log=lambda *a: None)
+                self.assertEqual(len(os.listdir(out)), 1)
