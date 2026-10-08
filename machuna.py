@@ -441,6 +441,21 @@ def get_video_info(input_path: str) -> dict:
             # Interlace detection
             field_order = stream.get('field_order', 'progressive')
             info['is_interlaced'] = field_order not in ('progressive', 'unknown', '')
+            # Field-coded (PAFF) H.264 can report r_frame_rate at the FIELD rate
+            # (50/1 for 25i) with an average of 25/1. For interlaced material a
+            # rate exactly twice the average is the field rate; use the frame
+            # rate, or v1.12.1's interlaced-rate refusal would reject it
+            # (second review, 2026-10-08).
+            if info['is_interlaced']:
+                try:
+                    an, ad = stream.get('avg_frame_rate', '0/0').split('/')
+                    avg = float(an) / float(ad) if float(ad) else 0.0
+                    if avg and abs(info['fps'] - 2 * avg) < 0.01 * avg:
+                        info['fps'] = avg
+                        if not nb:
+                            info['frame_count'] = max(1, int(dur * avg))
+                except Exception:
+                    pass
             # TGA files always have alpha in our use case
             if input_path.lower().endswith('.tga'):
                 info['has_alpha'] = True

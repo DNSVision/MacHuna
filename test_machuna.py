@@ -2661,6 +2661,42 @@ class TestEifToSwsHonoursTheStandard(unittest.TestCase):
         self.assertTrue(m.HulaSWSHeader(self._sws(self._eif(25, 2, True), '1080p25')).has_key)
 
 
+class TestProbeFrameRate(unittest.TestCase):
+    """Second review, 2026-10-08 (suspected, not reproduced): field-coded
+    (PAFF) H.264 25i can report r_frame_rate at the FIELD rate (50/1) with an
+    average of 25/1. Since v1.12.1 refuses interlaced material at another
+    interlaced rate, such a file would be wrongly refused for 1080i50."""
+
+    def _probe(self, streams):
+        import json, types
+        real = m.subprocess.run
+        def fake(cmd, **kw):
+            return types.SimpleNamespace(stdout=json.dumps({'streams': streams, 'format': {'duration': '1.0'}}),
+                                         returncode=0)
+        m.subprocess.run = fake
+        try:
+            return m.get_video_info('x.mp4')
+        finally:
+            m.subprocess.run = real
+
+    def test_field_rate_reporting_interlaced_h264_is_read_as_its_frame_rate(self):
+        info = self._probe([{'codec_type': 'video', 'width': 1920, 'height': 1080,
+                             'r_frame_rate': '50/1', 'avg_frame_rate': '25/1',
+                             'field_order': 'tt', 'pix_fmt': 'yuv420p'}])
+        self.assertTrue(info['is_interlaced'])
+        self.assertEqual(info['fps'], 25.0)
+
+    def test_progressive_and_ordinary_interlaced_rates_are_untouched(self):
+        for r, avg, fo, want in (('50/1', '25/1', 'progressive', 50.0),   # not interlaced: trust r
+                                 ('25/1', '25/1', 'tb', 25.0),
+                                 ('30000/1001', '30000/1001', 'tt', 30000 / 1001)):
+            info = self._probe([{'codec_type': 'video', 'width': 1920, 'height': 1080,
+                                 'r_frame_rate': r, 'avg_frame_rate': avg,
+                                 'field_order': fo, 'pix_fmt': 'yuv420p'}])
+            with self.subTest(r=r, field_order=fo):
+                self.assertAlmostEqual(info['fps'], want, places=4)
+
+
 REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
 
 
