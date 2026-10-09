@@ -12,7 +12,7 @@ A macOS application for converting video and still image files to the Grass Vall
 > base for the Windows fork. **v1.12.0 (2026-10-08) carries the fixes from the
 > K-Frame desk session of 2026-10-07, and v1.12.1 (the same day) the fixes from a
 > full conversion matrix, three reviews and a black-box pass**; MacHuna 2.1.0 and 2.2.0 (live
-> 2026-10-09) run this engine version. Everything below describes v1.12.3.
+> 2026-10-09) run this engine version. Everything below describes v1.12.4.
 
 MacHuna is a macOS application for broadcast graphics conversion. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 
@@ -31,7 +31,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Extracts `.SWS` files to K-Frame TGA or Sony TGA format
 - Fill and key (alpha) planes correctly encoded as v210 big-endian
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
-- Audio support -- SWS: 16-bit PCM, 16 channels, K-Watch channel mapping (L=Ch1, R=Ch3). K-Frame `.eaf`: 4 channels of 24-bit, L=Ch1, R=Ch2. Mono goes to both channels (v1.12.0)
+- Audio support -- SWS: 16-bit PCM in the K-Watch layout (L=Ch1, R=Ch2), confirmed by ear on a live Kahuna (v1.12.4; earlier versions' SWS audio played only its first eighth of a second on a desk - convert those again). K-Frame `.eaf`: 4 channels of 24-bit, L=Ch1, R=Ch2. Mono goes to both channels (v1.12.0)
 - Include/exclude audio option
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
@@ -205,7 +205,7 @@ EIF itself was confirmed on a live K-Frame on 2026-10-07. See `DEVELOPMENT_NOTES
 
 ## SWS Format
 
-The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endian fill and key video planes, with optional 16-channel PCM audio appended. MacHuna reverse-engineered this format from real K-Watch output and has been verified against a live Grass Valley Kahuna mainframe.
+The Kahuna `.SWS` format consists of a 512-byte header followed by v210 big-endian fill and key video planes, with optional PCM audio appended (8 big-endian slots a sample, the K-Watch layout). MacHuna reverse-engineered this format from real K-Watch output and has been verified against a live Grass Valley Kahuna mainframe.
 
 ## Roadmap
 

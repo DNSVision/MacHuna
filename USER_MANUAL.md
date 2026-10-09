@@ -1,4 +1,4 @@
-# MacHuna v1.12.3 — User Manual
+# MacHuna v1.12.4 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -502,13 +502,13 @@ MacHuna extracts audio from source files and embeds it in the `.SWS` file in K-W
 
 | | |
 |---|---|
-| Encoding | 16-bit signed little-endian PCM |
+| Encoding | 16-bit signed PCM, big-endian, one 4-byte slot per channel |
 | Sample rate | 48,000 Hz |
-| Channels | 16 channels interleaved |
-| Channel mapping | Ch1 = Left, Ch3 = Right, all others silent |
-| Samples per frame | 48000 ÷ fps (e.g. 960 samples at 50fps, 1920 at 25fps) |
+| Channels | 8 slots per sample (32 bytes) |
+| Channel mapping | Ch1 = Left, Ch2 = Right, all others silent |
+| Length | The header says exactly how many samples there are, and a Kahuna plays that many |
 
-The channel mapping (L=Ch1, R=Ch3) matches the K-Watch convention, confirmed by hex analysis of K-Watch reference files. MacHuna uses an explicit ffmpeg pan filter - a straight `-ac 16` upmix does not produce the correct layout.
+**Confirmed on a live Kahuna (9 October 2026), by ear.** This is the layout K-Watch writes. It was settled by comparing K-Watch conversions that play correctly on a Kahuna with the same sources, sample by sample. **Before v1.12.4, MacHuna wrote SWS audio in a different layout that a Kahuna played for only the first eighth of a second, at reduced quality: convert any SWS with sound made by an earlier version again.** The picture and key in those files were always fine. MacHuna still reads its older files correctly (in the player, and converting them to other formats).
 
 **Mono goes to both channels** (from v1.12.0). Earlier versions put a mono source on the left only. Stereo and multichannel sources are unchanged: the first two channels are left and right. **Dual mono** - two separate mono tracks, common in broadcast ProRes - is track 1 left, track 2 right (v1.12.1; before, track 2 was dropped).
 
@@ -694,7 +694,7 @@ This section is for support engineers and developers. It documents the SWS binar
 
 Reliable method: `aud_offset (0x1E8) > 0` AND `aud_fmt (0x1EC) == 0x03000000`.
 
-Do not rely on the audio frame size field at `0x1C2`. K-Watch writes `0x1680`, but third-party tools may write different values. MacHuna uses the offset and format flag fields for all audio detection.
+The four bytes at `0x1C0` are the **number of audio samples**, and a Kahuna plays that many and no more (confirmed 9 October 2026). Earlier versions of this manual called the last two of them an "audio frame size" with a fixed value of `0x1680`; that was one reference file's sample count, mistaken for a constant.
 
 ### 13.4 Playback Flags
 

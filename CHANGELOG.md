@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.12.4 — 2026-10-09
+
+**SWS audio now plays correctly on a Kahuna. Convert any SWS with sound made by an earlier version again.** Found by ear on a live Kahuna on 9 October 2026, and fixed and confirmed the same day.
+
+### Fixed
+- **Every MacHuna SWS with sound played only its first eighth of a second on a Kahuna**, at reduced quality, in every version until now. The picture and key were always fine. Two things were wrong, both from an old reading of a K-Watch reference file:
+  - **The header said the sound was 5,760 samples long**, whatever its real length. That was the length of one reference file's sound, mistaken for a constant, and a Kahuna plays exactly as many samples as the header says.
+  - **The sound was laid out differently from K-Watch's.** K-Watch writes each sample big-endian in four-byte slots, left on channel 1 and right on channel 2; MacHuna wrote 16 channels little-endian with left on 1 and right on 3. The old analysis had read K-Watch's file one byte out of step, where its samples look like the other layout.
+- Settled against K-Watch conversions of the same clips (made by a colleague of David's), which played in full on the same desk: MacHuna's sound now matches K-Watch's byte for byte. Then confirmed on the Kahuna: KNOCKOUT_WIPE, the K-Frame's own KNOCKOUT EIF converted to SWS, a stereo left/right test and a 4-second two-tone test all played in full, the right way round.
+- **MacHuna still reads SWS files made by its earlier versions correctly**, in the player and when converting them to EIF, MOV or another SWS. It now also reads K-Watch's SWS audio correctly; before, it heard roughly the top 8 bits of each sample.
+
+---
+
 ## v1.12.3 — 2026-10-08
 
 **Found by a regression run on real material** (David's TEST WIPES folder: ten 50p MOVs, a 50i MOV, a long H.264 clip with sound, a desk-made 50i EIF and four TGA sequences), converted through MacHuna 2.0's own bridge with the v1.11.0 engine and with this one, every difference then judged against the SOURCE, the desk or a recorded decision - never against the old engine. 85 conversions: 64 byte-identical, 20 different for reasons already in this changelog (each checked, several against the source itself), and one regression, fixed here.

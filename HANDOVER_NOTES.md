@@ -6,7 +6,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** tag `v1.12.3` - 2026-10-08 (v1.12.1, plus 59.94/60 as one family, plus the soft-key precision fix found by the regression run on real material). **v1.12.1 is the engine-soundness release** on top of v1.12.0 (the K-Frame desk-session release): a 324-case conversion matrix through MacHuna 2.0's bridge (273 pass every check, 51 refused on purpose, 0 rule breaks, now including 59.94p/29.97i), three independent reviews and a black-box pass by another model; decisions A-M in the roadmap. 312 tests. Built to `dist/` only; `/Applications` is MacHuna 2.0 and was not touched; nothing published.
+**Understanding baseline:** tag `v1.12.4` - 2026-10-09 (SWS audio fixed: K-Watch layout and true sample count, confirmed by ear on a Kahuna). Before that, tag `v1.12.3` - 2026-10-08 (v1.12.1, plus 59.94/60 as one family, plus the soft-key precision fix found by the regression run on real material). **v1.12.1 is the engine-soundness release** on top of v1.12.0 (the K-Frame desk-session release): a 324-case conversion matrix through MacHuna 2.0's bridge (273 pass every check, 51 refused on purpose, 0 rule breaks, now including 59.94p/29.97i), three independent reviews and a black-box pass by another model; decisions A-M in the roadmap. 312 tests. Built to `dist/` only; `/Applications` is MacHuna 2.0 and was not touched; nothing published.
 
 **MacHuna 2.2.0 is LIVE at dnsvision.tv (2026-10-09), pinned to `v1.12.3`** (2.1.0 brought the engine; 2.2.0 added the memory-stick eject, a Swift-only feature). Still needs hardware: the 2.1 SWS-route changes on a Kahuna, and Sony on a Sony desk. The Swift checklist is in `DEVELOPMENT_NOTES.md` (roadmap, "Swift bridge changes that MUST land with the engine pin move"): pass `include_audio` on the EIF routes and EIF to SWS, replace the bridge's own SWS-to-SWS routing with `convert_sws_to_sws`, remove `Item.swift`'s copy of the hardware warnings, update the Swift app's own manual to match, run `--selftest`. Then build decisions 42-44 (`MacHuna-Swift/DESIGN_DECISIONS.md`). That unblocks the promo film.
 
@@ -399,7 +399,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna (engine):** v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
+- **MacHuna (engine):** v1.12.4 (2026-10-09, SWS audio fixed and confirmed by ear on a Kahuna). Before that, v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
@@ -485,7 +485,7 @@ git push
 - Input formats: MOV, MP4, MXF, MKV, AVI, TGA sequences, PNG, BMP, JPG
 - Fill and key planes encoded as v210 big-endian
 - Ignore alpha/key option
-- Audio: 16-bit LE PCM, 16ch, 48kHz, L=Ch1 R=Ch3 (K-Watch mapping)
+- Audio: K-Watch layout, 32 bytes a sample in eight 4-byte slots, each [lead byte][16-bit sample, big-endian][0]; left in slot 1, right in slot 2, slots 3-8 silent; total sample count at 0x1C0 (uint32) (v1.12.4; the old 16ch LE L=Ch1/R=Ch3 layout was wrong - see DEVELOPMENT_NOTES 'Audio Format')
 - Auto play / Loop play flags
 - Large file support: >4GB split into 2GB FAT32-safe chunks
 - Built-in Video Player (fill, key, composite, audio meters) -- supports SWS, TGA sequences, MOV/MP4/MXF/AVI, and K-Frame EIF
@@ -610,7 +610,7 @@ Full table confirmed by K-Watch hex analysis (2026-05-09). Both fields required:
 - Use the pure numpy decoder. The `.copy()` before `byteswap()` is critical - do not remove it.
 
 ### Audio
-- Channel mapping confirmed by hex analysis of K-Watch reference files: L=Ch1, R=Ch3
+- ~~Channel mapping L=Ch1, R=Ch3 by hex analysis~~ WRONG: the analysis read K-Watch one byte out of step. Real layout (2026-10-09, by ear on a Kahuna): 32 bytes a sample in eight 4-byte slots, each [lead byte][16-bit sample, big-endian][0]; left in slot 1, right in slot 2, slots 3-8 silent; total sample count at 0x1C0 (uint32)
 - Standard ffmpeg -ac 16 upmix is wrong - MacHuna uses an explicit pan filter
 
 ### PyInstaller
