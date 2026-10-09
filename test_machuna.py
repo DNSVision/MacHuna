@@ -240,13 +240,19 @@ class TestAudioFields(unittest.TestCase):
 
     def test_no_audio_zeros_all_audio_fields(self):
         hdr = _make_header(has_audio=False)
-        self.assertEqual(_unpack('>H', hdr, 0x1C2), 0,  "audio frame size should be 0")
+        self.assertEqual(_unpack('>I', hdr, 0x1C0), 0,  "audio sample count should be 0")
         self.assertEqual(_unpack('>I', hdr, 0x1E8), 0,  "audio offset should be 0")
         self.assertEqual(_unpack('>I', hdr, 0x1EC), 0,  "audio format flag should be 0")
 
-    def test_has_audio_sets_frame_size(self):
-        hdr = _make_header(has_audio=True)
-        self.assertEqual(_unpack('>H', hdr, 0x1C2), 0x1680)
+    def test_has_audio_sets_the_sample_count(self):
+        """0x1C0 (uint32) is the total number of audio samples - K-Watch wrote
+        81,600 for KNOCKOUT and 192,000 for a 4 s probe, and a Kahuna plays only
+        that many (2026-10-09). MacHuna wrote a constant 0x1680 at 0x1C2, so the
+        desk played the first 5,760 samples of every clip."""
+        hdr = _make_header(has_audio=True, frame_count=85, fps=50.0)
+        self.assertEqual(_unpack('>I', hdr, 0x1C0), 85 * 960)
+        hdr = _make_header(has_audio=True, frame_count=10, fps=25.0, video_standard='1080p25')
+        self.assertEqual(_unpack('>I', hdr, 0x1C0), 10 * 1920)
 
     def test_has_audio_sets_format_flag(self):
         hdr = _make_header(has_audio=True)
@@ -1480,14 +1486,26 @@ class TestEafWriter(unittest.TestCase):
 
 
 def _sws_audio(path):
-    """An SWS's audio as (n, 16) s16, read from the file on disk."""
+    """An SWS's audio, decoded here independently of the engine from the layout
+    K-Watch writes and a Kahuna plays (2026-10-09): 32 bytes a sample, eight
+    4-byte slots, each [lead][16-bit big-endian sample][0]. Returned as (n, 16)
+    so the older tests read on: column 0 = left (slot 1), column 2 = right
+    (slot 2), and the other columns are non-zero if ANYTHING else in the block
+    is - the lead and trailing bytes of slots 1-2 (columns 1 and 3) and slots
+    3-8 (columns 4-15) - so 'the rest is silent' still means what it says."""
     import numpy as np
     h = m.HulaSWSHeader(path)
     if not h.has_audio:
         return None
-    raw = Path(path).read_bytes()[h.audio_offset:]
-    a = np.frombuffer(raw, dtype='<i2')
-    return a[:len(a) // 16 * 16].reshape(-1, 16).astype(np.int64)
+    raw = np.frombuffer(Path(path).read_bytes()[h.audio_offset:], np.uint8)
+    b = raw[:len(raw) // 32 * 32].reshape(-1, 32).astype(np.int64)
+    be16 = lambda hi, lo: ((b[:, hi] << 8) | b[:, lo]) - (((b[:, hi] << 8) | b[:, lo]) >= 32768) * 65536
+    out = np.zeros((len(b), 16), np.int64)
+    out[:, 0], out[:, 2] = be16(1, 2), be16(5, 6)
+    out[:, 1], out[:, 3] = b[:, 0] | b[:, 3], b[:, 4] | b[:, 7]
+    for k in range(2, 8):
+        out[:, 2 + k] = b[:, 4 * k] | b[:, 4 * k + 1] | b[:, 4 * k + 2] | b[:, 4 * k + 3]
+    return out
 
 
 class TestAudioRoutes(unittest.TestCase):
@@ -4114,3 +4132,104 @@ class TestKeyPrecisionWithoutColourLabel(unittest.TestCase):
         key = ((w >> 20) & 0x3FF).astype(float)
         self.assertLessEqual(float(np.abs(key - ideal).max()), 1.5)
         self.assertEqual((int(key.min()), int(key.max())), (64, 940))
+
+
+KWATCH_2026_10_09 = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/desk/2026-10-09-kahuna')
+KNOCKOUT_MOV = Path(os.path.expanduser('~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov'))
+
+
+def _readable(p):
+    try:
+        with open(p, 'rb') as f:
+            f.read(1)
+        return True
+    except OSError:
+        return False
+
+
+@unittest.skipUnless(_readable(KWATCH_2026_10_09 / 'kwatch' / '951.SWS'), 'K-Watch reference files not on this machine')
+class TestSwsAudioIsTheKWatchLayout(unittest.TestCase):
+    """2026-10-09: on a live Kahuna, every MacHuna SWS played only its first
+    5,760 samples of sound, while K-Watch's own conversions of the same clips
+    (951 KNOCKOUT, 952/953 4 s tone probes, made by David's colleague) played in
+    full. K-Watch's sound: 8 slots of 4 bytes a sample, each [lead][16-bit
+    big-endian][0], left on slot 1 and right on slot 2, and the sample count at
+    0x1C0. The lead byte is K-Watch packing debris (it copies a neighbouring
+    sample's low byte) and carries nothing; MacHuna writes 0 there. Judged
+    against K-Watch's files and the sources, never against the old engine."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    @staticmethod
+    def _section(path):
+        import numpy as np
+        b = Path(path).read_bytes()
+        ao = struct.unpack_from('>I', b, 0x1E8)[0] * 32
+        return struct.unpack_from('>I', b, 0x1C0)[0], np.frombuffer(b[ao:], np.uint8)
+
+    def _convert(self, src, std='1080p50'):
+        m.convert_clip(str(src), 1, self.tmp, video_standard=std, include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        return os.path.join(self.tmp, '1.SWS')
+
+    def _assert_like_kwatch(self, ours, kwatch):
+        import numpy as np
+        n_ours, a = self._section(ours)
+        n_kw, k = self._section(kwatch)
+        self.assertEqual(n_ours, n_kw, 'sample count at 0x1C0')
+        self.assertEqual(len(a), len(k), 'size of the sound section')
+        a, k = a.reshape(-1, 8, 4), k.reshape(-1, 8, 4)
+        self.assertTrue(np.array_equal(a[..., 1:], k[..., 1:]), 'every byte but the lead must match K-Watch')
+        self.assertEqual(int(a[..., 0].max()), 0, 'MacHuna writes a zero lead byte')
+
+    @unittest.skipUnless(_readable(KNOCKOUT_MOV), 'KNOCKOUT_WIPE.mov not readable here')
+    def test_knockout_matches_kwatch(self):
+        self._assert_like_kwatch(self._convert(KNOCKOUT_MOV), KWATCH_2026_10_09 / 'kwatch' / '951.SWS')
+
+    def test_a_24_bit_probe_matches_kwatch(self):
+        """K-Watch keeps the top 16 bits of 24-bit sound; so does MacHuna."""
+        self._assert_like_kwatch(self._convert(KWATCH_2026_10_09 / 'kwatch' / 'PROBE_50p.mov'),
+                                 KWATCH_2026_10_09 / 'kwatch' / '952.SWS')
+
+    def _source16(self, path):
+        import numpy as np, subprocess
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', str(path), '-f', 's32le',
+                              '-ac', '2', '-'], capture_output=True, check=True).stdout
+        return (np.frombuffer(raw, '<i4').reshape(-1, 2).astype(np.int64) >> 16)
+
+    def test_reads_kwatch_sws_sound_exactly(self):
+        import numpy as np
+        for sws, src in (('952.SWS', KWATCH_2026_10_09 / 'kwatch' / 'PROBE_50p.mov'), ('951.SWS', KNOCKOUT_MOV)):
+            if not _readable(src):
+                continue
+            with self.subTest(sws=sws):
+                got = np.frombuffer(m.read_sws_stereo16(str(KWATCH_2026_10_09 / 'kwatch' / sws)), '<i2').reshape(-1, 2)
+                want = self._source16(src)
+                self.assertTrue(np.array_equal(got[:len(want)], want))
+
+    @unittest.skipUnless(_readable(KNOCKOUT_MOV), 'KNOCKOUT_WIPE.mov not readable here')
+    def test_still_reads_sws_written_by_older_machuna(self):
+        """901 was written by v1.12.3 in the old layout. Files like it are on
+        people's drives; the player and the converters must still read them."""
+        import numpy as np
+        got = np.frombuffer(m.read_sws_stereo16(str(KWATCH_2026_10_09 / 'out' / '901.SWS')), '<i2').reshape(-1, 2)
+        want = self._source16(KNOCKOUT_MOV)
+        self.assertTrue(np.array_equal(got[:len(want)], want))
+
+    @unittest.skipUnless(_readable(KNOCKOUT_MOV), 'KNOCKOUT_WIPE.mov not readable here')
+    def test_kwatch_sws_to_eif_carries_its_sound(self):
+        import numpy as np
+        eif = m.convert_sws_to_eif(str(KWATCH_2026_10_09 / 'kwatch' / '951.SWS'), self.tmp,
+                                   log=lambda *a: None, out_name='0001')
+        got = np.frombuffer(m.read_eaf_stereo24(m.eaf_path_for(eif)), '<i4').reshape(-1, 2).astype(np.int64)
+        want = self._source16(KNOCKOUT_MOV)
+        # .eaf carries 24-bit: the 16-bit sample << 8 (read_eaf_stereo24 returns it << 8 again).
+        # 951 is labelled 1080p59.94 (David's colleague's setting), so a 50fps EIF
+        # is 71 frames and its sound is trimmed to match: compare what both hold.
+        n = min(len(got), len(want))
+        self.assertGreater(n, 60000)
+        self.assertTrue(np.array_equal(got[:n] >> 16, want[:n]))

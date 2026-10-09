@@ -282,6 +282,76 @@ _ffmpeg_proc_lock = __import__('threading').Lock()
 #  Header builder
 # ─────────────────────────────────────────────────────────────
 
+# ── SWS audio layout (settled 2026-10-09) ────────────────────────────────────
+#
+# What K-Watch writes, and a live Kahuna plays: 48 kHz, 32 bytes a sample in
+# eight 4-byte slots. Each slot is [lead][16-bit sample, big-endian][0x00];
+# programme left in slot 1, right in slot 2, slots 3-8 silent. The lead byte in
+# K-Watch's files is packing debris (a neighbour's low byte) and carries
+# nothing; MacHuna writes 0. Proved against three K-Watch conversions made on
+# 2026-10-09 (KNOCKOUT and two tone probes, all played correctly on a Kahuna):
+# the sample bytes match the sources exactly.
+#
+# Until v1.12.4 MacHuna wrote 16 channels of 16-bit LITTLE-endian with left
+# on channel 1 and right on 3 - an earlier hex analysis read K-Watch's file one
+# byte out of step, where the big-endian samples look like little-endian ones
+# on those channels. A Kahuna then heard roughly the top 8 bits of each
+# sample, and only the first 5,760 samples (see 0x1C0 in build_sws_header).
+SWS_AUDIO_BYTES_PER_SAMPLE = 32
+_SWS_LEGACY_SAMPLE_FIELD   = 0x1680     # what MacHuna wrote at 0x1C0-0x1C3 before
+
+
+def _sws_audio_pack(left16, right16) -> bytes:
+    """Left and right 16-bit samples as SWS audio bytes, the K-Watch layout."""
+    left = np.asarray(left16, np.int64) & 0xFFFF
+    right = np.asarray(right16, np.int64) & 0xFFFF
+    out = np.zeros((len(left), SWS_AUDIO_BYTES_PER_SAMPLE), np.uint8)
+    out[:, 1], out[:, 2] = left >> 8, left & 0xFF
+    out[:, 5], out[:, 6] = right >> 8, right & 0xFF
+    return out.tobytes()
+
+
+def _sws_audio_is_legacy(block, header: bytes) -> bool:
+    """True for audio written by MacHuna before v1.12.4. Those files say
+    0x1680 at 0x1C0 (MacHuna's old constant) and, in their little-endian
+    16-channel layout, bytes 2-3 and 6-7 of every sample are always zero; in
+    the K-Watch layout bytes 2 and 6 carry each sample's low byte."""
+    if len(header) < 0x1C4 or struct.unpack_from('>I', header, 0x1C0)[0] != _SWS_LEGACY_SAMPLE_FIELD:
+        return False
+    if block.size == 0:
+        return False
+    return not block[:, [2, 3, 6, 7]].any() and bool(block[:, [0, 1, 4, 5]].any())
+
+
+def _sws_audio_unpack(raw: bytes, header: bytes):
+    """SWS audio bytes as (n, 2) int16 left/right, from the K-Watch layout or
+    from a file written by an older MacHuna."""
+    block = np.frombuffer(raw[:len(raw) // SWS_AUDIO_BYTES_PER_SAMPLE * SWS_AUDIO_BYTES_PER_SAMPLE],
+                          np.uint8).reshape(-1, SWS_AUDIO_BYTES_PER_SAMPLE)
+    if _sws_audio_is_legacy(block, header):
+        a = block.view('<i2').reshape(-1, 16)
+        return np.stack([a[:, 0], a[:, 2]], 1).astype(np.int16)
+    b = block.astype(np.int32)
+    left = ((b[:, 1] << 8) | b[:, 2]).astype(np.uint16).view(np.int16)
+    right = ((b[:, 5] << 8) | b[:, 6]).astype(np.uint16).view(np.int16)
+    return np.stack([left, right], 1)
+
+
+def read_sws_stereo16(sws_path: str):
+    """An SWS's programme audio as interleaved little-endian s16 stereo bytes
+    at 48 kHz, or None if it has none. For MacHuna 2.x's player bridge, which
+    used to read the layout itself (and so assumed the wrong one)."""
+    h = SWSHeader(sws_path)
+    if not h.has_audio or getattr(h, 'parts', None):
+        return None
+    with open(sws_path, 'rb') as f:
+        head = f.read(SWS_HEADER_SIZE)
+        f.seek(h.audio_offset)
+        raw = f.read(max(0, h.total_size - h.audio_offset))
+    lr = _sws_audio_unpack(raw, head)
+    return lr.astype('<i2').tobytes() if lr.size else None
+
+
 def build_sws_header(source_filename: str,
                      clip_name: str,
                      width: int,
@@ -313,13 +383,14 @@ def build_sws_header(source_filename: str,
         std_code |= 0x08
     now_str  = datetime.now().strftime('%a %b %d %H:%M:%S %Y').encode('ascii')
 
-    # Audio parameters (confirmed from K-Watch reference file analysis)
-    # audio_frame_size = 0x1680 (5760) -- fixed value in header regardless of fps
-    # Actual bytes per frame = round(48000/fps) * 2 bytes * 16 channels
-    AUDIO_FRAME_SIZE_HDR = 0x1680  # always 5760 in header (confirmed)
+    # Audio (settled 2026-10-09 against K-Watch files that play on a live
+    # Kahuna): SWS_AUDIO_BYTES_PER_SAMPLE bytes a sample, and the total number
+    # of samples at 0x1C0. MacHuna used to write a constant 0x1680 at 0x1C2,
+    # copied from a reference whose audio happened to be 5,760 samples long, so
+    # a Kahuna played the first eighth of a second of every clip.
     samples_per_frame    = round(48000 / fps)
-    audio_bytes_per_frame = samples_per_frame * 2 * 16
-    audio_data_size      = audio_bytes_per_frame * frame_count if has_audio else 0
+    audio_samples        = samples_per_frame * frame_count if has_audio else 0
+    audio_data_size      = audio_samples * SWS_AUDIO_BYTES_PER_SAMPLE
 
     # Audio offset is after fill+key if key present, fill only if not
     # Confirmed by hex analysis of K-Watch no-alpha reference file
@@ -390,8 +461,9 @@ def build_sws_header(source_filename: str,
     val_1b4 = (plane_size * frame_count + SWS_HEADER_SIZE) // 32 if has_key else 0
     struct.pack_into('>I', hdr, 0x1B4, val_1b4)
 
-    # 0x1C2  Audio frame size (uint16 BE) -- 0x1680 (5760) if audio, 0 if not
-    struct.pack_into('>H', hdr, 0x1C2, AUDIO_FRAME_SIZE_HDR if has_audio else 0)
+    # 0x1C0  Audio sample count (uint32 BE), 0 if no audio. A Kahuna plays this
+    # many samples and no more (K-Watch: 81,600 for 1.7 s; 2026-10-09).
+    struct.pack_into('>I', hdr, 0x1C0, audio_samples)
 
     # 0x1CC  Total file size = header + planes + audio data
     # Capped at uint32 max for files >4GB -- _write_sws_split() patches this
@@ -714,6 +786,12 @@ def extract_audio(input_path: str, output_path: str, frame_count: int, fps: floa
         with open(output_path, 'r+b') as f:
             f.truncate(expected_size)
 
+    # The routing above (programme left on channel 0, right on channel 2) is
+    # kept as it is - mono, multichannel and track choice all live there - and
+    # the result is repacked into the layout a Kahuna actually plays.
+    a = np.fromfile(output_path, dtype='<i2').reshape(-1, 16)
+    with open(output_path, 'wb') as f:
+        f.write(_sws_audio_pack(a[:, 0], a[:, 2]))
     return True
 
 
@@ -749,7 +827,7 @@ def write_sws(dest_path: str,
             # so a split clip carries none. Say so, and stop the header claiming
             # audio it does not contain (it used to, silently).
             header = bytearray(header)
-            struct.pack_into('>H', header, 0x1C2, 0)
+            struct.pack_into('>I', header, 0x1C0, 0)
             struct.pack_into('>I', header, 0x1E8, 0)
             struct.pack_into('>I', header, 0x1EC, 0)
             header = bytes(header)
@@ -2760,8 +2838,15 @@ class PlayerFrameCache:
                 # total_size, not getsize: a split clip's path is a folder.
                 audio_len = h.total_size - h.audio_offset
                 if audio_len > 0:
+                    f.seek(0)
+                    head = f.read(SWS_HEADER_SIZE)
                     f.seek(h.audio_offset)
-                    self.audio_pcm = f.read(audio_len)
+                    # The player's own in-memory form (16 ch s16, L on 0, R
+                    # on 2) is kept; only what is READ from the file changed.
+                    lr = _sws_audio_unpack(f.read(audio_len), head)
+                    pcm = np.zeros((len(lr), 16), '<i2')
+                    pcm[:, 0], pcm[:, 2] = lr[:, 0], lr[:, 1]
+                    self.audio_pcm = pcm.tobytes()
         finally:
             f.close()
 
@@ -3795,7 +3880,8 @@ def _hula_decode_frame(fill_bytes: bytes, key_bytes: bytes,
 
 def _hula_extract_audio_stereo(sws_path: str, header: HulaSWSHeader,
                                 tmp_dir: str, log=print):
-    """Extract Ch0 (L) and Ch2 (R) from SWS 16ch PCM as stereo temp file."""
+    """The SWS's programme left and right as a stereo s16 temp file, from
+    either layout (_sws_audio_unpack)."""
     if not header.has_audio:
         return None
     file_size  = os.path.getsize(sws_path)
@@ -3803,16 +3889,13 @@ def _hula_extract_audio_stereo(sws_path: str, header: HulaSWSHeader,
     if audio_size <= 0:
         return None
     with open(sws_path, 'rb') as f:
+        head = f.read(SWS_HEADER_SIZE)
         f.seek(header.audio_offset)
         raw = f.read(audio_size)
-    samples = np.frombuffer(raw, dtype='<i2')
-    total   = len(samples) // 16
+    stereo = _sws_audio_unpack(raw, head).astype('<i2')
+    total  = len(stereo)
     if total == 0:
         return None
-    samples = samples[:total * 16].reshape(-1, 16)
-    stereo  = np.zeros((total, 2), dtype='<i2')
-    stereo[:, 0] = samples[:, 0]
-    stereo[:, 1] = samples[:, 2]
     stereo_path = os.path.join(tmp_dir, 'hula_audio_stereo.pcm')
     stereo.tofile(stereo_path)
     log(f"  Audio extracted: {total} samples, stereo")
@@ -4269,25 +4352,25 @@ def _sws_stereo24(sws_path: str):
     if not h.has_audio or not os.path.isfile(sws_path):
         return None
     with open(sws_path, 'rb') as f:
+        head = f.read(SWS_HEADER_SIZE)
         f.seek(h.audio_offset)
         raw = f.read()
-    a = np.frombuffer(raw[:len(raw) // 32 * 32], dtype='<i2').reshape(-1, 16)
+    a = _sws_audio_unpack(raw, head)
     if a.size == 0:
         return None
-    return np.stack([a[:, 0], a[:, 2]], 1).astype(np.int64) << 8
+    return a.astype(np.int64) << 8
 
 
 def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str:
-    """Kahuna SWS audio from 24-bit left/right: 16 channels of 16-bit LE at
-    48kHz, left on 1 and right on 3, the rest silent, padded or trimmed to the
-    clip. 24-bit keeps its top 16 bits, as the K-Frame's own import does."""
+    """Kahuna SWS audio from 24-bit left/right, padded or trimmed to the clip,
+    in the layout K-Watch writes and a Kahuna plays (see _sws_audio_pack).
+    24-bit keeps its top 16 bits, as K-Watch and the K-Frame's import do."""
     n = frame_count * _samples_per_frame(fps)
     src = np.asarray(stereo24, dtype=np.int64)[:n]
-    out = np.zeros((n, 16), dtype='<i2')
-    out[:len(src), 0] = src[:, 0] >> 8
-    out[:len(src), 2] = src[:, 1] >> 8
+    left = np.zeros(n, np.int64); right = np.zeros(n, np.int64)
+    left[:len(src)], right[:len(src)] = src[:, 0] >> 8, src[:, 1] >> 8
     with open(pcm_path, 'wb') as f:
-        f.write(out.tobytes())
+        f.write(_sws_audio_pack(left, right))
     return pcm_path
 
 
