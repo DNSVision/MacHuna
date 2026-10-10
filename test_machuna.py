@@ -4233,3 +4233,70 @@ class TestSwsAudioIsTheKWatchLayout(unittest.TestCase):
         n = min(len(got), len(want))
         self.assertGreater(n, 60000)
         self.assertTrue(np.array_equal(got[:n] >> 16, want[:n]))
+
+
+class TestPortableAppLayer(unittest.TestCase):
+    """The Tk app's few Mac-only calls, made portable for a PC fork without
+    changing anything on a Mac (2026-10-10). The engine never used them, and
+    MacHuna 2.x's bridge uses none of them. Windows cannot be run here, so the
+    PC side is checked by what each helper would ask the system to do."""
+
+    def _capture(self, platform):
+        from unittest import mock
+        calls = []
+        patches = [mock.patch.object(m.sys, 'platform', platform),
+                   mock.patch.object(m.subprocess, 'run', side_effect=lambda cmd, **k: calls.append(('run', cmd)))]
+        if not hasattr(m.os, 'startfile'):
+            patches.append(mock.patch.object(m.os, 'startfile', create=True,
+                                             side_effect=lambda p: calls.append(('startfile', p))))
+        else:
+            patches.append(mock.patch.object(m.os, 'startfile', side_effect=lambda p: calls.append(('startfile', p))))
+        return calls, patches
+
+    def _run(self, platform, fn, *args):
+        calls, patches = self._capture(platform)
+        for p in patches: p.start()
+        try:
+            fn(*args)
+        finally:
+            for p in reversed(patches): p.stop()
+        return calls
+
+    def test_on_a_mac_nothing_changes(self):
+        self.assertEqual(self._run('darwin', m._open_with_system, '/x/y'), [('run', ['open', '/x/y'])])
+        self.assertEqual(self._run('darwin', m._reveal_in_file_browser, '/x/y.txt'), [('run', ['open', '-R', '/x/y.txt'])])
+        self.assertEqual(m._file_browser_name('darwin'), 'Finder')
+        self.assertEqual(m._curl_command('darwin'), '/usr/bin/curl')
+
+    def test_on_windows_the_system_does_it(self):
+        self.assertEqual(self._run('win32', m._open_with_system, r'C:\x\y'), [('startfile', r'C:\x\y')])
+        self.assertEqual(self._run('win32', m._reveal_in_file_browser, r'C:\x\y.txt'),
+                         [('run', ['explorer', r'/select,C:\x\y.txt'])])
+        self.assertEqual(m._file_browser_name('win32'), 'File Explorer')
+
+    def test_the_update_check_is_off_away_from_the_mac(self):
+        """The manifest describes the MAC app; a PC copy must not be offered it."""
+        from unittest import mock
+        # The fetch swallows every error, so an exception from the mock would
+        # be hidden: record the attempt instead (the first version of this test
+        # passed against the unfixed code for exactly that reason).
+        attempts = []
+        with mock.patch.object(m.sys, 'platform', 'win32'), \
+                mock.patch.object(m.subprocess, 'run', side_effect=lambda *a, **k: attempts.append(a)):
+            self.assertIsNone(m.fetch_update_manifest())
+        self.assertEqual(attempts, [], 'a PC copy must not fetch the Mac manifest')
+
+    def test_a_packaged_pc_build_finds_its_own_ffmpeg_exe(self):
+        from unittest import mock
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        Path(d, 'ffmpeg.exe').write_bytes(b'')
+        with mock.patch.object(m.sys, 'platform', 'win32'), mock.patch.object(m.sys, 'frozen', True, create=True), \
+                mock.patch.object(m.sys, '_MEIPASS', d, create=True):
+            self.assertEqual(m._get_ffmpeg_path('ffmpeg'), os.path.join(d, 'ffmpeg.exe'))
+
+    def test_no_bare_mac_open_left_in_the_app(self):
+        """Every open goes through the two helpers, or a PC fork has to hunt."""
+        import re
+        src = Path(m.__file__).read_text()
+        body = src.split('def _open_with_system', 1)[0] + src.split('def _reveal_in_file_browser', 1)[1].split('\ndef ', 1)[1]
+        self.assertEqual(re.findall(r"\[\s*'open'", body), [])

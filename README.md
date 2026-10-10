@@ -12,7 +12,7 @@ A macOS application for converting video and still image files to the Grass Vall
 > base for the Windows fork. **v1.12.0 (2026-10-08) carries the fixes from the
 > K-Frame desk session of 2026-10-07, and v1.12.1 (the same day) the fixes from a
 > full conversion matrix, three reviews and a black-box pass**; MacHuna 2.1.0 and 2.2.0 (live
-> 2026-10-09) run this engine version. Everything below describes v1.12.4.
+> 2026-10-09) run this engine version. Everything below describes v1.12.5. Thinking of a PC version? See "Forking for PC" in `DEVELOPMENT_NOTES.md`.
 
 MacHuna is a macOS application for broadcast graphics conversion. It converts video, TGA sequences, and still image files to `.SWS` format for use with Grass Valley Kahuna vision mixers, extracts `.SWS` files back to standard formats for use on other vision mixing desks, and reads and writes Grass Valley K-Frame `.eif` native clip files.
 

@@ -4,6 +4,18 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.12.5 — 2026-10-10
+
+**Ready for a PC fork.** Nothing changes on a Mac, and nothing changes for MacHuna 2.x, which uses none of this.
+
+### Changed
+- The app's few Mac-only calls now work on Windows (and Linux) as well: opening the destination folder, the manual, an email or a download, and showing a file in the Finder go through two small helpers that use each system's own way. Buttons say "File Explorer" on a PC.
+- The update check is **switched off away from a Mac**, because the update notice describes the Mac app; a PC version would give itself its own. On a Mac it is unchanged, still using the Mac's own curl and never switching off certificate checks.
+- A packaged PC version finds its own `ffmpeg.exe`.
+- What a fork still needs (a licence, a Windows build recipe, its own update notice, a first run on Windows) is written down in `DEVELOPMENT_NOTES.md`, "Forking for PC".
+
+---
+
 ## v1.12.4 — 2026-10-09
 
 **SWS audio now plays correctly on a Kahuna. Convert any SWS with sound made by an earlier version again.** Found by ear on a live Kahuna on 9 October 2026, and fixed and confirmed the same day.

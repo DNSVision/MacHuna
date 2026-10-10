@@ -43,7 +43,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.12.4"
+VERSION = "1.12.5"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -490,10 +490,13 @@ def _get_ffmpeg_path(binary: str = 'ffmpeg') -> str:
     Falls back to the system PATH (Homebrew etc.) when running as a script.
     """
     if getattr(sys, 'frozen', False):
-        # PyInstaller extracts binaries to sys._MEIPASS at runtime
-        bundled = os.path.join(sys._MEIPASS, binary)
-        if os.path.exists(bundled):
-            return bundled
+        # PyInstaller extracts binaries to sys._MEIPASS at runtime. On Windows
+        # the file is ffmpeg.exe (for a PC fork; a Mac is unchanged).
+        names = [binary + '.exe', binary] if sys.platform.startswith('win') else [binary]
+        for name in names:
+            bundled = os.path.join(sys._MEIPASS, name)
+            if os.path.exists(bundled):
+                return bundled
     return binary
 
 
@@ -5099,6 +5102,23 @@ def parse_update_manifest(raw) -> Optional[dict]:
     }
 
 
+def _curl_command(platform: str = None) -> str:
+    """The system's own curl. On a Mac it is always /usr/bin/curl (see
+    fetch_update_manifest for why it must be the system's). Windows 10 and 11
+    ship curl.exe, which uses Windows' own certificate store."""
+    platform = platform or sys.platform
+    if platform == 'darwin':
+        return '/usr/bin/curl'
+    import shutil as _shutil
+    return _shutil.which('curl') or 'curl'
+
+
+def _update_check_enabled(platform: str = None) -> bool:
+    """UPDATE_MANIFEST_URL describes the MAC app, so only a Mac checks it. A PC
+    fork gives itself its own manifest and turns this on (2026-10-10)."""
+    return (platform or sys.platform) == 'darwin'
+
+
 def fetch_update_manifest(url: str = UPDATE_MANIFEST_URL,
                           timeout: int = UPDATE_TIMEOUT_S) -> Optional[dict]:
     """Fetch and validate the manifest. Returns None on any failure at all.
@@ -5111,9 +5131,11 @@ def fetch_update_manifest(url: str = UPDATE_MANIFEST_URL,
     store, so it works on any Mac. Never "fix" this by disabling verification:
     this manifest tells people where to download software from.
     """
+    if not _update_check_enabled():
+        return None
     try:
         result = subprocess.run(
-            ['/usr/bin/curl', '--silent', '--fail', '--location',
+            [_curl_command(), '--silent', '--fail', '--location',
              '--max-time', str(timeout), url],
             capture_output=True, timeout=timeout + 3,
         )
@@ -5124,7 +5146,42 @@ def fetch_update_manifest(url: str = UPDATE_MANIFEST_URL,
     return parse_update_manifest(result.stdout.decode('utf-8', 'replace'))
 
 
+def _open_with_system(target: str):
+    """Open a folder, file, web address or mailto: the way the system does.
+    The Mac's `open` on a Mac (unchanged); Windows' own handler on a PC; the
+    desktop's on Linux. One place, so a PC fork has nothing to hunt for."""
+    if sys.platform == 'darwin':
+        subprocess.run(['open', target])
+    elif sys.platform.startswith('win'):
+        os.startfile(target)
+    else:
+        subprocess.run(['xdg-open', target])
+
+
+def _reveal_in_file_browser(path: str):
+    """Show a file selected in its folder: the Finder on a Mac, File Explorer
+    on Windows; on Linux, its folder."""
+    if sys.platform == 'darwin':
+        subprocess.run(['open', '-R', path])
+    elif sys.platform.startswith('win'):
+        subprocess.run(['explorer', f'/select,{path}'])
+    else:
+        subprocess.run(['xdg-open', os.path.dirname(path) or '.'])
+
+
+def _file_browser_name(platform: str = None) -> str:
+    """What the system's file browser is called, for button labels."""
+    platform = platform or sys.platform
+    if platform == 'darwin':
+        return 'Finder'
+    return 'File Explorer' if platform.startswith('win') else 'Files'
+
+
 def _mac_model() -> str:
+    """The machine's model for a support email: the Mac's own identifier on a
+    Mac, the platform description elsewhere."""
+    if sys.platform != 'darwin':
+        return platform.platform() or 'unknown'
     try:
         out = subprocess.run(['sysctl', '-n', 'hw.model'],
                              capture_output=True, timeout=3)
@@ -5272,12 +5329,12 @@ def launch_gui():
     def _open_dest_folder():
         d = dest_var.get().strip()
         if d and os.path.isdir(d):
-            subprocess.run(['open', d])
+            _open_with_system(d)
         elif d:
             messagebox.showwarning("Destination Folder", f"Folder not found:\n{d}")
         else:
             messagebox.showwarning("Destination Folder", "No Destination Folder set.")
-    ttk.Button(frm2, text="Open in Finder",
+    ttk.Button(frm2, text=f"Open in {_file_browser_name()}",
                command=_open_dest_folder).pack(side='left', **pad)
 
     # ── Output format constants ──
@@ -6593,7 +6650,7 @@ def launch_gui():
     def _open_download():
         info = update_state['info']
         if info:
-            subprocess.run(['open', info['download']])
+            _open_with_system(info['download'])
 
     def _dismiss_update():
         update_state['dismissed'] = True
@@ -6763,7 +6820,7 @@ def launch_gui():
         btns.pack(fill='x', padx=16, pady=12)
 
         def _open_email():
-            subprocess.run(['open', build_mailto(kind, ctx)])
+            _open_with_system(build_mailto(kind, ctx))
             win.destroy()
 
         def _copy_details():
@@ -6774,8 +6831,8 @@ def launch_gui():
         ttk.Button(btns, text="Open Email", command=_open_email).pack(side='left')
         ttk.Button(btns, text="Copy Details", command=_copy_details).pack(side='left', padx=6)
         if ctx.get('log'):
-            ttk.Button(btns, text="Show Log in Finder",
-                       command=lambda: subprocess.run(['open', '-R', ctx['log']])
+            ttk.Button(btns, text=f"Show Log in {_file_browser_name()}",
+                       command=lambda: _reveal_in_file_browser(ctx['log'])
                        ).pack(side='left', padx=(0, 6))
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side='right')
 
@@ -6791,7 +6848,7 @@ def launch_gui():
             path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 'MacHuna_User_Manual.pdf')
         if os.path.exists(path):
-            subprocess.run(['open', path])
+            _open_with_system(path)
         else:
             messagebox.showwarning("User Manual",
                                    "The manual could not be found in this build.",

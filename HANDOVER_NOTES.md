@@ -6,7 +6,7 @@ Paste this document into a new Claude session to resume development. Read carefu
 
 ## Session Anchor
 
-**Understanding baseline:** tag `v1.12.4` - 2026-10-09 (SWS audio fixed: K-Watch layout and true sample count, confirmed by ear on a Kahuna). Before that, tag `v1.12.3` - 2026-10-08 (v1.12.1, plus 59.94/60 as one family, plus the soft-key precision fix found by the regression run on real material). **v1.12.1 is the engine-soundness release** on top of v1.12.0 (the K-Frame desk-session release): a 324-case conversion matrix through MacHuna 2.0's bridge (273 pass every check, 51 refused on purpose, 0 rule breaks, now including 59.94p/29.97i), three independent reviews and a black-box pass by another model; decisions A-M in the roadmap. 312 tests. Built to `dist/` only; `/Applications` is MacHuna 2.0 and was not touched; nothing published.
+**Understanding baseline:** tag `v1.12.5` - 2026-10-10 (portable app layer for a PC fork; see DEVELOPMENT_NOTES 'Forking for PC'). Before that, tag `v1.12.4` - 2026-10-09 (SWS audio fixed: K-Watch layout and true sample count, confirmed by ear on a Kahuna). Before that, tag `v1.12.3` - 2026-10-08 (v1.12.1, plus 59.94/60 as one family, plus the soft-key precision fix found by the regression run on real material). **v1.12.1 is the engine-soundness release** on top of v1.12.0 (the K-Frame desk-session release): a 324-case conversion matrix through MacHuna 2.0's bridge (273 pass every check, 51 refused on purpose, 0 rule breaks, now including 59.94p/29.97i), three independent reviews and a black-box pass by another model; decisions A-M in the roadmap. 312 tests. Built to `dist/` only; `/Applications` is MacHuna 2.0 and was not touched; nothing published.
 
 **MacHuna 2.2.1 is LIVE at dnsvision.tv (2026-10-09), pinned to `v1.12.4`** (SWS sound fixed and confirmed by ear on a Kahuna). Before it, 2.2.0 pinned to `v1.12.3` (2.1.0 brought the engine; 2.2.0 added the memory-stick eject, a Swift-only feature). Still needs hardware: the 2.1 SWS-route changes on a Kahuna, and Sony on a Sony desk. The Swift checklist is in `DEVELOPMENT_NOTES.md` (roadmap, "Swift bridge changes that MUST land with the engine pin move"): pass `include_audio` on the EIF routes and EIF to SWS, replace the bridge's own SWS-to-SWS routing with `convert_sws_to_sws`, remove `Item.swift`'s copy of the hardware warnings, update the Swift app's own manual to match, run `--selftest`. Then build decisions 42-44 (`MacHuna-Swift/DESIGN_DECISIONS.md`). That unblocks the promo film.
 
@@ -399,7 +399,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna (engine):** v1.12.4 (2026-10-09, SWS audio fixed and confirmed by ear on a Kahuna). Before that, v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
+- **MacHuna (engine):** v1.12.5 (2026-10-10, portable app layer for a PC fork; MacHuna 2.2.1 stays on v1.12.4, which it needs nothing from v1.12.5 to change). v1.12.4 (2026-10-09, SWS audio fixed and confirmed by ear on a Kahuna). Before that, v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---
