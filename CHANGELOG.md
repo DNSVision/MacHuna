@@ -11,9 +11,10 @@ All notable changes to MacHuna are documented here.
 ### Fixed
 - **A keyed split SWS said it had no key.** MacHuna blanked two header fields (0x1A8 and 0x1B4) in every split file, because the reference split files it was built from (2023) had them blank. Those clips had no key, which is the only reason K-Watch blanks them. Every keyed split MacHuna wrote had its key in the file and a header saying there was none. MacHuna's own players found the key anyway; **what a Kahuna does with such a file is not yet known** (the one split file tried on a desk, 907, had no key). Convert keyed clips over 4 GB again.
 - **A split SWS keeps its sound.** It used to be left out (decision F, made when the layout was unknown). K-Watch's file shows the split is the ordinary stream - header, fill, key, sound - cut into 2 GB parts, so the sound is at the end of the last part; only 0x1CC changes, to the last part's size.
+- **The size field (0x1CC) is the whole file's size, wrapped at 4 GB**, split or not, as K-Watch writes it (its 6-part 966 and single-file 962, 2026-10-11). MacHuna wrote the last part's size in a split, which agrees only up to three parts (files under about 6 GB), and capped a single file over 4 GB at the maximum. Neither difference has been tried on a desk.
 - Reading: the player's sound reader (`read_sws_stereo16`) reads split files, and the key check for a split file no longer counts its sound as picture.
 
-**Proof:** MacHuna converts the same clip into the same three parts as K-Watch, to the byte in size, with the same layout fields and the same sound; and a forced split, joined back together, is the unsplit file byte for byte apart from 0x1CC and the timestamps.
+**Proof:** MacHuna converts the same clips into the same parts as K-Watch (3 parts for 961, 6 for 966), to the byte in size, with the same layout fields and the same sound; and a forced split, joined back together, is the unsplit file byte for byte apart from 0x1CC and the timestamps.
 
 ---
 

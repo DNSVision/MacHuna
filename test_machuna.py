@@ -238,6 +238,14 @@ class TestPlaybackFlags(unittest.TestCase):
 
 class TestAudioFields(unittest.TestCase):
 
+    def test_file_size_over_4gb_wraps_as_kwatch_writes_it(self):
+        """K-Watch's 962 (one 5.5 GB file) says 1,249,993,216 at 0x1CC: the
+        size wrapped at 4 GB. MacHuna capped it at 0xFFFFFFFF until v1.13.1."""
+        hdr = _make_header(plane_size=5529600, frame_count=500, has_key=True,
+                           has_audio=True, fps=50.0, video_standard='1080p50',
+                           audio_samples=480000)
+        self.assertEqual(_unpack('>I', hdr, 0x1CC), 1249993216)
+
     def test_no_audio_zeros_all_audio_fields(self):
         hdr = _make_header(has_audio=False)
         self.assertEqual(_unpack('>I', hdr, 0x1C0), 0,  "audio sample count should be 0")
@@ -283,7 +291,7 @@ class TestAudioFields(unittest.TestCase):
         hdr = _make_header(plane_size=plane_size, frame_count=frame_count,
                            has_key=True, has_audio=True, fps=fps)
         stored = _unpack('>I', hdr, 0x1CC)
-        self.assertEqual(stored, min(expected_total, 0xFFFFFFFF))
+        self.assertEqual(stored, expected_total & 0xFFFFFFFF)
 
 
 # ── Progressive→interlaced rate decision (Fix 9(a)) ────────────────────────────
@@ -4650,8 +4658,10 @@ class TestSplitSwsIsKWatchs(unittest.TestCase):
                 joined = self._stream(split_path)
                 self.assertEqual(len(joined), len(whole))
                 self.assertEqual(joined[512:], whole[512:], 'picture, key and sound')
-                self.assertEqual(struct.unpack_from('>I', joined, 0x1CC)[0], os.path.getsize(parts[-1]))
-                for lo, hi in ((0, 0x148), (0x188, 0x1CC), (0x1D0, 512)):
+                # 0x1CC is the whole stream's size as a 32-bit number, split or
+                # not (K-Watch's 966 and 962, 2026-10-11): the same in both.
+                self.assertEqual(struct.unpack_from('>I', joined, 0x1CC)[0], len(joined) & 0xFFFFFFFF)
+                for lo, hi in ((0, 0x148), (0x188, 512)):
                     self.assertEqual(joined[lo:hi], whole[lo:hi], f'header 0x{lo:X}-0x{hi:X}')
 
     def test_a_split_file_reads_back_with_its_key_and_sound(self):
@@ -4685,3 +4695,19 @@ class TestSplitSwsIsKWatchs(unittest.TestCase):
         so = np.frombuffer(Path(po[-1]).read_bytes()[-480000 * 32:], np.uint8).reshape(-1, 8, 4)
         st = np.frombuffer(Path(pt[-1]).read_bytes()[-480000 * 32:], np.uint8).reshape(-1, 8, 4)
         self.assertTrue(np.array_equal(so[..., 1:], st[..., 1:]), 'the sound, every byte but the lead')
+
+    @unittest.skipUnless(_readable(SPLIT_REF / 'kwatch' / '966.SWS' / '06_OF_06._XX')
+                         and _readable(SPLIT_REF / 'SPLIT_PROBE_20s_50p.mov'), "K-Watch's 966 is not on this machine")
+    def test_six_parts_carry_kwatchs_size_field(self):
+        """966 (20s, 6 parts): 0x1CC is the total size wrapped at 4 GB
+        (2,499,985,920), not the last part's size (352,502,272). 961, with 3
+        parts, could not tell the two apart."""
+        d = tempfile.mkdtemp(dir=self.tmp)
+        ours = m.convert_clip(str(SPLIT_REF / 'SPLIT_PROBE_20s_50p.mov'), 1, d, '1080p50',
+                              log=lambda *a: None)
+        po, pt = m.split_parts(ours), m.split_parts(str(SPLIT_REF / 'kwatch' / '966.SWS'))
+        self.assertEqual([os.path.getsize(p) for p in po], [os.path.getsize(p) for p in pt], 'part sizes')
+        ho, ht = Path(po[0]).read_bytes()[:512], Path(pt[0]).read_bytes()[:512]
+        for off in (0x1A4, 0x1A8, 0x1B4, 0x1C0, 0x1CC, 0x1E8, 0x1EC):
+            self.assertEqual(ho[off:off + 4].hex(), ht[off:off + 4].hex(), f'header 0x{off:X}')
+        shutil.rmtree(d, True)

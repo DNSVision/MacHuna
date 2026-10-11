@@ -487,10 +487,11 @@ def build_sws_header(source_filename: str,
     # many samples and no more (K-Watch: 81,600 for 1.7 s; 2026-10-09).
     struct.pack_into('>I', hdr, 0x1C0, audio_samples)
 
-    # 0x1CC  Total file size = header + planes + audio data
-    # Capped at uint32 max for files >4GB -- _write_sws_split() patches this
-    # field with the correct final chunk size before writing chunk 1.
-    struct.pack_into('>I', hdr, 0x1CC, min(total_size, 0xFFFFFFFF))
+    # 0x1CC  Total file size = header + planes + audio data.
+    # The total size as a 32-bit number: over 4 GB it WRAPS, as K-Watch's does
+    # (962 unsplit and 966 split, 2026-10-11). It used to be capped at
+    # 0xFFFFFFFF, which K-Watch never writes.
+    struct.pack_into('>I', hdr, 0x1CC, total_size & 0xFFFFFFFF)
 
     # 0x1E8  Audio data offset / 32 (0 if no audio)
     struct.pack_into('>I', hdr, 0x1E8, (audio_offset // 32) if has_audio else 0)
@@ -810,7 +811,8 @@ def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
 
     The parts are the ordinary SWS stream cut into 2 GB pieces:
       header | all fill frames | all key frames | sound
-    and only 0x1CC changes, to the size of the final part. Measured against
+    and the header is unchanged: 0x1CC is the whole stream's size, wrapped at
+    4 GB, as in an unsplit file. Measured against
     K-Watch's own split of a keyed clip with sound (961, 2026-10-11): the sound
     sits at the end, so in the last part, with 0x1C0/0x1E8/0x1EC as usual.
 
@@ -836,9 +838,12 @@ def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
     full_chunks_size = (n_chunks - 1) * CHUNK_SIZE
     final_chunk_size = total_data - full_chunks_size
 
-    # The one field a split changes: 0x1CC = the final part's size.
+    # 0x1CC is the whole stream's size as a 32-bit number, wrapping past
+    # 4 GB, split or not - so the split changes nothing in the header. Up to
+    # three parts that equals the final part's size, which is what MacHuna
+    # wrote until K-Watch's 6-part 966 showed the difference (2026-10-11).
     hdr = bytearray(header)
-    struct.pack_into('>I', hdr, 0x1CC, final_chunk_size)
+    struct.pack_into('>I', hdr, 0x1CC, total_data & 0xFFFFFFFF)
     hdr = bytes(hdr)
 
     log(f"  Split: {n_chunks} chunks  ({total_data:,} bytes total, "
