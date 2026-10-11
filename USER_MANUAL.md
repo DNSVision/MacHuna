@@ -1,4 +1,4 @@
-# MacHuna v1.12.5 — User Manual
+# MacHuna v1.13.0 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -506,9 +506,11 @@ MacHuna extracts audio from source files and embeds it in the `.SWS` file in K-W
 | Sample rate | 48,000 Hz |
 | Channels | 8 slots per sample (32 bytes) |
 | Channel mapping | Ch1 = Left, Ch2 = Right, all others silent |
-| Length | The header says exactly how many samples there are, and a Kahuna plays that many |
+| Length | The sound's own length, whatever the picture's (v1.13.0). The header says exactly how many samples there are, and a Kahuna plays that many |
 
 **Confirmed on a live Kahuna (9 October 2026), by ear.** This is the layout K-Watch writes. It was settled by comparing K-Watch conversions that play correctly on a Kahuna with the same sources, sample by sample. **Before v1.12.4, MacHuna wrote SWS audio in a different layout that a Kahuna played for only the first eighth of a second, at reduced quality: convert any SWS with sound made by an earlier version again.** The picture and key in those files were always fine. MacHuna still reads its older files correctly (in the player, and converting them to other formats).
+
+**The sound keeps its own length** (v1.13.0), as Grass Valley's Kahuna Manager writes it: a clip whose sound runs longer than its picture keeps all of it, and on the desk the picture holds its last frame while the sound plays on. Before, the sound was cut or padded to the picture. A K-Frame `.eaf` is still fitted to the picture, because that is what the K-Frame does. (Adding a separate sound file to a clip or a TGA sequence is a MacHuna 2 feature.)
 
 **Mono goes to both channels** (from v1.12.0). Earlier versions put a mono source on the left only. Stereo and multichannel sources are unchanged: the first two channels are left and right. **Dual mono** - two separate mono tracks, common in broadcast ProRes - is track 1 left, track 2 right (v1.12.1; before, track 2 was dropped).
 

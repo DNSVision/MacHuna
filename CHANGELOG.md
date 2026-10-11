@@ -4,7 +4,7 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased (to be v1.13.0)
+## v1.13.0 — 2026-10-11
 
 **Sound for any clip.** A sound file can now go with any TGA sequence, clip, SWS or EIF, as Kahuna Manager's Add Audio does. A user asked for it (2026-10-11) and David widened it from TGA sequences to every source. The interface is MacHuna 2.x's; this is the engine half.
 

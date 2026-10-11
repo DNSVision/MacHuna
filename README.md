@@ -33,6 +33,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Ignore alpha/key option -- writes fill-only file with no key plane, matching K-Watch behaviour
 - Audio support -- SWS: 16-bit PCM in the K-Watch layout (L=Ch1, R=Ch2), confirmed by ear on a live Kahuna (v1.12.4; earlier versions' SWS audio played only its first eighth of a second on a desk - convert those again). K-Frame `.eaf`: 4 channels of 24-bit, L=Ch1, R=Ch2. Mono goes to both channels (v1.12.0)
 - Include/exclude audio option
+- **Sound for any clip** (v1.13.0) - the engine takes a separate sound file for any TGA sequence, clip, SWS or EIF (`sound_file=`), as Kahuna Manager's Add Audio does; MacHuna 2 offers it in the interface. An SWS keeps a sound's own length, as Kahuna Manager writes it; an EIF's `.eaf` is fitted to the picture, as the K-Frame does
 - Auto play and Loop play flags baked into the SWS header at conversion time
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - **Batches can be built up from several folders** (v1.6.15) — the folder browser's **Add to List** button appends to the current selection instead of replacing it, so a single batch can draw files from anywhere. **Select** still replaces
