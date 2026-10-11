@@ -331,6 +331,11 @@ def _sws_audio_unpack(raw: bytes, header: bytes):
     if _sws_audio_is_legacy(block, header):
         a = block.view('<i2').reshape(-1, 16)
         return np.stack([a[:, 0], a[:, 2]], 1).astype(np.int16)
+    # The header holds the true count; K-Watch pads the section with silence
+    # to a whole 512 bytes (NOTICIAS8, 2026-10-11), and so does MacHuna.
+    count = struct.unpack_from('>I', header, 0x1C0)[0] if len(header) >= 0x1C4 else 0
+    if 0 < count < len(block):
+        block = block[:count]
     b = block.astype(np.int32)
     left = ((b[:, 1] << 8) | b[:, 2]).astype(np.uint16).view(np.int16)
     right = ((b[:, 5] << 8) | b[:, 6]).astype(np.uint16).view(np.int16)
@@ -365,8 +370,14 @@ def build_sws_header(source_filename: str,
                      has_audio: bool = False,
                      has_key: bool = True,
                      auto_play: bool = False,
-                     loop_play: bool = False) -> bytes:
+                     loop_play: bool = False,
+                     audio_samples: int = None) -> bytes:
     """Build a 512-byte SWS file header.
+
+    audio_samples: the sound's own length in samples, which an SWS keeps
+             whatever the picture's length (Kahuna Manager, 2026-10-11). The
+             section is padded to a whole 16 samples, as K-Watch pads it.
+             None: frame_count x samples-per-frame, as before.
 
     has_key: if False (ignore alpha / no key plane written), 0x1A8 and 0x1B4
              are zeroed and audio offset is calculated after fill only,
@@ -389,8 +400,14 @@ def build_sws_header(source_filename: str,
     # copied from a reference whose audio happened to be 5,760 samples long, so
     # a Kahuna played the first eighth of a second of every clip.
     samples_per_frame    = round(48000 / fps)
-    audio_samples        = samples_per_frame * frame_count if has_audio else 0
-    audio_data_size      = audio_samples * SWS_AUDIO_BYTES_PER_SAMPLE
+    if not has_audio:
+        audio_samples    = 0
+        audio_data_size  = 0
+    elif audio_samples is None:
+        audio_samples    = samples_per_frame * frame_count
+        audio_data_size  = audio_samples * SWS_AUDIO_BYTES_PER_SAMPLE
+    else:
+        audio_data_size  = _sws_padded_samples(audio_samples) * SWS_AUDIO_BYTES_PER_SAMPLE
 
     # Audio offset is after fill+key if key present, fill only if not
     # Confirmed by hex analysis of K-Watch no-alpha reference file
@@ -729,79 +746,6 @@ def _byteswap_v210(path: str):
     del data
 
 
-def extract_audio(input_path: str, output_path: str, frame_count: int, fps: float) -> bool:
-    """Extract audio from input file and write as raw 16-bit LE PCM, 16 channels, 48kHz.
-
-    Format confirmed by hex analysis of K-Watch reference SWS files:
-    - 16-bit signed little-endian samples (matches common MOV source format)
-    - 16 channels interleaved (source channels padded to 16 with silence)
-    - 48,000 Hz sample rate
-    - Samples per frame = 48000 / fps (e.g. 960 at 50fps, 1920 at 25fps)
-    - Bytes per frame = samples_per_frame x 2 bytes x 16 channels
-    - Padded with zero bytes to exact frame alignment if necessary
-
-    Returns True if audio was extracted successfully, False if source has no audio.
-    """
-    ffmpeg = _get_ffmpeg_path('ffmpeg')
-
-    # Extract as 16-bit LE, 16 channels, 48kHz raw PCM.
-    # K-Watch channel mapping (confirmed by hex analysis of reference SWS):
-    #   Ch1 = Left, Ch2 = silence, Ch3 = Right, Ch4 = silence, Ch5-16 = silence
-    # A straight -ac 16 upmix puts L on Ch1 and R on Ch2 which is wrong.
-    # Use the pan filter to route explicitly. Unspecified channels are silent.
-    # Note: 'c1=0' syntax is invalid in ffmpeg -- just omit silent channels.
-    # Mono goes to BOTH programme channels (David, 2026-10-08). The stereo rule
-    # has no second input channel to send right, so v1.11.0 left mono on the
-    # left only. Stereo and multichannel are unchanged, byte for byte.
-    info = get_video_info(input_path)
-    if _is_dual_mono(info):
-        # Dual mono: track 1 left, track 2 right (decision E), decoded track by
-        # track so nothing is reordered or cut short.
-        stereo = _dual_mono_stereo24(input_path)
-        if stereo is None:
-            return False
-        _write_sws_pcm(output_path, stereo, frame_count, fps)
-        return True
-    audio_args, _ = _programme_audio_filter(info, '16c', 'c0', 'c2')
-    cmd = [ffmpeg, '-y', '-i', input_path,
-           '-vn'] + audio_args + [
-           '-acodec', 'pcm_s16le',
-           '-ar', '48000',
-           '-f', 's16le',
-           output_path]
-    result = _run_ffmpeg(cmd)
-
-    if result.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-        return False
-
-    # Verify and pad to exact frame alignment
-    samples_per_frame = round(48000 / fps)
-    bytes_per_frame   = samples_per_frame * 2 * 16  # 2 bytes/sample, 16 channels
-    expected_size     = bytes_per_frame * frame_count
-    actual_size       = os.path.getsize(output_path)
-
-    if actual_size < expected_size:
-        # Pad with silence to exact length
-        with open(output_path, 'ab') as f:
-            f.write(b'\x00' * (expected_size - actual_size))
-    elif actual_size > expected_size:
-        # Truncate to exact length
-        with open(output_path, 'r+b') as f:
-            f.truncate(expected_size)
-
-    # The routing above (programme left on channel 0, right on channel 2) is
-    # kept as it is - mono, multichannel and track choice all live there - and
-    # the result is repacked into the layout a Kahuna actually plays.
-    a = np.fromfile(output_path, dtype='<i2').reshape(-1, 16)
-    with open(output_path, 'wb') as f:
-        f.write(_sws_audio_pack(a[:, 0], a[:, 2]))
-    return True
-
-
-# ─────────────────────────────────────────────────────────────
-#  SWS writer
-# ─────────────────────────────────────────────────────────────
-
 def write_sws(dest_path: str,
               fill_raw: str,
               key_raw: Optional[str],
@@ -1117,10 +1061,16 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  ignore_alpha: bool = False,
                  include_audio: bool = True,
                  auto_play: bool = False,
-                 loop_play: bool = False):
-    """Convert a MOV/MP4/AVI/etc video clip to .SWS."""
+                 loop_play: bool = False,
+                 sound_file: str = None):
+    """Convert a MOV/MP4/AVI/etc video clip to .SWS.
+
+    sound_file: a sound to carry instead of the clip's own (David,
+    2026-10-11); used whatever include_audio says. Either way the SWS keeps
+    the sound's own length (_write_sws_sound)."""
 
     log(f"Converting clip: {os.path.basename(input_path)}")
+    chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     info = get_video_info(input_path)
     w, h, fps = info['width'], info['height'], info['fps']
     frame_count = info['frame_count']
@@ -1249,14 +1199,18 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             raise ValueError(f"{os.path.basename(input_path)}: the conversion produced no "
                              f"frames, so nothing was written.")
 
-        # Extract audio if requested and present
-        if will_include_audio:
-            audio_path = os.path.join(tmp, 'audio.pcm')
-            if extract_audio(input_path, audio_path, output_frame_count, output_fps):
-                audio_raw = audio_path
-                log(f"  Audio extracted: {os.path.getsize(audio_raw):,} bytes")
-            else:
-                log(f"  Audio extraction failed -- writing without audio")
+        # The sound, at its own length (Kahuna Manager, 2026-10-11): a chosen
+        # sound file, or the clip's own if it is wanted and there is one.
+        audio_samples = None
+        stereo = chosen if chosen is not None else (
+            _source_stereo24(input_path) if will_include_audio else None)
+        if will_include_audio and chosen is None and stereo is None:
+            log(f"  Audio extraction failed -- writing without audio")
+        if stereo is not None and len(stereo):
+            audio_raw = os.path.join(tmp, 'audio.pcm')
+            audio_samples = _write_sws_sound(audio_raw, stereo)
+            log(f"  Sound: {audio_samples / EAF_SAMPLE_RATE:.2f}s, picture: "
+                f"{output_frame_count / output_fps:.2f}s")
 
         src_name = os.path.basename(input_path)
         clip_name  = Path(input_path).stem  # use filename stem as clip name
@@ -1274,6 +1228,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             has_key=(actual_key is not None),
             auto_play=auto_play,
             loop_play=loop_play,
+            audio_samples=audio_samples,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -1319,12 +1274,15 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          source_interlaced: bool = False,
                          _vf_override: str = None,
                          clip_name_override: str = None,
-                         _audio_stereo24=None):
+                         _audio_stereo24=None,
+                         sound_file: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
 
-    _audio_stereo24: internal, for SWS to SWS - the source's programme audio as
-    24-bit left/right, written into the SWS at the output's frame rate. A TGA
-    sequence has none of its own.
+    sound_file: a sound to go with the sequence, as Kahuna Manager's Add
+    Audio does (David, 2026-10-11). Kept at its own length (_write_sws_sound).
+
+    _audio_stereo24: internal - sound already decoded, as 24-bit left/right.
+    A TGA sequence has none of its own.
 
     clip_name_override: use this as the output header's clip name instead of the
     first frame's stem. Needed for SWS→SWS, where the intermediate frames are named
@@ -1332,6 +1290,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     """
 
     log(f"Converting TGA sequence: {len(tga_files)} frames → {file_number}.SWS")
+    if sound_file:
+        _audio_stereo24 = _sound_file_stereo24(sound_file, log)
     info = get_video_info(tga_files[0])
     w, h = info['width'], info['height']
     frame_count = len(tga_files)
@@ -1455,10 +1415,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
         out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
-        audio_raw = None
-        if _audio_stereo24 is not None:
-            audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'), _audio_stereo24,
-                                       output_frame_count, out_fps)
+        audio_raw = audio_samples = None
+        if _audio_stereo24 is not None and len(_audio_stereo24):
+            audio_raw = os.path.join(tmp, 'audio.pcm')
+            audio_samples = _write_sws_sound(audio_raw, _audio_stereo24)
+            log(f"  Sound: {audio_samples / EAF_SAMPLE_RATE:.2f}s, picture: "
+                f"{output_frame_count / out_fps:.2f}s")
 
         hdr = build_sws_header(
             source_filename=src_name,
@@ -1468,11 +1430,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             plane_size=plane_size,
             video_standard=video_standard,
             is_still=False,
-            fps=out_fps,      # sizes the audio; without it 0x1CC assumed 25fps
+            fps=out_fps,
             has_audio=audio_raw is not None,
             has_key=(actual_key is not None),
             auto_play=auto_play,
             loop_play=loop_play,
+            audio_samples=audio_samples,
         )
 
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
@@ -1560,8 +1523,12 @@ def _v210_through_ffmpeg(path: str, width: int, height: int, fps: float, vf: str
 def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        video_standard: str, split_fat32: bool = True, log=print,
                        ignore_alpha: bool = False, auto_play: bool = False,
-                       loop_play: bool = False, include_audio: bool = True) -> str:
+                       loop_play: bool = False, include_audio: bool = True,
+                       sound_file: str = None) -> str:
     """Re-encode an SWS to another standard, keeping its audio.
+
+    sound_file: a sound to carry instead of the SWS's own (2026-10-11). Either
+    way the sound keeps its own length (_write_sws_sound).
 
     The routing was written out twice - in the Tk GUI and in MacHuna 2.0's
     bridge - and both dropped the audio. It lives here now, once (2026-10-08).
@@ -1624,7 +1591,10 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         route = 'passthrough'
         log(f"  {stem}: {src.standard} → {video_standard} (passthrough)")
 
-    stereo = _sws_stereo24(sws_path) if include_audio else None
+    if sound_file:
+        stereo = _sound_file_stereo24(sound_file, log)
+    else:
+        stereo = _sws_stereo24(sws_path) if include_audio else None
     W, H = src.width, src.height
     with tempfile.TemporaryDirectory() as tmp:
         fill = os.path.join(tmp, 'fill.v210')
@@ -1679,10 +1649,12 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             raise ValueError(f"{Path(sws_path).name}: the conversion produced no frames, "
                              f"so nothing was written.")
 
-        audio_raw = None
-        if stereo is not None:
-            audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'), stereo, count, out_fps)
-            log(f"  {stem}: audio carried through")
+        audio_raw = audio_samples = None
+        if stereo is not None and len(stereo):
+            audio_raw = os.path.join(tmp, 'audio.pcm')
+            audio_samples = _write_sws_sound(audio_raw, stereo)
+            log(f"  {stem}: sound {audio_samples / EAF_SAMPLE_RATE:.2f}s, "
+                f"picture {count / out_fps:.2f}s")
         log(f"  clip name: {stem}   key: {'yes' if key else 'none'}   frames: {count}")
         hdr = build_sws_header(
             source_filename=os.path.basename(sws_path),
@@ -1697,6 +1669,7 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             has_key=key is not None,
             auto_play=auto_play,
             loop_play=loop_play,
+            audio_samples=audio_samples,
         )
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill, key, hdr, split_fat32,
@@ -1910,10 +1883,12 @@ def _eif_tail(fps: float) -> bytes:
 
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          cancel_event=None, out_name: str = None,
-                         include_audio: bool = True) -> str:
+                         include_audio: bool = True,
+                         sound_file: str = None) -> str:
     """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format, with its
     .eaf audio when the source has sound. Confirmed on a live K-Frame,
-    2026-10-07.
+    2026-10-07. sound_file: a sound to carry instead (2026-10-11), fitted to
+    the picture as every .eaf is.
     """
     if Path(input_path).suffix.lower() in _STILL_EXTS:
         # Settled: stills convert to Kahuna SWS only. The apps block this; the
@@ -1921,6 +1896,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         raise ValueError(f"{os.path.basename(input_path)} is a still. Stills convert to "
                          f"Kahuna SWS only.")
     log(f"Converting to EIF: {os.path.basename(input_path)}")
+    chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     info   = get_video_info(input_path)
     fps_in = info['fps']
     fps    = 25.0 if abs(fps_in - 25.0) <= abs(fps_in - 50.0) else 50.0
@@ -1962,7 +1938,11 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         log(f"  {info['width']}×{info['height']} @ {fps_in:.3g}fps → "
             f"EIF 1920×1080 @ {fps:.0f}fps, {frame_count} frame(s)")
 
-        stereo = _source_stereo24(input_path) if include_audio else None
+        stereo = chosen
+        if stereo is None and include_audio:
+            stereo = _source_stereo24(input_path)
+        elif stereo is not None and _fitted_sound_note(stereo, frame_count, fps):
+            log(_fitted_sound_note(stereo, frame_count, fps))
         header = _build_eif_header(clip_name, frame_count, fps,
                                    has_audio=stereo is not None)
         try:
@@ -1998,8 +1978,10 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
 def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              fps: float, log=print, cancel_event=None,
                              out_name: str = None,
-                             source_interlaced: bool = False) -> str:
-    """Convert a TGA sequence to K-Frame EIF format.
+                             source_interlaced: bool = False,
+                             sound_file: str = None) -> str:
+    """Convert a TGA sequence to K-Frame EIF format, with sound_file in an
+    .eaf if given (2026-10-11), fitted to the picture as the K-Frame does.
 
     An interlaced sequence is written the way a K-Frame stores 50i: the woven
     frames as they are, at 25fps. Desk session 2026-10-07: the desk's own
@@ -2007,6 +1989,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     EIF played correctly on a 1080i 25Hz desk. (This route used to deinterlace
     to 50fps progressive, which disagreed with both and with the MOV route.)
     """
+    stereo = _sound_file_stereo24(sound_file, log) if sound_file else None
     fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
     if source_interlaced and fps != 25.0:
         log("  Interlaced source: written at 25fps, the frame rate of 50i")
@@ -2018,7 +2001,10 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps"
         f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
         f" → {os.path.basename(dest_path)}")
-    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps)
+    if stereo is not None and _fitted_sound_note(stereo, frame_count, fps):
+        log(_fitted_sound_note(stereo, frame_count, fps))
+    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps,
+                               has_audio=stereo is not None)
     try:
         with _open_eif_output(dest_path) as out_fh:
             out_fh.write(header)
@@ -2044,8 +2030,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
                     log(f"  Frame {i + 1}/{frame_count}")
             out_fh.write(_eif_tail(fps))
-        # A TGA sequence carries no sound, so any stale companion goes.
-        _commit_eif(dest_path, None, frame_count, fps, log)
+        # Without a sound file a TGA sequence has none, so a stale companion goes.
+        _commit_eif(dest_path, stereo, frame_count, fps, log)
     except BaseException as e:
         _abandon_eif(dest_path, e, log)
         if isinstance(e, _EifCancelled):
@@ -2057,11 +2043,14 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
 
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None,
-                        include_audio: bool = True) -> str:
+                        include_audio: bool = True,
+                        sound_file: str = None) -> str:
     """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
     into an .eaf. Same header and picture encoder as the desk-confirmed MOV
-    route.
+    route. sound_file: a sound to carry instead (2026-10-11), fitted to the
+    picture.
     """
+    chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     h    = HulaSWSHeader(sws_path)
     log(f"  {h}")
     fps  = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
@@ -2090,7 +2079,10 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     if need_resize:
         log(f"  Scaling {h.width}×{h.height} → 1920×1080")
 
-    stereo   = _sws_stereo24(sws_path) if include_audio else None
+    stereo   = chosen if chosen is not None else (
+        _sws_stereo24(sws_path) if include_audio else None)
+    if stereo is not None and _fitted_sound_note(stereo, out_count, fps):
+        log(_fitted_sound_note(stereo, out_count, fps))
     header   = _build_eif_header(stem[:31].upper(), out_count, fps,
                                  has_audio=stereo is not None)
     fill_off = h.data_offset
@@ -2180,8 +2172,10 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         video_standard: str = '1080p25',
                         split_fat32: bool = True,
                         log=print, cancel_event=None,
-                        include_audio: bool = True) -> str:
-    """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio.
+                        include_audio: bool = True,
+                        sound_file: str = None) -> str:
+    """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio,
+    or with sound_file instead (2026-10-11), kept at its own length.
 
     The chosen standard is honoured (decision D, David 2026-10-08; it used to
     be ignored, so a 25fps EIF - usually woven 50i on a K-Frame - always became
@@ -2196,6 +2190,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
     reverted by David the same day: "always retain an alpha if there is one").
     """
     h = EIFHeader(eif_path)
+    chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     eif_fps = 50.0 if abs(h.fps - 50.0) < 1.0 else 25.0
     out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
     n = h.frame_count
@@ -2272,12 +2267,13 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                     log(f"  Frame {o + 1}/{out_count}")
 
         clip_name = h.clip_name or Path(eif_path).stem
-        audio_raw = None
-        if include_audio:
+        audio_raw = audio_samples = None
+        stereo = chosen
+        if stereo is None and include_audio:
             stereo = _read_eaf_words(eaf_path_for(eif_path), log=log)
-            if stereo is not None:
-                audio_raw = _write_sws_pcm(os.path.join(tmp, 'audio.pcm'),
-                                           stereo, out_count, out_fps)
+        if stereo is not None and len(stereo):
+            audio_raw = os.path.join(tmp, 'audio.pcm')
+            audio_samples = _write_sws_sound(audio_raw, stereo)
         hdr = build_sws_header(
             source_filename=os.path.basename(eif_path),
             clip_name=clip_name,
@@ -2289,6 +2285,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
             fps=out_fps,
             has_audio=audio_raw is not None,
             has_key=True,
+            audio_samples=audio_samples,
         )
         dest_path = os.path.join(dest_dir, f"{file_number}.SWS")
         write_sws(dest_path, fill_path, key_path, hdr, split_fat32,
@@ -4364,17 +4361,83 @@ def _sws_stereo24(sws_path: str):
     return a.astype(np.int64) << 8
 
 
-def _write_sws_pcm(pcm_path: str, stereo24, frame_count: int, fps: float) -> str:
-    """Kahuna SWS audio from 24-bit left/right, padded or trimmed to the clip,
-    in the layout K-Watch writes and a Kahuna plays (see _sws_audio_pack).
-    24-bit keeps its top 16 bits, as K-Watch and the K-Frame's import do."""
-    n = frame_count * _samples_per_frame(fps)
-    src = np.asarray(stereo24, dtype=np.int64)[:n]
-    left = np.zeros(n, np.int64); right = np.zeros(n, np.int64)
-    left[:len(src)], right[:len(src)] = src[:, 0] >> 8, src[:, 1] >> 8
+def _sws_padded_samples(n: int) -> int:
+    """K-Watch pads an SWS's sound section with silence to a whole 512 bytes
+    (16 samples); the header holds the true count (NOTICIAS8, 2026-10-11)."""
+    return -(-n // 16) * 16
+
+
+def _write_sws_sound(pcm_path: str, stereo24) -> int:
+    """Kahuna SWS sound at its OWN length, whatever the picture's, as Kahuna
+    Manager writes it: NOTICIAS8_GEN carries 1:54 of sound on 0:10 of
+    picture, and on the desk the picture holds while the sound plays on
+    (David, 2026-10-11). 24-bit keeps its top 16 bits, as K-Watch does.
+    Padded with silence to a whole 16 samples. Returns the true count, for
+    build_sws_header's audio_samples."""
+    src = np.asarray(stereo24, dtype=np.int64)
+    n = len(src)
+    padded = _sws_padded_samples(n)
+    left = np.zeros(padded, np.int64)
+    right = np.zeros(padded, np.int64)
+    left[:n], right[:n] = src[:, 0] >> 8, src[:, 1] >> 8
     with open(pcm_path, 'wb') as f:
         f.write(_sws_audio_pack(left, right))
-    return pcm_path
+    return n
+
+
+def sound_file_info(path: str):
+    """A sound file's length and shape, for the interface: a dict of
+    seconds, channels and sample_rate from its first sound track, or None if
+    it has no sound. Reads the file's description only; nothing is decoded."""
+    if not path or Path(path).suffix.lower() in _STILL_EXTS or not os.path.isfile(path):
+        return None
+    import json
+    result = subprocess.run([_get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
+                             '-select_streams', 'a:0', '-show_streams', '-show_format', path],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    data = json.loads(result.stdout or '{}')
+    streams = data.get('streams') or []
+    if not streams:
+        return None
+    a = streams[0]
+    rate = int(a.get('sample_rate') or 0)
+    try:
+        if a.get('duration_ts') and rate and a.get('time_base') == f"1/{rate}":
+            seconds = int(a['duration_ts']) / rate
+        else:
+            seconds = float(a.get('duration') or data.get('format', {}).get('duration') or 0)
+    except (TypeError, ValueError):
+        seconds = 0.0
+    return {'seconds': seconds, 'channels': int(a.get('channels') or 0), 'sample_rate': rate}
+
+
+def _sound_file_stereo24(sound_file: str, log=print):
+    """A chosen sound file as 24-bit left/right at 48kHz, by the same rules as
+    a clip's own sound (the first two channels; mono to both sides). Decoded
+    before any picture work, so a file with no sound is refused before
+    anything is written."""
+    name = os.path.basename(sound_file)
+    stereo = None
+    if os.path.isfile(sound_file) and Path(sound_file).suffix.lower() not in _STILL_EXTS:
+        stereo = _source_stereo24(sound_file)
+    if stereo is None or len(stereo) == 0:
+        raise ValueError(f"{name} has no sound MacHuna can read, so nothing was written.")
+    log(f"  Sound: {name}, {len(stereo) / EAF_SAMPLE_RATE:.2f}s")
+    return stereo
+
+
+def _fitted_sound_note(stereo24, frame_count: int, fps: float):
+    """What fitting a sound to an EIF's picture does to it, for the log."""
+    have, need = len(stereo24), frame_count * _samples_per_frame(fps)
+    if have > need:
+        return (f"  Sound cut to the picture's {need / EAF_SAMPLE_RATE:.2f}s (it runs "
+                f"{have / EAF_SAMPLE_RATE:.2f}s): a K-Frame fits sound to the picture")
+    if have < need:
+        return (f"  Sound padded with silence to the picture's {need / EAF_SAMPLE_RATE:.2f}s "
+                f"(it runs {have / EAF_SAMPLE_RATE:.2f}s)")
+    return None
 
 
 class _EifCancelled(Exception):
@@ -4486,9 +4549,18 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
     return cmd
 
 
+def _sound_file_pcm24(sound_file: str, tmp: str, log=print) -> str:
+    """A chosen sound file as the 24-bit PCM _prores_cmd takes (pcm_24bit),
+    at its own length: a MOV keeps the whole sound (2026-10-11)."""
+    stereo = _sound_file_stereo24(sound_file, log)
+    path = os.path.join(tmp, 'sound.s32')
+    (np.asarray(stereo, np.int64) << 8).astype('<i4').tofile(path)
+    return path
+
+
 def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                              include_audio: bool = True, out_name: str = None,
-                             log=print) -> str:
+                             log=print, sound_file: str = None) -> str:
     """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
 
     The output is an ordinary QuickTime file: picture, key as a real alpha
@@ -4512,7 +4584,9 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                 if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
                     log(f"  Frame {i + 1}/{h.frame_count}")
         stereo_pcm = None
-        if include_audio:
+        if sound_file:
+            stereo_pcm = _sound_file_pcm24(sound_file, tmp, log)
+        elif include_audio:
             pcm = read_eaf_stereo24(eaf_path_for(eif_path), log=log)
             if pcm:
                 stereo_pcm = os.path.join(tmp, 'audio.pcm')
@@ -4529,8 +4603,9 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                            fps: float, vf: str = None, out_fps: float = None,
-                           log=print) -> str:
-    """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio.
+                           log=print, sound_file: str = None) -> str:
+    """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio;
+    sound_file adds one at its own length (2026-10-11).
 
     32-bit RGBA TGAs keep their key as a real alpha channel. The interlace
     filter is supplied by the caller rather than worked out here: the rules for
@@ -4548,13 +4623,19 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
         + (f" (out {out_fps:g}fps)" if out_fps != fps else ""))
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [ffmpeg, '-y'] + _tga_input_args(tga_files, tmp, _fps_expr(fps))
+        if sound_file:
+            cmd += ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
+                    '-i', _sound_file_pcm24(sound_file, tmp, log), '-map', '0:v', '-map', '1:a']
         if vf:
             cmd += ['-vf', vf]
         cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
                 '-pix_fmt', 'yuva444p10le',
                 '-color_primaries', 'bt709', '-color_trc', 'bt709',
                 '-colorspace', 'bt709',
-                '-r', _fps_expr(out_fps), out_path]
+                '-r', _fps_expr(out_fps)]
+        if sound_file:
+            cmd += ['-c:a', 'pcm_s24le', '-ar', str(EAF_SAMPLE_RATE)]
+        cmd.append(out_path)
         _run_ffmpeg(cmd, check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -4562,7 +4643,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
 
 def _hula_convert_mov(sws_path: str, dest_parent: str,
                       include_audio: bool = True, out_name: str = None,
-                      log=print) -> str:
+                      log=print, sound_file: str = None) -> str:
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
 
     Named after the source file rather than a slot number: this is an ordinary
@@ -4590,11 +4671,16 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
                 f_out.write(rgba.tobytes())
                 if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
                     log(f"  Frame {i + 1}/{header.frame_count}")
-        stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
-                      if include_audio else None)
+        pcm_24bit = bool(sound_file)
+        if sound_file:
+            stereo_pcm = _sound_file_pcm24(sound_file, tmp, log)
+        else:
+            stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
+                          if include_audio else None)
         log("  Encoding ProRes 4444...")
         _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
-                                _fps_expr(header.fps), stereo_pcm, out_path),
+                                _fps_expr(header.fps), stereo_pcm, out_path,
+                                pcm_24bit=pcm_24bit),
                     check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -4604,11 +4690,13 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
                     clip_names: list = None, include_audio: bool = True,
-                    log=print):
+                    log=print, sound_files: list = None):
     """Convert a list of SWS or MOV files to the specified extraction target.
 
     clip_names, when given, is one Sony clip name per input path (bespoke
     names) and overrides the single shared clip_name for that item.
+    sound_files, when given, is one sound file (or None) per input path, for
+    QuickTime MOV output; TGA cannot carry sound.
     """
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
@@ -4616,13 +4704,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
     for idx, path in enumerate(input_paths, start=1):
         log(f"\n[{idx}/{len(input_paths)}] {os.path.basename(path)}")
         cn = clip_names[idx - 1] if clip_names else clip_name
+        sound = sound_files[idx - 1] if sound_files else None
         try:
             ext = Path(path).suffix.lower()
             if ext == '.eif' and target == HULA_TARGET_QUICKTIME_MOV:
                 _hula_convert_eif_to_mov(path, dest_dir,
                                          include_audio=include_audio,
                                          out_name=(cn or None) if clip_names else None,
-                                         log=log)
+                                         log=log, sound_file=sound)
             elif ext == '.eif':
                 weave = interlaced and kframe_tga_asks_desk_format(path)
                 if interlaced and not weave:
@@ -4650,7 +4739,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                 _hula_convert_mov(path, dest_dir,
                                   include_audio=include_audio,
                                   out_name=(cn or None) if clip_names else None,
-                                  log=log)
+                                  log=log, sound_file=sound)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:

@@ -1833,7 +1833,8 @@ class TestAudioRoutes(unittest.TestCase):
                 b = _sws_audio(out)
                 n = min(len(a), len(b))
                 self.assertTrue(np.array_equal(b[:n, 0], a[:n, 0]))
-                self.assertEqual(len(b), h.frame_count * int(round(48000 / h.fps)))
+                # Since 2026-10-11 an SWS keeps its sound's own length (Kahuna Manager), not frames x samples-per-frame.
+                self.assertEqual(_sws_sound(out)[0], _sws_sound(self._dir_path(f's2s_src_{src_std}'))[0])
 
     def test_sws_to_sws_rate_conversion_keeps_the_same_frames_as_other_routes(self):
         """Second review: 50p to 25p kept source frames 1, 3, 5 here but 0, 2, 4
@@ -1981,7 +1982,8 @@ class TestAudioRoutes(unittest.TestCase):
             a = _sws_audio(out)
             with self.subTest(src=src, std=std):
                 self.assertAlmostEqual(h.frame_count / h.fps, src_dur, delta=1.0 / h.fps)
-                self.assertEqual(len(a), h.frame_count * int(round(48000 / h.fps)))
+                # Since 2026-10-11 an SWS keeps its sound's own length (Kahuna Manager), not frames x samples-per-frame.
+                self.assertEqual(_sws_sound(out)[0], round(src_dur * 48000))
                 ref = self.L16 if src == 'stereo16' else (self.L[:6 * 960] >> 8)
                 n = min(len(ref), len(a))
                 self.assertTrue(np.array_equal(a[:n, 0], ref[:n]))
@@ -3563,10 +3565,11 @@ class TestExact5994(unittest.TestCase):
         h = m.HulaSWSHeader(sws)
         self.assertEqual(h.frame_count, 60)
         a = _sws_audio(sws)
-        self.assertEqual(len(a), 60 * 801)
+        # Since 2026-10-11 an SWS keeps its sound's own length (Kahuna Manager), not frames x samples-per-frame.
         n = len(ref)
+        self.assertEqual(_sws_sound(sws)[0], n)
         self.assertTrue(np.array_equal(a[:n, 0], ref))
-        self.assertEqual(int(np.abs(a[n:]).max()), 0)
+        self.assertEqual(int(np.abs(a[n:]).max(initial=0)), 0)
 
 
 class TestSonyNamesAreExactlyFour(unittest.TestCase):
@@ -4070,7 +4073,8 @@ class TestFiftyNineNinetyFourAndSixtyAreOneFamily(unittest.TestCase):
         sws = self._sws(self._mov('i2997', '30000/1001', True), '1080i60', 'c', logs)
         h = m.HulaSWSHeader(sws)
         self.assertEqual((h.frame_count, h.fps), (6, 30.0))
-        self.assertEqual(len(_sws_audio(sws)), 6 * 1600)
+        # Since 2026-10-11 an SWS keeps its sound's own length (Kahuna Manager), not frames x samples-per-frame.
+        self.assertEqual(_sws_sound(sws)[0], _source_samples(self.tmp + '/i2997.mov'))
         self.assertTrue(any('0.1% fast' in l for l in logs), logs)
 
     def test_interlaced_sws_crosses_between_5994_and_60_untouched(self):
@@ -4086,7 +4090,9 @@ class TestFiftyNineNinetyFourAndSixtyAreOneFamily(unittest.TestCase):
                 ho, po = self._planes(out)
                 self.assertEqual(ho.frame_count, hs.frame_count)
                 self.assertTrue(po == ps, 'the frames must pass through untouched')
-                self.assertEqual(len(_sws_audio(out)), ho.frame_count * round(48000 / ho.fps))
+                # Since 2026-10-11 an SWS keeps its sound's own length (Kahuna Manager), not frames x samples-per-frame.
+                self.assertEqual(_sws_sound(out)[0], _sws_sound(src)[0])
+                self.assertEqual(_sws_sound(out)[0], _source_samples(f"{self.tmp}/s{src_std}.mov"))
                 self.assertTrue(any(f'0.1% {word}' in l for l in logs), logs)
 
     def test_the_existing_5994p_weave_into_1080i60_now_says_so(self):
@@ -4300,3 +4306,280 @@ class TestPortableAppLayer(unittest.TestCase):
         src = Path(m.__file__).read_text()
         body = src.split('def _open_with_system', 1)[0] + src.split('def _reveal_in_file_browser', 1)[1].split('\ndef ', 1)[1]
         self.assertEqual(re.findall(r"\[\s*'open'", body), [])
+
+
+NOTICIAS8 = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/user-ref/2026-10-11-noticias8')
+
+
+def _source_samples(path):
+    """How many samples of sound a source file really holds, by ffprobe."""
+    import subprocess
+    out = subprocess.run([m._get_ffmpeg_path('ffprobe'), '-v', 'error', '-select_streams', 'a:0',
+                          '-show_entries', 'stream=duration_ts', '-of', 'csv=p=0', str(path)],
+                         capture_output=True, text=True, check=True).stdout
+    return int(out.strip())
+
+
+def _sws_sound(path):
+    """(sample count at 0x1C0, bytes in the sound section, decoded (n, 2)
+    left/right of the WHOLE section, padding included). Decoded here from the
+    K-Watch layout, independently of the engine."""
+    import numpy as np
+    b = Path(path).read_bytes()
+    count = struct.unpack_from('>I', b, 0x1C0)[0]
+    ao = struct.unpack_from('>I', b, 0x1E8)[0] * 32
+    if not ao:
+        return count, 0, None
+    s = np.frombuffer(b[ao:], np.uint8)
+    blk = s[:len(s) // 32 * 32].reshape(-1, 32).astype(np.int64)
+    be = lambda hi, lo: ((blk[:, hi] << 8) | blk[:, lo]) - (((blk[:, hi] << 8) | blk[:, lo]) >= 32768) * 65536
+    return count, len(s), np.stack([be(1, 2), be(5, 6)], 1)
+
+
+class TestSoundForAnyClip(unittest.TestCase):
+    """A sound file added to any TGA sequence, clip, SWS or EIF (David,
+    2026-10-11, from a user's Kahuna Manager request). Each output follows its
+    desk: an SWS keeps the sound's own length, as Kahuna Manager does
+    (NOTICIAS8_GEN: 1:54 of sound on 0:10 of picture), padded with silence to
+    a whole 512 bytes as K-Watch pads it, the header holding the true count. An
+    EIF's .eaf is fitted to the picture, as the K-Frame does. A MOV keeps the
+    sound's own length."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            raise unittest.SkipTest('ffmpeg not available')
+        import numpy as np, subprocess, wave
+        from PIL import Image
+        cls.tmp = tempfile.mkdtemp()
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        rng = np.random.default_rng(1110)
+        tone = lambda n, bits=24: rng.integers(-(1 << (bits - 1)) // 4, (1 << (bits - 1)) // 4, n)
+
+        def wav(name, chans, rate=48000, bits=24):
+            path = os.path.join(cls.tmp, name + '.wav')
+            a = np.stack(chans, 1).astype(np.int64)
+            data = ((a & 0xFFFFFF).astype('<u4').view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+                    if bits == 24 else a.astype('<i2').tobytes())
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(a.shape[1]); w.setsampwidth(bits // 8)
+                w.setframerate(rate); w.writeframes(data)
+            return path
+
+        # 48,001 samples: one second and one sample, not a whole 16 samples.
+        cls.LL, cls.LR = tone(48001), tone(48001)
+        cls.long = wav('long', [cls.LL, cls.LR])
+        cls.SL, cls.SR = tone(1000), tone(1000)
+        cls.short = wav('short', [cls.SL, cls.SR])
+        cls.MONO = tone(9600)
+        cls.mono = wav('mono', [cls.MONO])
+        cls.w441 = wav('w441', [tone(44100, 16), tone(44100, 16)], rate=44100, bits=16)
+
+        seq = os.path.join(cls.tmp, 'seq'); os.makedirs(seq)
+        cls.frames = []
+        for i in range(4):
+            p = os.path.join(seq, f'REPLAY_{i:04d}.tga')
+            Image.new('RGBA', (192, 108), (40 * i, 80, 160, 255)).save(p)
+            cls.frames.append(p)
+
+        # A clip with sound of its own, twice as long as its picture.
+        cls.CL, cls.CR = tone(12 * 1920), tone(12 * 1920)
+        own = wav('own', [cls.CL, cls.CR])
+        cls.clip = os.path.join(cls.tmp, 'clip.mov')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-t', '0.24', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=25', '-i', own, '-map', '0:v',
+                        '-map', '1:a', '-c:v', 'prores_ks', '-c:a', 'pcm_s24le', cls.clip], check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _dir(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        return d
+
+    def _quiet(self, *a):
+        pass
+
+    def _tga_sws(self, sound, std='1080p50', number=1):
+        d = self._dir()
+        return m.convert_tga_sequence(self.frames, number, d, std, split_fat32=False,
+                                      log=self._quiet, write_log=False, sound_file=sound)
+
+    def _assert_own_length(self, sws, left24, right24):
+        import numpy as np
+        count, nbytes, lr = _sws_sound(sws)
+        n = len(left24)
+        self.assertEqual(count, n, 'the header holds the sound\'s own length')
+        self.assertEqual(nbytes, -(-n // 16) * 16 * 32, 'padded to a whole 512 bytes, no more')
+        self.assertTrue(np.array_equal(lr[:n, 0], np.asarray(left24) >> 8))
+        self.assertTrue(np.array_equal(lr[:n, 1], np.asarray(right24) >> 8))
+        self.assertEqual(int(np.abs(lr[n:]).max(initial=0)), 0, 'the padding is silence')
+        self.assertEqual(struct.unpack_from('>I', Path(sws).read_bytes()[:512], 0x1CC)[0],
+                         os.path.getsize(sws), '0x1CC is the real file size')
+
+    # ── the sound file itself ─────────────────────────────────────────────
+    def test_a_sound_file_is_described(self):
+        info = m.sound_file_info(self.long)
+        self.assertAlmostEqual(info['seconds'], 48001 / 48000, places=4)
+        self.assertEqual((info['channels'], info['sample_rate']), (2, 48000))
+        self.assertEqual(m.sound_file_info(self.w441)['sample_rate'], 44100)
+        self.assertIsNone(m.sound_file_info(self.frames[0]), 'a picture is not a sound file')
+
+    def test_a_file_without_sound_is_refused_and_nothing_written(self):
+        d = self._dir()
+        with self.assertRaises(ValueError) as cm:
+            m.convert_tga_sequence(self.frames, 1, d, '1080p50', split_fat32=False,
+                                   log=self._quiet, write_log=False, sound_file=self.frames[0])
+        self.assertIn('REPLAY_0000.tga', str(cm.exception))
+        self.assertEqual(os.listdir(d), [])
+
+    # ── to SWS: the sound keeps its own length ────────────────────────────
+    def test_tga_sequence_to_sws_keeps_a_longer_sound_whole(self):
+        sws = self._tga_sws(self.long)
+        self.assertEqual(m.HulaSWSHeader(sws).frame_count, 4)
+        self._assert_own_length(sws, self.LL, self.LR)
+
+    def test_tga_sequence_to_sws_keeps_a_shorter_sound_as_it_is(self):
+        self._assert_own_length(self._tga_sws(self.short), self.SL, self.SR)
+
+    def test_a_mono_sound_goes_to_both_sides(self):
+        self._assert_own_length(self._tga_sws(self.mono), self.MONO, self.MONO)
+
+    def test_a_44_1khz_sound_is_resampled_to_48khz(self):
+        count, _n, _lr = _sws_sound(self._tga_sws(self.w441))
+        self.assertLessEqual(abs(count - 48000), 2)
+
+    def test_a_clip_keeps_its_own_sound_whole(self):
+        """The rule is the same for a clip's own sound: this one has 0:00.48 of
+        sound on 0:00.24 of picture, and used to be cut to the picture."""
+        d = self._dir()
+        sws = m.convert_clip(self.clip, 1, d, '1080p25', split_fat32=False, log=self._quiet)
+        self._assert_own_length(sws, self.CL, self.CR)
+
+    def test_a_sound_file_replaces_a_clips_own_sound(self):
+        d = self._dir()
+        sws = m.convert_clip(self.clip, 1, d, '1080p25', split_fat32=False, log=self._quiet,
+                             sound_file=self.long)
+        self._assert_own_length(sws, self.LL, self.LR)
+
+    def test_a_sound_file_is_used_even_with_include_audio_off(self):
+        """Choosing a sound file is the request; the clip's-own-sound switch
+        does not cancel it."""
+        d = self._dir()
+        sws = m.convert_clip(self.clip, 1, d, '1080p25', split_fat32=False, log=self._quiet,
+                             include_audio=False, sound_file=self.short)
+        self._assert_own_length(sws, self.SL, self.SR)
+
+    def test_sws_to_sws_carries_the_true_length_not_the_padding(self):
+        src = self._tga_sws(self.long)
+        out = m.convert_sws_to_sws(src, 2, self._dir(), '1080p50', split_fat32=False, log=self._quiet)
+        self._assert_own_length(out, self.LL, self.LR)
+
+    def test_sws_to_sws_takes_a_sound_file(self):
+        src = self._tga_sws(self.long)
+        out = m.convert_sws_to_sws(src, 2, self._dir(), '1080p50', split_fat32=False, log=self._quiet,
+                                   sound_file=self.short)
+        self._assert_own_length(out, self.SL, self.SR)
+
+    def test_eif_to_sws_takes_a_sound_file(self):
+        eif = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'R', 25.0, log=self._quiet, out_name='0001')
+        out = m.convert_eif_to_sws(eif, 3, self._dir(), '1080p25', split_fat32=False, log=self._quiet,
+                                   sound_file=self.long)
+        self._assert_own_length(out, self.LL, self.LR)
+
+    def test_the_player_reader_stops_at_the_true_length(self):
+        import numpy as np
+        got = np.frombuffer(m.read_sws_stereo16(self._tga_sws(self.long)), '<i2').reshape(-1, 2)
+        self.assertEqual(len(got), 48001)
+
+    # ── to EIF: fitted to the picture ─────────────────────────────────────
+    def _eaf(self, eif):
+        import numpy as np
+        return np.frombuffer(m.read_eaf_stereo24(m.eaf_path_for(eif), log=self._quiet),
+                             '<i4').reshape(-1, 2).astype(np.int64) >> 8
+
+    def test_tga_sequence_to_eif_cuts_a_longer_sound_to_the_picture(self):
+        import numpy as np
+        eif = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'R', 25.0, log=self._quiet,
+                                       out_name='0001', sound_file=self.long)
+        got = self._eaf(eif)
+        self.assertEqual(len(got), 4 * 1920)
+        self.assertTrue(np.array_equal(got[:, 0], self.LL[:4 * 1920]))
+        self.assertEqual(struct.unpack_from('<I', Path(eif).read_bytes()[:0x64], 0x60)[0], 0x07,
+                         'the .eif must announce its audio')
+
+    def test_tga_sequence_to_eif_pads_a_shorter_sound(self):
+        import numpy as np
+        got = self._eaf(m.convert_tga_seq_to_eif(self.frames, self._dir(), 'R', 25.0, log=self._quiet,
+                                                 out_name='0001', sound_file=self.short))
+        self.assertEqual(len(got), 4 * 1920)
+        self.assertTrue(np.array_equal(got[:1000, 1], self.SR))
+        self.assertEqual(int(np.abs(got[1000:]).max()), 0)
+
+    def test_clip_and_sws_to_eif_take_a_sound_file(self):
+        import numpy as np
+        eif = m.convert_clip_to_eif(self.clip, self._dir(), log=self._quiet, out_name='0001',
+                                    sound_file=self.long)
+        self.assertTrue(np.array_equal(self._eaf(eif)[:, 0], self.LL[:6 * 1920]))
+        sws = self._tga_sws(self.short, std='1080p25')
+        eif = m.convert_sws_to_eif(sws, self._dir(), log=self._quiet, out_name='0002',
+                                   sound_file=self.long)
+        self.assertTrue(np.array_equal(self._eaf(eif)[:, 0], self.LL[:4 * 1920]))
+
+    # ── to MOV: the sound keeps its own length ────────────────────────────
+    def _mov_sound(self, mov):
+        import numpy as np, subprocess
+        raw = subprocess.run([self.ff, '-v', 'error', '-i', mov, '-map', '0:a:0', '-f', 's32le', '-'],
+                             capture_output=True, check=True).stdout
+        return np.frombuffer(raw, '<i4').reshape(-1, 2).astype(np.int64) >> 8
+
+    def test_tga_sequence_to_mov_keeps_the_whole_sound(self):
+        import numpy as np
+        mov = m.convert_tga_seq_to_mov(self.frames, self._dir(), 'REPLAY', 25.0, log=self._quiet,
+                                       sound_file=self.long)
+        got = self._mov_sound(mov)
+        self.assertEqual(len(got), 48001)
+        self.assertTrue(np.array_equal(got[:, 0], self.LL))
+        self.assertTrue(np.array_equal(got[:, 1], self.LR))
+
+    def test_sws_and_eif_to_mov_take_a_sound_file(self):
+        import numpy as np
+        sws = self._tga_sws(self.short, std='1080p25')
+        eif = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'R', 25.0, log=self._quiet, out_name='0001')
+        for src in (sws, eif):
+            with self.subTest(src=Path(src).suffix):
+                d = self._dir()
+                m._hula_run_batch([src], d, m.HULA_TARGET_QUICKTIME_MOV, standard='1080p25',
+                                  sound_files=[self.long], log=self._quiet)
+                movs = [n for n in os.listdir(d) if n.endswith('.mov')]
+                self.assertEqual(len(movs), 1)
+                got = self._mov_sound(os.path.join(d, movs[0]))
+                self.assertEqual(len(got), 48001)
+                self.assertTrue(np.array_equal(got[:, 0], self.LL))
+
+
+@unittest.skipUnless(_readable(NOTICIAS8 / 'NOTICIAS8_GEN.SWS'), "the user's NOTICIAS8 files are not on this machine")
+class TestKahunaManagerSound(unittest.TestCase):
+    """The user's own Kahuna Manager output (2026-10-11): 250 interlaced TGAs
+    and a 1:54 WAV became NOTICIAS8_GEN.SWS, which plays on his Kahuna. MacHuna
+    given the same two inputs must write the same sound, the same sample count
+    and a file of the same size."""
+
+    def test_the_sound_is_rebuilt_exactly_from_the_tgas_and_the_wav(self):
+        import numpy as np
+        src = NOTICIAS8 / 'source'
+        frames = sorted(str(p) for p in (src / 'GEN_NOTICIAS8_OUT').glob('*.tga'))
+        self.assertEqual(len(frames), 250)
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        ours = m.convert_tga_sequence(frames, 1, d, '1080i50', split_fat32=False, log=lambda *a: None,
+                                      write_log=False, source_interlaced=True,
+                                      sound_file=str(src / 'GEN_NOTICIAS8_COM LOOP.wav'))
+        theirs = str(NOTICIAS8 / 'NOTICIAS8_GEN.SWS')
+        n_o, b_o, lr_o = _sws_sound(ours)
+        n_t, b_t, lr_t = _sws_sound(theirs)
+        self.assertEqual(n_o, n_t, 'sample count at 0x1C0')
+        self.assertEqual(b_o, b_t, 'size of the sound section')
+        self.assertTrue(np.array_equal(lr_o, lr_t), 'every sample, padding included')
+        self.assertEqual(os.path.getsize(ours), os.path.getsize(theirs))
+        self.assertEqual(struct.unpack_from('>I', Path(ours).read_bytes()[:512], 0x1A4)[0], 250)

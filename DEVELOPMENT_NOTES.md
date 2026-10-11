@@ -172,7 +172,7 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
 
 - **AUDIO MUST MATCH THE TARGET, WHATEVER THE SOURCE (David, 2026-10-08).**
   Every route that carries audio must write exactly what the target desk expects:
-  - Kahuna SWS: in-file, 16ch 16-bit LE 48kHz, L on 1, R on 3.
+  - Kahuna SWS: in-file, 48kHz, 8 big-endian 4-byte slots a sample, L on slot 1, R on slot 2, sample count at 0x1C0 (SETTLED 2026-10-09; this line said 16ch LE, L on 1, R on 3, until 2026-10-11). Since 2026-10-11 the sound keeps its own length.
   - K-Frame EIF: companion `.eaf`, 4ch 24-bit-in-32-bit LE 48kHz, L on 1, R on 2,
     zero-padded to frame_count x samples-per-frame (spec under the 2026-10-07
     desk results).

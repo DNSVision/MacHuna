@@ -4,6 +4,22 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased (to be v1.13.0)
+
+**Sound for any clip.** A sound file can now go with any TGA sequence, clip, SWS or EIF, as Kahuna Manager's Add Audio does. A user asked for it (2026-10-11) and David widened it from TGA sequences to every source. The interface is MacHuna 2.x's; this is the engine half.
+
+### Added
+- `sound_file=` on every route that can carry sound: to Kahuna SWS (`convert_tga_sequence`, `convert_clip`, `convert_sws_to_sws`, `convert_eif_to_sws`), to K-Frame EIF (`convert_tga_seq_to_eif`, `convert_clip_to_eif`, `convert_sws_to_eif`) and to QuickTime MOV (`convert_tga_seq_to_mov`, and `sound_files=` on `_hula_run_batch` for SWS and EIF). A chosen sound file replaces the source's own sound. WAV, AIFF or anything ffmpeg reads; mono goes to both sides, more than two channels give the first two, other rates are resampled to 48 kHz. A file with no sound is refused before anything is written.
+- `sound_file_info(path)`: length, channels and sample rate, for the interface.
+
+### Changed
+- **An SWS keeps its sound's own length**, whatever the picture's, on every route, including a clip's own sound. That is what Kahuna Manager writes: the user's NOTICIAS8_GEN.SWS has 1:54 of sound on 0:10 of picture, and on the desk the picture holds while the sound plays on. It used to be cut or padded to the picture. The sound section is padded with silence to a whole 512 bytes, as K-Watch pads it, and the header holds the true count. **Proof:** MacHuna, given the user's 250 TGAs and WAV, writes the same sound as Kahuna Manager did: the same samples, padding, sample count and file size.
+- An EIF's `.eaf` is still fitted to the picture, because the K-Frame does that; the log now says when a sound was cut or padded. A MOV keeps the sound's whole length.
+- Reading an SWS's sound stops at the header's count, so K-Watch's padding is not played or carried as sound.
+- Removed `extract_audio` and `_write_sws_pcm`, the old writers that fitted sound to the picture. Nothing else used them.
+
+---
+
 ## v1.12.5 — 2026-10-10
 
 **Ready for a PC fork.** Nothing changes on a Mac, and nothing changes for MacHuna 2.x, which uses none of this.
