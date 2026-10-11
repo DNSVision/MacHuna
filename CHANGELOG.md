@@ -4,6 +4,19 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased (to be v1.13.1)
+
+**Split SWS files (over 4 GB) are now written exactly as K-Watch writes them.** Measured against K-Watch's own split of a keyed 1080p50 clip with sound (961, made by David on 2026-10-11).
+
+### Fixed
+- **A keyed split SWS said it had no key.** MacHuna blanked two header fields (0x1A8 and 0x1B4) in every split file, because the reference split files it was built from (2023) had them blank. Those clips had no key, which is the only reason K-Watch blanks them. Every keyed split MacHuna wrote had its key in the file and a header saying there was none. MacHuna's own players found the key anyway; **what a Kahuna does with such a file is not yet known** (the one split file tried on a desk, 907, had no key). Convert keyed clips over 4 GB again.
+- **A split SWS keeps its sound.** It used to be left out (decision F, made when the layout was unknown). K-Watch's file shows the split is the ordinary stream - header, fill, key, sound - cut into 2 GB parts, so the sound is at the end of the last part; only 0x1CC changes, to the last part's size.
+- Reading: the player's sound reader (`read_sws_stereo16`) reads split files, and the key check for a split file no longer counts its sound as picture.
+
+**Proof:** MacHuna converts the same clip into the same three parts as K-Watch, to the byte in size, with the same layout fields and the same sound; and a forced split, joined back together, is the unsplit file byte for byte apart from 0x1CC and the timestamps.
+
+---
+
 ## v1.13.0 — 2026-10-11
 
 **Sound for any clip.** A sound file can now go with any TGA sequence, clip, SWS or EIF, as Kahuna Manager's Add Audio does. A user asked for it (2026-10-11) and David widened it from TGA sequences to every source. The interface is MacHuna 2.x's; this is the engine half.

@@ -2030,25 +2030,23 @@ class TestAudioRoutes(unittest.TestCase):
         self.assertTrue(np.array_equal(got[:, 0], self.L16 << 8), 'EIF left is not track 1')
         self.assertTrue(np.array_equal(got[:, 1], self.R16 << 8), 'EIF right is not track 2')
 
-    def test_a_split_sws_says_it_has_no_audio_and_the_log_says_why(self):
-        """Decision F (David, 2026-10-08): a split SWS (over 4GB) cannot carry
-        audio - the split layout's audio is unknown - so it is written without,
-        the log says so, and the header no longer claims audio it lacks."""
+    def test_a_split_sws_keeps_its_audio(self):
+        """Decision F (2026-10-08) left the audio out of a split SWS because the
+        split layout's audio was unknown. K-Watch's own split file (961,
+        2026-10-11) settled it: the sound stays, at the end of the stream.
+        Superseded; the full comparison is TestSplitSwsIsKWatchs."""
+        import numpy as np
         eif = self._eif('stereo24', 'split_src')
         d = self._dir('split_out')
-        lines = []
         old_limit = m.FAT32_LIMIT
         m.FAT32_LIMIT = 1024 * 1024          # force a split on a small clip
         try:
-            m.convert_eif_to_sws(eif, 5, d, split_fat32=True, log=lines.append)
+            m.convert_eif_to_sws(eif, 5, d, split_fat32=True, log=lambda *a: None)
         finally:
             m.FAT32_LIMIT = old_limit
-        chunks = sorted(Path(d, '5.SWS').glob('01_OF_*'))
-        self.assertTrue(chunks, 'the clip should have been split')
-        self.assertFalse(m.HulaSWSHeader(str(chunks[0])).has_audio,
-                         'a split SWS must not claim audio it does not contain')
-        self.assertTrue(any('audio' in l.lower() and 'split' in l.lower() for l in lines),
-                        'the log must say the audio was left out')
+        self.assertTrue(m.split_parts(os.path.join(d, '5.SWS')), 'the clip should have been split')
+        got = np.frombuffer(m.read_sws_stereo16(os.path.join(d, '5.SWS')), '<i2').reshape(-1, 2)
+        self.assertTrue(np.array_equal(got[:, 0], self.L >> 8))
 
     def test_a_failed_eif_leaves_nothing_half_written(self):
         """Independent review, 2026-10-08: a failure partway through (not a
@@ -4583,3 +4581,107 @@ class TestKahunaManagerSound(unittest.TestCase):
         self.assertTrue(np.array_equal(lr_o, lr_t), 'every sample, padding included')
         self.assertEqual(os.path.getsize(ours), os.path.getsize(theirs))
         self.assertEqual(struct.unpack_from('>I', Path(ours).read_bytes()[:512], 0x1A4)[0], 250)
+
+
+SPLIT_REF = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/desk/2026-10-11-split')
+
+
+class TestSplitSwsIsKWatchs(unittest.TestCase):
+    """A split SWS is an ordinary SWS cut into 2 GB parts (K-Watch, 961,
+    2026-10-11): header, fill, key, then the SOUND, as one stream. Only 0x1CC
+    changes, to the last part's size. MacHuna used to leave the sound out
+    (decision F, made when the layout was unknown) and to blank 0x1A8 and
+    0x1B4 in every split file - read from reference splits that turned out to
+    have NO KEY, which is the only reason those fields were blank. Every keyed
+    split MacHuna wrote said it had no key."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            raise unittest.SkipTest('ffmpeg not available')
+        import numpy as np, wave
+        from PIL import Image
+        cls.tmp = tempfile.mkdtemp()
+        rng = np.random.default_rng(961)
+        cls.L, cls.R = rng.integers(-2 ** 14, 2 ** 14, 30001), rng.integers(-2 ** 14, 2 ** 14, 30001)
+        cls.wav = os.path.join(cls.tmp, 'bed.wav')
+        with wave.open(cls.wav, 'wb') as w:
+            w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000)
+            w.writeframes(np.stack([cls.L, cls.R], 1).astype('<i2').tobytes())
+        cls.frames = {}
+        for keyed in (True, False):
+            fs = []
+            for i in range(4):
+                f = os.path.join(cls.tmp, f"{'k' if keyed else 'n'}_{i:04d}.tga")
+                Image.new('RGBA' if keyed else 'RGB', (192, 108),
+                          (30 * i, 90, 200, 60 * i) if keyed else (30 * i, 90, 200)).save(f)
+                fs.append(f)
+            cls.frames[keyed] = fs
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _make(self, keyed, split):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        old = m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK
+        if split:
+            m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = 8 * 1024 * 1024, 16 * 1024 * 1024
+        try:
+            return m.convert_tga_sequence(self.frames[keyed], 1, d, '1080p50', split_fat32=True,
+                                          log=lambda *a: None, write_log=False, sound_file=self.wav)
+        finally:
+            m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = old
+
+    @staticmethod
+    def _stream(path):
+        parts = m.split_parts(path)
+        return b''.join(Path(p).read_bytes() for p in parts) if parts else Path(path).read_bytes()
+
+    def test_a_split_is_the_whole_file_cut_into_parts(self):
+        """Joined back together, the parts are the unsplit file, byte for
+        byte, apart from the timestamps and 0x1CC (the last part's size)."""
+        for keyed in (True, False):
+            with self.subTest(keyed=keyed):
+                whole = self._stream(self._make(keyed, False))
+                split_path = self._make(keyed, True)
+                parts = m.split_parts(split_path)
+                self.assertGreaterEqual(len(parts), 2, 'it should have split')
+                joined = self._stream(split_path)
+                self.assertEqual(len(joined), len(whole))
+                self.assertEqual(joined[512:], whole[512:], 'picture, key and sound')
+                self.assertEqual(struct.unpack_from('>I', joined, 0x1CC)[0], os.path.getsize(parts[-1]))
+                for lo, hi in ((0, 0x148), (0x188, 0x1CC), (0x1D0, 512)):
+                    self.assertEqual(joined[lo:hi], whole[lo:hi], f'header 0x{lo:X}-0x{hi:X}')
+
+    def test_a_split_file_reads_back_with_its_key_and_sound(self):
+        import numpy as np
+        for keyed in (True, False):
+            with self.subTest(keyed=keyed):
+                path = self._make(keyed, True)
+                h = m.SWSHeader(path)
+                self.assertEqual(bool(h.has_key), keyed)
+                self.assertTrue(h.has_audio)
+                got = np.frombuffer(m.read_sws_stereo16(path), '<i2').reshape(-1, 2)
+                self.assertEqual(len(got), 30001)
+                self.assertTrue(np.array_equal(got[:, 0], self.L))
+
+    @unittest.skipUnless(_readable(SPLIT_REF / 'kwatch' / '961.SWS' / '03_OF_03._XX')
+                         and _readable(SPLIT_REF / 'SPLIT_PROBE_50p.mov'), "K-Watch's 961 is not on this machine")
+    def test_the_same_clip_splits_exactly_as_kwatch_splits_it(self):
+        """SPLIT_PROBE_50p.mov through K-Watch (961) and through MacHuna: the
+        same parts, the same layout fields, the same sound."""
+        import numpy as np
+        d = tempfile.mkdtemp(dir=self.tmp)
+        ours = m.convert_clip(str(SPLIT_REF / 'SPLIT_PROBE_50p.mov'), 1, d, '1080p50',
+                              log=lambda *a: None)
+        theirs = str(SPLIT_REF / 'kwatch' / '961.SWS')
+        po, pt = m.split_parts(ours), m.split_parts(theirs)
+        self.assertEqual([os.path.getsize(p) for p in po], [os.path.getsize(p) for p in pt], 'part sizes')
+        ho, ht = Path(po[0]).read_bytes()[:512], Path(pt[0]).read_bytes()[:512]
+        for off in (0x188, 0x18C, 0x190, 0x194, 0x198, 0x19C, 0x1A0, 0x1A4, 0x1A8,
+                    0x1B0, 0x1B4, 0x1C0, 0x1CC, 0x1E8, 0x1EC):
+            self.assertEqual(ho[off:off + 4].hex(), ht[off:off + 4].hex(), f'header 0x{off:X}')
+        so = np.frombuffer(Path(po[-1]).read_bytes()[-480000 * 32:], np.uint8).reshape(-1, 8, 4)
+        st = np.frombuffer(Path(pt[-1]).read_bytes()[-480000 * 32:], np.uint8).reshape(-1, 8, 4)
+        self.assertTrue(np.array_equal(so[..., 1:], st[..., 1:]), 'the sound, every byte but the lead')

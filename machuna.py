@@ -273,6 +273,7 @@ def _i_to_p_filter(source_fps: float, video_standard: str, parity: str = None) -
 
 
 FAT32_LIMIT = 4 * 1024 * 1024 * 1024  # 4 GB
+SWS_SPLIT_CHUNK = 2 * 1024 * 1024 * 1024  # each part of a split SWS (K-Watch's size)
 
 _current_ffmpeg_proc = None
 _ffmpeg_proc_lock = __import__('threading').Lock()
@@ -347,12 +348,16 @@ def read_sws_stereo16(sws_path: str):
     at 48 kHz, or None if it has none. For MacHuna 2.x's player bridge, which
     used to read the layout itself (and so assumed the wrong one)."""
     h = SWSHeader(sws_path)
-    if not h.has_audio or getattr(h, 'parts', None):
+    if not h.has_audio:
         return None
-    with open(sws_path, 'rb') as f:
+    # A split SWS carries its sound at the end of the stream (v1.13.1).
+    f = SplitReader(h.parts) if getattr(h, 'parts', None) else open(sws_path, 'rb')
+    try:
         head = f.read(SWS_HEADER_SIZE)
         f.seek(h.audio_offset)
         raw = f.read(max(0, h.total_size - h.audio_offset))
+    finally:
+        f.close()
     lr = _sws_audio_unpack(raw, head)
     return lr.astype('<i2').tobytes() if lr.size else None
 
@@ -769,19 +774,11 @@ def write_sws(dest_path: str,
     total      = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
     if split_fat32 and total > FAT32_LIMIT:
-        if audio_raw:
-            # Decision F (David, 2026-10-08): the split layout's audio is unknown,
-            # so a split clip carries none. Say so, and stop the header claiming
-            # audio it does not contain (it used to, silently).
-            header = bytearray(header)
-            struct.pack_into('>I', header, 0x1C0, 0)
-            struct.pack_into('>I', header, 0x1E8, 0)
-            struct.pack_into('>I', header, 0x1EC, 0)
-            header = bytes(header)
-            log("  NOTE: over 4GB, so this clip is split - and a split SWS cannot "
-                "carry audio. Written without audio. Keep clips with sound under "
-                "the split size.")
-        _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log)
+        # A split SWS keeps its sound (K-Watch's 961, 2026-10-11): it is the
+        # same stream, sound last, cut into parts. Decision F left it out while
+        # that layout was unknown.
+        _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log,
+                         audio_raw=audio_raw)
     else:
         with open(dest_path, 'wb') as out:
             out.write(header)
@@ -800,7 +797,8 @@ def _copy_file(src: str, dest_fh):
 
 
 def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
-                     header: bytes, frame_count: int = 1, log=print):
+                     header: bytes, frame_count: int = 1, log=print,
+                     audio_raw: Optional[str] = None):
     """Split large SWS into 2GB FAT32-safe chunks inside a named folder.
 
     Chunk format (confirmed by hex analysis of K-Watch reference split files):
@@ -810,26 +808,26 @@ def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
       - Chunks 2..N-1: raw video data only, exactly 2GB each
       - Final chunk: raw video data only, remainder (any size)
 
-    Header patches for split files (confirmed by hex analysis):
-      - 0x1A8 (play count): zeroed
-      - 0x1B4: zeroed
-      - 0x1CC (total file size): set to size of final chunk only
-      - 0x1A4 (frame count): unchanged -- total frames across all chunks
-      - All other fields: identical to non-split header
+    The parts are the ordinary SWS stream cut into 2 GB pieces:
+      header | all fill frames | all key frames | sound
+    and only 0x1CC changes, to the size of the final part. Measured against
+    K-Watch's own split of a keyed clip with sound (961, 2026-10-11): the sound
+    sits at the end, so in the last part, with 0x1C0/0x1E8/0x1EC as usual.
 
-    Data layout within the stream (same as non-split):
-      header | all fill frames | all key frames
-      (audio is not supported in split files)
+    0x1A8 and 0x1B4 are NOT blanked. Until v1.13.1 they were, because the
+    reference splits had them blank - but those clips had no key, which is the
+    only reason K-Watch blanks them. Every keyed split MacHuna wrote said it had
+    no key.
     """
-    CHUNK_SIZE = 2 * 1024 * 1024 * 1024  # exactly 2GB per chunk
+    CHUNK_SIZE = SWS_SPLIT_CHUNK         # exactly 2GB per chunk
 
     os.makedirs(dest_folder, exist_ok=True)
 
     # Calculate total data size so we know the final chunk size in advance.
-    # Audio is excluded from split files.
-    fill_size = os.path.getsize(fill_raw)
-    key_size  = os.path.getsize(key_raw) if key_raw else 0
-    total_data = SWS_HEADER_SIZE + fill_size + key_size
+    fill_size  = os.path.getsize(fill_raw)
+    key_size   = os.path.getsize(key_raw) if key_raw else 0
+    audio_size = os.path.getsize(audio_raw) if audio_raw else 0
+    total_data = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
     # Number of chunks
     n_chunks = (total_data + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -838,30 +836,26 @@ def _write_sws_split(dest_folder: str, fill_raw: str, key_raw: Optional[str],
     full_chunks_size = (n_chunks - 1) * CHUNK_SIZE
     final_chunk_size = total_data - full_chunks_size
 
-    # Build patched header for split files:
-    #   0x1A8 = 0  (play count zeroed)
-    #   0x1B4 = 0  (zeroed)
-    #   0x1CC = final chunk size (not total file size)
+    # The one field a split changes: 0x1CC = the final part's size.
     hdr = bytearray(header)
-    struct.pack_into('>I', hdr, 0x1A8, 0)
-    struct.pack_into('>I', hdr, 0x1B4, 0)
     struct.pack_into('>I', hdr, 0x1CC, final_chunk_size)
     hdr = bytes(hdr)
 
     log(f"  Split: {n_chunks} chunks  ({total_data:,} bytes total, "
         f"final chunk {final_chunk_size:,} bytes)")
 
-    # Stream data source: header, then all fill frames, then all key frames.
+    # Stream data source: header, all fill frames, all key frames, the sound.
     # Never held entirely in memory -- written chunk by chunk to disk.
     def data_source():
         yield hdr
         with open(fill_raw, 'rb') as f:
             while block := f.read(1024 * 1024):
                 yield block
-        if key_raw:
-            with open(key_raw, 'rb') as f:
-                while block := f.read(1024 * 1024):
-                    yield block
+        for raw in (key_raw, audio_raw):
+            if raw:
+                with open(raw, 'rb') as f:
+                    while block := f.read(1024 * 1024):
+                        yield block
 
     chunk_idx  = 0
     bytes_in_chunk = 0
@@ -2507,13 +2501,6 @@ class SWSHeader:
         self.plane_size  = struct.unpack_from('>I', raw, OFF_PLANE_SZ)[0]
         self.frame_count = struct.unpack_from('>I', raw, OFF_FRAMES)[0]
         self.play_count  = struct.unpack_from('>I', raw, OFF_PLAY_CNT)[0]
-        # Split files zero 0x1A8, so play_count cannot answer this for them.
-        # The total size can: header + fill, or header + fill + key.
-        if self.parts:
-            planes = (self.total_size - self.data_offset) // max(1, self.plane_size)
-            self.has_key = planes > self.frame_count
-        else:
-            self.has_key = (self.play_count > 0)
 
         aud_frame_size   = struct.unpack_from('>H', raw, OFF_AUD_FSZ)[0]
         aud_offset_div32 = struct.unpack_from('>I', raw, OFF_AUD_OFF)[0]
@@ -2523,6 +2510,18 @@ class SWSHeader:
         # checking aud_frame_size == 0x1680, which varies between workflows.
         self.has_audio    = (aud_offset_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_offset_div32 * 32 if self.has_audio else 0
+
+        # A split written by MacHuna before v1.13.1 blanked 0x1A8 even with a
+        # key, so play_count cannot answer this for a split. The size can:
+        # header + fill, or header + fill + key - counted up to the sound, which
+        # a split keeps at the end of the stream since v1.13.1 (and K-Watch's
+        # always did).
+        if self.parts:
+            end = self.audio_offset if self.has_audio else self.total_size
+            planes = (end - self.data_offset) // max(1, self.plane_size)
+            self.has_key = self.play_count > 0 or planes > self.frame_count
+        else:
+            self.has_key = (self.play_count > 0)
         fmt_variant       = struct.unpack_from('>I', raw, OFF_FMT_VARIANT)[0]
         self.fps          = self._get_fps(self.std_code, fmt_variant)
         self.standard     = FORMAT_VARIANT_DISPLAY.get(fmt_variant, f'0x{fmt_variant:02x}')
