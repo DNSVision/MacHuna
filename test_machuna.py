@@ -4677,13 +4677,13 @@ class TestSplitSwsIsKWatchs(unittest.TestCase):
                 self.assertTrue(np.array_equal(got[:, 0], self.L))
 
     @unittest.skipUnless(_readable(SPLIT_REF / 'kwatch' / '961.SWS' / '03_OF_03._XX')
-                         and _readable(SPLIT_REF / 'SPLIT_PROBE_50p.mov'), "K-Watch's 961 is not on this machine")
+                         and _readable(SPLIT_REF / 'sources' / 'SPLIT_PROBE_50p.mov'), "K-Watch's 961 is not on this machine")
     def test_the_same_clip_splits_exactly_as_kwatch_splits_it(self):
         """SPLIT_PROBE_50p.mov through K-Watch (961) and through MacHuna: the
         same parts, the same layout fields, the same sound."""
         import numpy as np
         d = tempfile.mkdtemp(dir=self.tmp)
-        ours = m.convert_clip(str(SPLIT_REF / 'SPLIT_PROBE_50p.mov'), 1, d, '1080p50',
+        ours = m.convert_clip(str(SPLIT_REF / 'sources' / 'SPLIT_PROBE_50p.mov'), 1, d, '1080p50',
                               log=lambda *a: None)
         theirs = str(SPLIT_REF / 'kwatch' / '961.SWS')
         po, pt = m.split_parts(ours), m.split_parts(theirs)
@@ -4697,13 +4697,13 @@ class TestSplitSwsIsKWatchs(unittest.TestCase):
         self.assertTrue(np.array_equal(so[..., 1:], st[..., 1:]), 'the sound, every byte but the lead')
 
     @unittest.skipUnless(_readable(SPLIT_REF / 'kwatch' / '966.SWS' / '06_OF_06._XX')
-                         and _readable(SPLIT_REF / 'SPLIT_PROBE_20s_50p.mov'), "K-Watch's 966 is not on this machine")
+                         and _readable(SPLIT_REF / 'sources' / 'SPLIT_PROBE_20s_50p.mov'), "K-Watch's 966 is not on this machine")
     def test_six_parts_carry_kwatchs_size_field(self):
         """966 (20s, 6 parts): 0x1CC is the total size wrapped at 4 GB
         (2,499,985,920), not the last part's size (352,502,272). 961, with 3
         parts, could not tell the two apart."""
         d = tempfile.mkdtemp(dir=self.tmp)
-        ours = m.convert_clip(str(SPLIT_REF / 'SPLIT_PROBE_20s_50p.mov'), 1, d, '1080p50',
+        ours = m.convert_clip(str(SPLIT_REF / 'sources' / 'SPLIT_PROBE_20s_50p.mov'), 1, d, '1080p50',
                               log=lambda *a: None)
         po, pt = m.split_parts(ours), m.split_parts(str(SPLIT_REF / 'kwatch' / '966.SWS'))
         self.assertEqual([os.path.getsize(p) for p in po], [os.path.getsize(p) for p in pt], 'part sizes')
