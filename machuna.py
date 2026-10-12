@@ -1036,6 +1036,17 @@ def _assume_709(info: dict) -> bool:
             and info.get('height', 0) >= 720)
 
 
+def _assume_709_and_say(info: dict, log=print) -> bool:
+    """`_assume_709`, said in the log. K-Watch and the K-Frame import take an
+    unlabelled HD clip as SD colour; MacHuna takes it as HD, so the two can
+    look different on a desk. David (2026-10-12) kept HD and asked for the log
+    to say so, so the difference is never a surprise."""
+    assume = _assume_709(info)
+    if assume:
+        log("  Source has no colour label, treated as HD colour (BT.709)")
+    return assume
+
+
 def _v210_plane_size(width: int, height: int) -> int:
     """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
     multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when
@@ -1162,7 +1173,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0,
                                   interlaced=rescale and info.get('is_interlaced', False),
-                                  assume_709=_assume_709(info))
+                                  assume_709=_assume_709_and_say(info, log))
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -1923,7 +1934,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     extract_alpha=info['has_alpha'],
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
-                                    assume_709=_assume_709(info))
+                                    assume_709=_assume_709_and_say(info, log))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if cross_rate and frame_count:
             index = _pick_frames(frame_count, fps_in, fps)
@@ -4164,7 +4175,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     # interlaced is scaled a field at a time so the fields never blend; a
     # source that is about to be woven is progressive, so is scaled whole.
     info = get_video_info(mov_path)
-    vf = [_UNTAGGED_HD_AS_709] if _assume_709(info) else []
+    vf = [_UNTAGGED_HD_AS_709] if _assume_709_and_say(info, log) else []
     if (info.get('width'), info.get('height')) != (1920, 1080):
         fields = info.get('is_interlaced', False) and not interlaced
         vf.append('scale=1920:1080' + (':interl=1' if fields else ''))

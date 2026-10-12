@@ -2887,6 +2887,40 @@ class TestUntaggedHdColour(unittest.TestCase):
         self.assertLessEqual(abs(float(yuv[540, 400, 1]) - ref[1, 540, 400]), 2, 'SWS Cb shifted')
         self.assertLessEqual(abs(float(yuv[540, 1500, 2]) - ref[2, 540, 1500]), 2, 'SWS Cr shifted')
 
+    def test_the_log_says_when_a_clip_had_no_colour_label(self):
+        """David, 2026-10-12: K-Watch took an unlabelled HD clip as SD colour and
+        MacHuna as HD, and the two looked different on the desk. MacHuna keeps
+        HD, and says so, on every route that makes the guess. A labelled clip
+        is taken at its label and says nothing."""
+        import subprocess
+        untagged = self._clip('hd', '1920x1080')
+        tagged = os.path.join(self.tmp, 'tagged.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-i', untagged, '-c:v', 'prores_ks',
+                        '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+                        tagged], check=True)
+        note = 'no colour label, treated as HD colour (BT.709)'
+
+        def routes(src, tag):
+            out = {}
+            for route in ('sws', 'eif', 'tga'):
+                lines = []
+                d = os.path.join(self.tmp, f'{tag}-{route}'); os.makedirs(d)
+                if route == 'sws':
+                    m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False,
+                                   split_fat32=False, log=lines.append)
+                elif route == 'eif':
+                    m.convert_clip_to_eif(src, d, log=lines.append, out_name='0001')
+                else:
+                    m._hula_convert_mov_to_tga(src, d, m.HULA_TARGET_SONY_TGA, '1080p25',
+                                               clip_name='TEST', log=lines.append)
+                out[route] = '\n'.join(map(str, lines))
+            return out
+
+        for route, text in routes(untagged, 'untagged').items():
+            self.assertIn(note, text, f'{route}: an unlabelled HD clip was not reported')
+        for route, text in routes(tagged, 'tagged').items():
+            self.assertNotIn(note, text, f'{route}: a labelled clip was reported as unlabelled')
+
 
 class TestTgaAlphaIsReadNotAssumed(unittest.TestCase):
     """Fable black-box pass, 2026-10-08: the probe assumed every TGA has alpha,
