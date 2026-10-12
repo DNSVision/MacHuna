@@ -384,7 +384,24 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
 **Future / low priority (no demand yet):**
 - Additional output standards (1080p/29.97, 1080p/30, SD 625/50 & 525/59.94, sF variants, 2160p) - need confirmed K-Watch reference files before re-adding to the dropdown.
 - 720p/59.94 reinstatement (genuine US demand, ABC/Fox) - needs a K-Watch 720p reference, hardware, and the plane_size fix. See "Format Support Rationale".
-- HLG Rec.2020 colour space (needs a real HLG SWS to reverse-engineer).
+- **HDR (HLG and PQ, Rec.2020).** First real HDR Kahuna file examined 2026-10-12: a clip
+  from an old client job in David's own files (not named here: this repo is public; never copy
+  or publish it). Written by a Kahuna on software 9.6 in 2024; 58 frames 1080p50, key, and a
+  silent sound track (all zeros: the desk wrote what its source held). **The fill never goes above level 572**, which
+  is BT.2408 HDR graphics white in **PQ** (58%, 203 nits); HLG would put it near 721. Chroma held
+  in 412-675, consistent with Rec.2020. **Its header is an ordinary 1080p50 header** (0x188 =
+  `0x4923`, 0x18C = `0x18`), so the Kahuna does NOT record HDR in the file - the old assumption below
+  that HLG needs a different 0x188 value looks wrong, at least for PQ on 9.6. MacHuna therefore
+  cannot tell an HDR SWS from an HD one by its header; only the levels hint at it (inference, not a
+  label). Today such a clip converts with its HDR levels kept and looks dim and grey on HD.
+- **LUTs (idea, discussed 2026-10-12, not scheduled).** Houses use their own LUTs, so MacHuna should
+  not ship "the" HDR conversion: the user supplies a `.cube` file (ffmpeg's `lut3d` reads it).
+  Rules agreed in discussion: **fill only, never the key**; one LUT per batch, not remembered between
+  sessions (like Clear frame); the log names the LUT used; MacHuna may hint that a clip looks like PQ
+  (peak at 572) but the user decides. **Start with the player** (a viewing LUT changes nothing on
+  disk, so no risk), conversion later. Wait for a real job to set the first case - ideally with that
+  house's own LUT and a desk to check against - because the hard part is direction (HDR to HD or
+  HD to HDR) and which sources need it, not the code.
 - Windows port (community contribution; note in README when repos go public).
 - ~~Going public~~ - **DONE, and this note was stale.** `DNSVision/MacHuna` has
   been public since before 2026-09-24, which is ahead of the condition written
@@ -682,7 +699,7 @@ MacHuna's `0901.eif` (untouched engine v1.11.0 output of KNOCKOUT_WIPE, flag `0x
 **Parked by David, same day:** all 25fps EIF work (0903, the 25fps write path, the 25fps `0x8DC` tag), because testing it means changing the desk's format, which may not be allowed. And 0902 (false audio flag) as moot: MacHuna already writes the correct flag at 50fps.
 
 ### Future Considerations
-- HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify)
+- HLG Rec.2020 colour space option (header field 0x188 needs a different value -- requires a real HLG SWS to hex dump and verify). **Superseded 2026-10-12:** a real PQ HDR Kahuna file has an ordinary 0x188; see the HDR and LUT entries in the canonical roadmap.
 - Split file support in Video Player (requires virtual multi-file stream abstraction and frame cap)
 - Sony MVS 25i field order confirmation -- BFF assumed for PAL/50Hz; needs live hardware test on a Sony MVS desk
 - ~~Sony MVS 50i TGA output in Hula~~ -- DONE (v1.5.20/v1.5.21 as Sony MVS TGA 25i with BFF/TFF toggle and source guard)
@@ -1019,7 +1036,7 @@ Decisions about which standards to implement or defer, based on broadcast resear
 
 **1080p/29.97 and 1080p/30** — Not yet implemented, pending verification. In active use in NTSC file delivery workflows and increasingly in ATSC 3.0 deployments. Add to the dropdown once K-Watch reference files are available for hex analysis. Do not add without confirmed 0x188 and 0x18C values. To generate reference files: originate a short clip (even colour bars) in the target standard using Final Cut Pro or DaVinci Resolve, convert in K-Watch, then run `xxd -l 512 output.SWS` and read offsets 0x188 and 0x18C.
 
-**HLG Rec.2020** — Parked pending engineering input. 1080p/50 HLG is now the preferred format for major live European sports production (UEFA Euro 2024 was produced in 1080p/50 HLG). This is the priority HDR addition. Implementation requires a real HLG SWS file from a Kahuna workflow for hex analysis — being pursued via broadcast engineering contacts.
+**HLG Rec.2020** — Parked pending engineering input. 1080p/50 HLG is now the preferred format for major live European sports production (UEFA Euro 2024 was produced in 1080p/50 HLG). This is the priority HDR addition. Implementation requires a real HLG SWS file from a Kahuna workflow for hex analysis — being pursued via broadcast engineering contacts. **Update 2026-10-12:** the first real HDR Kahuna file (PQ, not HLG) carries an ordinary 1080p50 header, so HDR is not recorded in the file; see the HDR entry in the canonical roadmap.
 
 **4K (2160p)** — Not planned until HLG is confirmed. 4K is operational in Japan (NHK BS4K), South Korea (ATSC 3.0), and premium streaming, but not mainstream in live terrestrial broadcast. No K-Watch reference files available. Defer until HLG work is complete and hardware access allows.
 
