@@ -1570,7 +1570,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
 
 def _copy_range(src_path: str, offset: int, length: int, dst_path: str):
     """Copy length bytes from offset in src_path to a new file, in chunks."""
-    with open(src_path, 'rb') as f, open(dst_path, 'wb') as out:
+    with open_sws(src_path) as f, open(dst_path, 'wb') as out:
         f.seek(offset)
         left = length
         while left:
@@ -2209,7 +2209,7 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     key_off  = h.data_offset + h.plane_size * h.frame_count
 
     try:
-        with open(sws_path, 'rb') as sws_fh, _open_eif_output(dest_path) as out:
+        with open_sws(sws_path) as sws_fh, _open_eif_output(dest_path) as out:
             out.write(header)
             out.write(clear * starts)
             for n, i in enumerate(src_index):
@@ -2543,6 +2543,21 @@ def resolve_split(path: str) -> list:
     if os.path.isfile(path) and _SPLIT_PART_RE.match(os.path.basename(path)):
         return split_parts(os.path.dirname(path))
     return []
+
+
+def open_sws(path: str):
+    """An SWS opened for reading, whether one file or a split folder of 2 GB
+    parts (or any part inside it): the parts read as one stream. Every route
+    that converts FROM an SWS opens it here, so a split clip converts as well
+    as it plays (David, 2026-10-12)."""
+    parts = resolve_split(path)
+    return SplitReader(parts) if parts else open(path, 'rb')
+
+
+def sws_size(path: str) -> int:
+    """An SWS's whole size, a split one's parts added together."""
+    parts = resolve_split(path)
+    return sum(os.path.getsize(p) for p in parts) if parts else os.path.getsize(path)
 
 
 class SplitReader:
@@ -3952,7 +3967,10 @@ class HulaSWSHeader:
     """Parse the 512-byte SWS header for Hula's read-only use."""
 
     def __init__(self, path: str):
-        with open(path, 'rb') as f:
+        # A split SWS is a folder of parts; its header is in the first.
+        self.parts = resolve_split(path)
+        self.total_size = sws_size(path)
+        with open_sws(path) as f:
             raw = f.read(SWS_HEADER_SIZE)
         if len(raw) < SWS_HEADER_SIZE:
             raise ValueError("File too small to be a valid SWS file.")
@@ -3969,6 +3987,12 @@ class HulaSWSHeader:
         aud_fmt          = struct.unpack_from('>I', raw, _HULA_OFF_AUD_FMT)[0]
         self.has_audio   = (aud_off_div32 > 0 and aud_fmt == 0x03000000)
         self.audio_offset = aud_off_div32 * 32 if self.has_audio else 0
+        if self.parts and not self.has_key:
+            # MacHuna before v1.13.1 blanked 0x1A8 in every split, keyed or
+            # not (963 loaded keyless on a Kahuna). Count the planes instead,
+            # as the player's SWSHeader does.
+            end = self.audio_offset if self.has_audio else self.total_size
+            self.has_key = (end - self.data_offset) // max(1, self.plane_size) > self.frame_count
         std_code         = struct.unpack_from('>I', raw, _HULA_OFF_STD_CODE)[0]
         self.fmt_variant = struct.unpack_from('>I', raw, _HULA_OFF_FMT_VARIANT)[0]
         self.fps         = self._get_fps(std_code, self.fmt_variant)
@@ -4014,11 +4038,11 @@ def _hula_extract_audio_stereo(sws_path: str, header: HulaSWSHeader,
     either layout (_sws_audio_unpack)."""
     if not header.has_audio:
         return None
-    file_size  = os.path.getsize(sws_path)
+    file_size  = sws_size(sws_path)
     audio_size = file_size - header.audio_offset
     if audio_size <= 0:
         return None
-    with open(sws_path, 'rb') as f:
+    with open_sws(sws_path) as f:
         head = f.read(SWS_HEADER_SIZE)
         f.seek(header.audio_offset)
         raw = f.read(audio_size)
@@ -4059,7 +4083,7 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
     fill_off = header.data_offset
     key_off  = header.data_offset + header.plane_size * header.frame_count
     log(f"  Decoding {header.frame_count} frame(s)...")
-    with open(sws_path, 'rb') as f:
+    with open_sws(sws_path) as f:
         for i in range(header.frame_count):
             f.seek(fill_off + i * header.plane_size)
             fill_bytes = f.read(header.plane_size)
@@ -4193,7 +4217,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     fill_off = header.data_offset
     key_off  = header.data_offset + header.plane_size * n
     log(f"  Weaving {n} frames → {out_count} interlaced frames ({field_order})...")
-    with open(sws_path, 'rb') as f:
+    with open_sws(sws_path) as f:
         for i in range(out_count):
             f.seek(fill_off + (2 * i) * header.plane_size)
             fill_a = f.read(header.plane_size)
@@ -4538,9 +4562,9 @@ def _sws_stereo24(sws_path: str):
     """An SWS's programme audio (channels 1 and 3) as 24-bit left/right, the
     16-bit sample << 8, or None if it has none or it cannot be found."""
     h = HulaSWSHeader(sws_path)
-    if not h.has_audio or not os.path.isfile(sws_path):
+    if not h.has_audio or not os.path.exists(sws_path):
         return None
-    with open(sws_path, 'rb') as f:
+    with open_sws(sws_path) as f:
         head = f.read(SWS_HEADER_SIZE)
         f.seek(h.audio_offset)
         raw = f.read()
@@ -4923,7 +4947,7 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
     with tempfile.TemporaryDirectory() as tmp:
         raw_rgba = os.path.join(tmp, 'rgba_raw.rgba')
         log(f"  Decoding {header.frame_count} frame(s) to RGBA...")
-        with open(sws_path, 'rb') as f_in, open(raw_rgba, 'wb') as f_out:
+        with open_sws(sws_path) as f_in, open(raw_rgba, 'wb') as f_out:
             for i in range(header.frame_count):
                 f_in.seek(fill_off + i * header.plane_size)
                 fill_bytes = f_in.read(header.plane_size)

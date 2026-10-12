@@ -5107,3 +5107,109 @@ class TestClearFrames(unittest.TestCase):
         n0, _ = self._tgas(os.path.join(plain, os.listdir(plain)[0]))
         self.assertEqual(len(names), len(n0) + 2)
         self.assertEqual(names[0], '0001.tga')
+
+
+class TestSplitSwsAsSource(unittest.TestCase):
+    """A split SWS (a folder of 2 GB parts) can be CONVERTED, not only played
+    (David, 2026-10-12: he dragged one in and it did not take). The strongest
+    test there is: a split file converts to exactly what the same clip does
+    unsplit, for every output. And an old MacHuna split, whose header wrongly
+    says it has no key (fixed in v1.13.1), keeps its key."""
+
+    setUpClass = TestSoundForAnyClip.__dict__['setUpClass']
+    tearDownClass = TestSoundForAnyClip.__dict__['tearDownClass']
+    _dir = TestSoundForAnyClip._dir
+    _quiet = TestSoundForAnyClip._quiet
+
+    def _pair(self):
+        """(unsplit SWS, the same clip split into parts)."""
+        whole = m.convert_tga_sequence(self.frames, 1, self._dir(), '1080p50', split_fat32=False,
+                                       log=self._quiet, write_log=False, sound_file=self.long)
+        old = m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK
+        m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = 8 * 1024 * 1024, 16 * 1024 * 1024
+        try:
+            split = m.convert_tga_sequence(self.frames, 1, self._dir(), '1080p50', split_fat32=True,
+                                           log=self._quiet, write_log=False, sound_file=self.long)
+        finally:
+            m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = old
+        self.assertGreaterEqual(len(m.split_parts(split)), 2, 'it should have split')
+        return whole, split
+
+    def test_the_header_reads_a_split_folder(self):
+        whole, split = self._pair()
+        a, b = m.HulaSWSHeader(whole), m.HulaSWSHeader(split)
+        for field in ('width', 'height', 'frame_count', 'plane_size', 'has_key', 'has_audio',
+                      'audio_offset', 'data_offset', 'fps'):
+            self.assertEqual(getattr(a, field), getattr(b, field), field)
+
+    def test_sws_to_sws_is_the_same_from_a_split(self):
+        whole, split = self._pair()
+        outs = [m.convert_sws_to_sws(src, 2, self._dir(), '1080p50', split_fat32=False, log=self._quiet)
+                for src in (whole, split)]
+        a, b = (Path(o).read_bytes() for o in outs)
+        self.assertEqual(len(a), len(b))
+        self.assertEqual(a[512:], b[512:], 'picture, key and sound')
+
+    def test_sws_to_eif_is_the_same_from_a_split(self):
+        whole, split = self._pair()
+        outs = [m.convert_sws_to_eif(src, self._dir(), log=self._quiet, out_name='0001')
+                for src in (whole, split)]
+        for o in outs:
+            self.assertIsNotNone(o)
+        h = m.EIFHeader(outs[0])
+        a, b = (Path(o).read_bytes()[h.video_start:] for o in outs)
+        self.assertEqual(a, b, 'every frame and the tail')
+        self.assertEqual(*(Path(m.eaf_path_for(o)).read_bytes() for o in outs), 'the .eaf')
+
+    def test_sws_to_mov_and_tga_are_the_same_from_a_split(self):
+        import numpy as np
+        from PIL import Image
+        whole, split = self._pair()
+        for target in (m.HULA_TARGET_QUICKTIME_MOV, m.HULA_TARGET_KFRAME_TGA):
+            with self.subTest(target=target):
+                dirs = [self._dir(), self._dir()]
+                for src, d in zip((whole, split), dirs):
+                    m._hula_run_batch([src], d, target, log=self._quiet)
+                    self.assertTrue(os.listdir(d), f'nothing written from {os.path.basename(src)}')
+                if target == m.HULA_TARGET_QUICKTIME_MOV:
+                    movs = [os.path.join(d, '1.mov') for d in dirs]
+                    frames = [TestClearFrames._mov_alpha(self, mv) for mv in movs]
+                    self.assertTrue(np.array_equal(*frames), 'picture and key')
+                    s = [m._source_stereo24(mv) for mv in movs]
+                    self.assertTrue(np.array_equal(*s), 'sound')
+                else:
+                    pics = []
+                    for d in dirs:
+                        sub = os.path.join(d, os.listdir(d)[0])
+                        pics.append([np.asarray(Image.open(os.path.join(sub, n)))
+                                     for n in sorted(os.listdir(sub))])
+                    self.assertEqual(len(pics[0]), len(pics[1]))
+                    for x, y in zip(*pics):
+                        self.assertTrue(np.array_equal(x, y))
+
+    def test_an_old_split_keeps_its_key(self):
+        """Before v1.13.1 MacHuna wrote every split with 0x1A8 and 0x1B4 blank,
+        saying "no key" (963 loaded keyless on a Kahuna). Converting one must
+        still find the key, as the player already does."""
+        import numpy as np
+        from PIL import Image
+        whole, split = self._pair()
+        first = m.split_parts(split)[0]
+        b = bytearray(Path(first).read_bytes())
+        struct.pack_into('>I', b, 0x1A8, 0)
+        struct.pack_into('>I', b, 0x1B4, 0)
+        Path(first).write_bytes(bytes(b))
+        self.assertTrue(m.HulaSWSHeader(split).has_key)
+        dirs = [self._dir(), self._dir()]
+        for src, d in zip((whole, split), dirs):
+            m._hula_run_batch([src], d, m.HULA_TARGET_KFRAME_TGA, log=self._quiet)
+        alphas = []
+        for d in dirs:
+            sub = os.path.join(d, os.listdir(d)[0])
+            alphas.append(np.asarray(Image.open(os.path.join(sub, sorted(os.listdir(sub))[0])))[..., 3])
+        self.assertTrue(np.array_equal(*alphas), 'the key came through')
+
+    def test_its_sound_reads_from_a_split(self):
+        import numpy as np
+        whole, split = self._pair()
+        self.assertTrue(np.array_equal(m._sws_stereo24(whole), m._sws_stereo24(split)))
