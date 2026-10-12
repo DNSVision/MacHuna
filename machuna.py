@@ -1815,6 +1815,16 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float,
     movi_tag = b'RIFFRIFF' if is_25 else b'\x00\x02\x01\x04\x00\x02\x01\x04'
 
     video_end = _EIF_HDR_SIZE + frame_count * 3 * _EIF_UNIT_BYTES
+    if video_end > 0xFFFFFFFF:
+        # 0x080 holds where the picture ends in 32 bits, so an EIF can describe
+        # at most this many 1080 frames (David, 2026-10-12: a 1,000-frame
+        # split SWS failed with Python's own struct error). Whether a K-Frame
+        # can hold more is unknown - every reference EIF is under 4 GB.
+        most = (0xFFFFFFFF - _EIF_HDR_SIZE) // (3 * _EIF_UNIT_BYTES)
+        raise ValueError(
+            f"This clip is {frame_count:,} frames, and an EIF can hold at most "
+            f"{most} (about {most / 50:.1f} seconds at 50fps, {most / 25:.1f} at 25): its header "
+            f"records the clip's size in 32 bits. Nothing was written.")
 
     buf = bytearray(_EIF_HDR_SIZE)
 

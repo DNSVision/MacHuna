@@ -5213,3 +5213,32 @@ class TestSplitSwsAsSource(unittest.TestCase):
         import numpy as np
         whole, split = self._pair()
         self.assertTrue(np.array_equal(m._sws_stereo24(whole), m._sws_stereo24(split)))
+
+
+class TestEifSizeLimit(unittest.TestCase):
+    """An EIF's header holds where its picture ends in 32 bits (0x080), so at
+    1080 it can describe at most 517 frames - about 10.3 seconds at 50fps.
+    David, 2026-10-12: a 1,000-frame split SWS to EIF failed with Python's own
+    "'I' format requires 0 <= number <= 4294967295". Longer clips are refused
+    in plain words before anything is written. (Whether a K-Frame has a way to
+    hold more is unknown: every reference EIF is under 4 GB.)"""
+
+    def test_517_frames_fit_and_518_are_refused_in_plain_words(self):
+        m._build_eif_header('OK', 517, 50.0)
+        with self.assertRaises(ValueError) as cm:
+            m._build_eif_header('LONG', 518, 50.0)
+        text = str(cm.exception)
+        self.assertIn('517', text)
+        self.assertNotIn("'I' format", text)
+
+    def test_a_long_sequence_is_refused_before_anything_is_written(self):
+        from PIL import Image
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        frame = os.path.join(d, 'F_0000.tga')
+        Image.new('RGBA', (16, 9), (1, 2, 3, 255)).save(frame)
+        out = os.path.join(d, 'out'); os.makedirs(out)
+        with self.assertRaises(ValueError) as cm:
+            m.convert_tga_seq_to_eif([frame] * 1000, out, 'LONG', 50.0, log=lambda *a: None,
+                                     out_name='0001')
+        self.assertIn('1,000 frames', str(cm.exception))
+        self.assertEqual(os.listdir(out), [], 'nothing written, not even a partial file')
