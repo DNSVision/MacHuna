@@ -20,6 +20,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -752,6 +753,84 @@ def _byteswap_v210(path: str):
     del data
 
 
+# ── Clear frames (David, 2026-10-12; MacHuna 2.x decision 54) ──────────────
+# Creative sometimes supply wipes that start on the first frame of vision and
+# end frozen on the last, so a desk shows the graphic while the clip is cued
+# and holds it after it ends. One frame added at the start, the end or both,
+# black with the key fully OFF, lets the desk sit invisibly on it. A keyless
+# output has no key to turn off, so there the frame is simply black. A frame at
+# the start delays the sound by one frame of silence, so it stays in sync.
+
+CLEAR_FRAME_CHOICES = ('start', 'end', 'both')
+
+
+def _clear_counts(clear) -> tuple:
+    """(frames at the start, frames at the end) for a clear_frames choice:
+    None or '' for none, else 'start', 'end' or 'both'."""
+    if not clear:
+        return 0, 0
+    if clear not in CLEAR_FRAME_CHOICES:
+        raise ValueError(f"clear_frames must be one of {CLEAR_FRAME_CHOICES}, not {clear!r}")
+    return int(clear in ('start', 'both')), int(clear in ('end', 'both'))
+
+
+def _clear_v210_frame(width: int, height: int) -> bytes:
+    """One big-endian v210 frame of black (Y 64, Cb/Cr 512): black fill, and
+    equally a key fully off. The same bytes ffmpeg writes for black."""
+    words = _v210_plane_size(width, height) // 4
+    group = [512 | 64 << 10 | 512 << 20, 64 | 512 << 10 | 64 << 20,
+             512 | 64 << 10 | 512 << 20, 64 | 512 << 10 | 64 << 20]
+    return np.tile(np.array(group, '<u4'), words // 4).astype('>u4').tobytes()
+
+
+def _pad_file(path: str, start_bytes: bytes, end_bytes: bytes):
+    """Put bytes in front of and after a file's contents, streaming, so a clip
+    of any size costs no more memory than one frame."""
+    if start_bytes:
+        tmp = path + '.pad'
+        with open(tmp, 'wb') as out, open(path, 'rb') as src:
+            out.write(start_bytes)
+            shutil.copyfileobj(src, out, 16 * 1024 * 1024)
+        os.replace(tmp, path)
+    if end_bytes:
+        with open(path, 'ab') as out:
+            out.write(end_bytes)
+
+
+def _add_clear_planes(fill_raw: str, key_raw, width: int, height: int, clear, log=print) -> int:
+    """Add clear frames to raw BE v210 fill (and key) planes; returns how many.
+    The fill gets black and the key gets key-off - the same bytes. With no key
+    plane the added frame is black, which is all a keyless clip can be."""
+    start, end = _clear_counts(clear)
+    if not (start or end):
+        return 0
+    frame = _clear_v210_frame(width, height)
+    for raw in (fill_raw, key_raw):
+        if raw:
+            _pad_file(raw, frame * start, frame * end)
+    where = {(1, 0): 'at the start', (0, 1): 'at the end', (1, 1): 'at the start and end'}[(start, end)]
+    log(f"  Added a {'clear' if key_raw else 'black'} frame {where}")
+    return start + end
+
+
+def _clear_eif_frame(keyed: bool) -> bytes:
+    """One EIF frame of black with the key off (64), or, for a keyless source,
+    black with the key full on (940): a black frame, which is all a keyless
+    clip can be. The three 360-row units, little-endian words K<<20|Y<<10|C."""
+    word = (64 if keyed else 940) << 20 | 64 << 10 | 512
+    return np.full(3 * _EIF_UNIT_BYTES // 4, word, '<u4').tobytes()
+
+
+def _delay_sound(stereo, fps: float, clear):
+    """The sound with one frame of silence in front of it when a clear frame
+    goes at the start, so it stays in sync with the picture."""
+    start, _ = _clear_counts(clear)
+    if not start or stereo is None or len(stereo) == 0:
+        return stereo
+    silence = np.zeros((_samples_per_frame(fps) * start, 2), dtype=np.asarray(stereo).dtype)
+    return np.concatenate([silence, np.asarray(stereo)])
+
+
 def write_sws(dest_path: str,
               fill_raw: str,
               key_raw: Optional[str],
@@ -1072,8 +1151,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  include_audio: bool = True,
                  auto_play: bool = False,
                  loop_play: bool = False,
-                 sound_file: str = None):
+                 sound_file: str = None,
+                 clear_frames: str = None):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS.
+
+    clear_frames: 'start', 'end' or 'both' adds a clear frame there (decision
+    54); the sound moves one frame later with a frame at the start.
 
     sound_file: a sound to carry instead of the clip's own (David,
     2026-10-11); used whatever include_audio says. Either way the SWS keeps
@@ -1208,12 +1291,14 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         if output_frame_count == 0:
             raise ValueError(f"{os.path.basename(input_path)}: the conversion produced no "
                              f"frames, so nothing was written.")
+        output_frame_count += _add_clear_planes(fill_raw, actual_key, w, h, clear_frames, log)
 
         # The sound, at its own length (Kahuna Manager, 2026-10-11): a chosen
         # sound file, or the clip's own if it is wanted and there is one.
         audio_samples = None
         stereo = chosen if chosen is not None else (
             _source_stereo24(input_path) if will_include_audio else None)
+        stereo = _delay_sound(stereo, output_fps, clear_frames)
         if will_include_audio and chosen is None and stereo is None:
             log(f"  Audio extraction failed -- writing without audio")
         if stereo is not None and len(stereo):
@@ -1285,7 +1370,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          _vf_override: str = None,
                          clip_name_override: str = None,
                          _audio_stereo24=None,
-                         sound_file: str = None):
+                         sound_file: str = None,
+                         clear_frames: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
 
     sound_file: a sound to go with the sequence, as Kahuna Manager's Add
@@ -1420,11 +1506,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         if output_frame_count == 0:
             raise ValueError("The TGA sequence produced no frames, so nothing was written.")
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
+        output_frame_count += _add_clear_planes(fill_raw, actual_key, w, h, clear_frames, log)
         src_name  = os.path.basename(tga_files[0])
         clip_name = clip_name_override or Path(tga_files[0]).stem
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
         out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+        _audio_stereo24 = _delay_sound(_audio_stereo24, out_fps, clear_frames)
         audio_raw = audio_samples = None
         if _audio_stereo24 is not None and len(_audio_stereo24):
             audio_raw = os.path.join(tmp, 'audio.pcm')
@@ -1534,7 +1622,7 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        video_standard: str, split_fat32: bool = True, log=print,
                        ignore_alpha: bool = False, auto_play: bool = False,
                        loop_play: bool = False, include_audio: bool = True,
-                       sound_file: str = None) -> str:
+                       sound_file: str = None, clear_frames: str = None) -> str:
     """Re-encode an SWS to another standard, keeping its audio.
 
     sound_file: a sound to carry instead of the SWS's own (2026-10-11). Either
@@ -1658,6 +1746,8 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         if count == 0:
             raise ValueError(f"{Path(sws_path).name}: the conversion produced no frames, "
                              f"so nothing was written.")
+        count += _add_clear_planes(fill, key, W, H, clear_frames, log)
+        stereo = _delay_sound(stereo, out_fps, clear_frames)
 
         audio_raw = audio_samples = None
         if stereo is not None and len(stereo):
@@ -1894,7 +1984,8 @@ def _eif_tail(fps: float) -> bytes:
 def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          cancel_event=None, out_name: str = None,
                          include_audio: bool = True,
-                         sound_file: str = None) -> str:
+                         sound_file: str = None,
+                         clear_frames: str = None) -> str:
     """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format, with its
     .eaf audio when the source has sound. Confirmed on a live K-Frame,
     2026-10-07. sound_file: a sound to carry instead (2026-10-11), fitted to
@@ -1953,13 +2044,18 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
             stereo = _source_stereo24(input_path)
         elif stereo is not None and _fitted_sound_note(stereo, frame_count, fps):
             log(_fitted_sound_note(stereo, frame_count, fps))
-        header = _build_eif_header(clip_name, frame_count, fps,
+        # Decision 54: clear frames, and the sound one frame later with one at the start.
+        starts, ends = _clear_counts(clear_frames)
+        clear = _clear_eif_frame(bool(key_path)) if starts or ends else b''
+        stereo = _delay_sound(stereo, fps, clear_frames)
+        header = _build_eif_header(clip_name, frame_count + starts + ends, fps,
                                    has_audio=stereo is not None)
         try:
             key_fh = open(key_path, 'rb') if key_path else None
             try:
                 with open(fill_v210, 'rb') as fill_fh, _open_eif_output(dest_path) as out:
                     out.write(header)
+                    out.write(clear * starts)
                     for i in range(frame_count):
                         if cancel_event and cancel_event.is_set():
                             raise _EifCancelled()
@@ -1970,11 +2066,12 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                         out.write(u0); out.write(u1); out.write(u2)
                         if (i + 1) % 10 == 0 or i + 1 == frame_count:
                             log(f"  Frame {i + 1}/{frame_count}")
+                    out.write(clear * ends)
                     out.write(_eif_tail(fps))
             finally:
                 if key_fh:
                     key_fh.close()
-            _commit_eif(dest_path, stereo, frame_count, fps, log)
+            _commit_eif(dest_path, stereo, frame_count + starts + ends, fps, log)
         except BaseException as e:
             _abandon_eif(dest_path, e, log)
             if isinstance(e, _EifCancelled):
@@ -1989,7 +2086,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              fps: float, log=print, cancel_event=None,
                              out_name: str = None,
                              source_interlaced: bool = False,
-                             sound_file: str = None) -> str:
+                             sound_file: str = None,
+                             clear_frames: str = None) -> str:
     """Convert a TGA sequence to K-Frame EIF format, with sound_file in an
     .eaf if given (2026-10-11), fitted to the picture as the K-Frame does.
 
@@ -2013,11 +2111,17 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         f" → {os.path.basename(dest_path)}")
     if stereo is not None and _fitted_sound_note(stereo, frame_count, fps):
         log(_fitted_sound_note(stereo, frame_count, fps))
-    header = _build_eif_header(clip_name[:31].upper(), frame_count, fps,
+    # Decision 54: clear frames, and the sound one frame later with one at the start.
+    starts, ends = _clear_counts(clear_frames)
+    keyed = bool(tga_files) and 'A' in Image.open(tga_files[0]).getbands()
+    clear = _clear_eif_frame(keyed) if starts or ends else b''
+    stereo = _delay_sound(stereo, fps, clear_frames)
+    header = _build_eif_header(clip_name[:31].upper(), frame_count + starts + ends, fps,
                                has_audio=stereo is not None)
     try:
         with _open_eif_output(dest_path) as out_fh:
             out_fh.write(header)
+            out_fh.write(clear * starts)
             for i, path in enumerate(tga_files):
                 if cancel_event and cancel_event.is_set():
                     raise _EifCancelled()
@@ -2039,9 +2143,10 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                 out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
                     log(f"  Frame {i + 1}/{frame_count}")
+            out_fh.write(clear * ends)
             out_fh.write(_eif_tail(fps))
         # Without a sound file a TGA sequence has none, so a stale companion goes.
-        _commit_eif(dest_path, stereo, frame_count, fps, log)
+        _commit_eif(dest_path, stereo, frame_count + starts + ends, fps, log)
     except BaseException as e:
         _abandon_eif(dest_path, e, log)
         if isinstance(e, _EifCancelled):
@@ -2054,7 +2159,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None,
                         include_audio: bool = True,
-                        sound_file: str = None) -> str:
+                        sound_file: str = None,
+                        clear_frames: str = None) -> str:
     """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
     into an .eaf. Same header and picture encoder as the desk-confirmed MOV
     route. sound_file: a sound to carry instead (2026-10-11), fitted to the
@@ -2093,7 +2199,11 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
         _sws_stereo24(sws_path) if include_audio else None)
     if stereo is not None and _fitted_sound_note(stereo, out_count, fps):
         log(_fitted_sound_note(stereo, out_count, fps))
-    header   = _build_eif_header(stem[:31].upper(), out_count, fps,
+    # Decision 54: clear frames, and the sound one frame later with one at the start.
+    starts, ends = _clear_counts(clear_frames)
+    clear = _clear_eif_frame(bool(h.has_key)) if starts or ends else b''
+    stereo = _delay_sound(stereo, fps, clear_frames)
+    header   = _build_eif_header(stem[:31].upper(), out_count + starts + ends, fps,
                                  has_audio=stereo is not None)
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
@@ -2101,6 +2211,7 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     try:
         with open(sws_path, 'rb') as sws_fh, _open_eif_output(dest_path) as out:
             out.write(header)
+            out.write(clear * starts)
             for n, i in enumerate(src_index):
                 if cancel_event and cancel_event.is_set():
                     raise _EifCancelled()
@@ -2126,8 +2237,9 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                 out.write(u0); out.write(u1); out.write(u2)
                 if (n + 1) % 10 == 0 or n + 1 == out_count:
                     log(f"  Frame {n + 1}/{out_count}")
+            out.write(clear * ends)
             out.write(_eif_tail(fps))
-        _commit_eif(dest_path, stereo, out_count, fps, log)
+        _commit_eif(dest_path, stereo, out_count + starts + ends, fps, log)
     except BaseException as e:
         _abandon_eif(dest_path, e, log)
         if isinstance(e, _EifCancelled):
@@ -2183,7 +2295,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         split_fat32: bool = True,
                         log=print, cancel_event=None,
                         include_audio: bool = True,
-                        sound_file: str = None) -> str:
+                        sound_file: str = None,
+                        clear_frames: str = None) -> str:
     """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio,
     or with sound_file instead (2026-10-11), kept at its own length.
 
@@ -2276,11 +2389,13 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                 if (o + 1) % 10 == 0 or o + 1 == out_count:
                     log(f"  Frame {o + 1}/{out_count}")
 
+        out_count += _add_clear_planes(fill_path, key_path, 1920, 1080, clear_frames, log)
         clip_name = h.clip_name or Path(eif_path).stem
         audio_raw = audio_samples = None
         stereo = chosen
         if stereo is None and include_audio:
             stereo = _read_eaf_words(eaf_path_for(eif_path), log=log)
+        stereo = _delay_sound(stereo, out_fps, clear_frames)
         if stereo is not None and len(stereo):
             audio_raw = os.path.join(tmp, 'audio.pcm')
             audio_samples = _write_sws_sound(audio_raw, stereo)
@@ -4230,6 +4345,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                 if (i + 1) % 10 == 0 or i + 1 == out_count:
                     log(f"  Frame {i + 1}/{out_count}")
         log(f"  Done → {dest_dir}  ({out_count} TGA files)")
+    return dest_dir
 
 
 # ── .eaf companion audio (Kayenne/K-Frame clip audio) ────────────────────────
@@ -4622,6 +4738,66 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
     return cmd
 
 
+def _pad_mov_inputs(raw_rgba: str, width: int, height: int, keyed: bool,
+                    stereo_pcm, sample_bytes: int, fps: float, clear, log=print):
+    """Clear frames for a MOV made from raw RGBA (decision 54): transparent
+    black frames, or opaque black for a keyless source, added to the raw
+    picture; and one frame of silence in front of the sound when one goes at
+    the start, so it stays in sync."""
+    start, end = _clear_counts(clear)
+    if not (start or end):
+        return
+    px = np.zeros((height, width, 4), np.uint8)
+    if not keyed:
+        px[..., 3] = 255
+    frame = px.tobytes()
+    _pad_file(raw_rgba, frame * start, frame * end)
+    if start and stereo_pcm:
+        _pad_file(stereo_pcm, b'\0' * (_samples_per_frame(fps) * start * 2 * sample_bytes), b'')
+    where = {(1, 0): 'at the start', (0, 1): 'at the end', (1, 1): 'at the start and end'}[(start, end)]
+    log(f"  Added a {'clear' if keyed else 'black'} frame {where}")
+
+
+def add_clear_tga_frames(folder: str, clear, log=print) -> int:
+    """Add clear frames to a finished TGA sequence folder (decision 54), for
+    every TGA route, including those the interface runs through ffmpeg itself.
+    The numbering keeps its start (0000 or 0001) and its width and runs on
+    without a gap: a frame at the start moves every frame up one. Transparent
+    black when the frames have a key, opaque black when they have none.
+    Returns how many frames were added."""
+    start, end = _clear_counts(clear)
+    if not (start or end):
+        return 0
+    names = sorted(f for f in os.listdir(folder)
+                   if f.lower().endswith('.tga') and not f.startswith('._'))
+    parsed = []
+    for n in names:
+        mm = re.match(r'^(.*?)(\d+)(\.tga)$', n, re.IGNORECASE)
+        if not mm:
+            raise ValueError(f"{n} in {folder} is not a numbered TGA frame, so clear frames "
+                             f"cannot be added.")
+        parsed.append((mm.group(1), int(mm.group(2)), len(mm.group(2)), mm.group(3)))
+    if not parsed:
+        return 0
+    prefix, first, width, ext = parsed[0]
+    with Image.open(os.path.join(folder, names[0])) as im:
+        size, keyed = im.size, 'A' in im.getbands()
+    clear_img = Image.new('RGBA', size, (0, 0, 0, 0 if keyed else 255))
+    name = lambda i: f"{prefix}{i:0{width}d}{ext}"
+    if start:
+        for (_, num, _, _), old in sorted(zip(parsed, names), key=lambda t: -t[0][1]):
+            os.rename(os.path.join(folder, old), os.path.join(folder, name(num + start)))
+        for i in range(start):
+            clear_img.save(os.path.join(folder, name(first + i)), format='TGA')
+    if end:
+        last = parsed[-1][1] + start
+        for i in range(end):
+            clear_img.save(os.path.join(folder, name(last + 1 + i)), format='TGA')
+    where = {(1, 0): 'at the start', (0, 1): 'at the end', (1, 1): 'at the start and end'}[(start, end)]
+    log(f"  Added a {'clear' if keyed else 'black'} frame {where}")
+    return start + end
+
+
 def _sound_file_pcm24(sound_file: str, tmp: str, log=print) -> str:
     """A chosen sound file as the 24-bit PCM _prores_cmd takes (pcm_24bit),
     at its own length: a MOV keeps the whole sound (2026-10-11)."""
@@ -4633,7 +4809,8 @@ def _sound_file_pcm24(sound_file: str, tmp: str, log=print) -> str:
 
 def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                              include_audio: bool = True, out_name: str = None,
-                             log=print, sound_file: str = None) -> str:
+                             log=print, sound_file: str = None,
+                             clear_frames: str = None) -> str:
     """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
 
     The output is an ordinary QuickTime file: picture, key as a real alpha
@@ -4667,6 +4844,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                     af.write(pcm)
             else:
                 log("  No companion .eaf - MOV will be silent")
+        _pad_mov_inputs(raw_rgba, 1920, 1080, True, stereo_pcm, 4, h.fps, clear_frames, log)
         log("  Encoding ProRes 4444...")
         _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, _fps_expr(h.fps),
                                 stereo_pcm, out_path, pcm_24bit=True), check=True)
@@ -4676,7 +4854,8 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                            fps: float, vf: str = None, out_fps: float = None,
-                           log=print, sound_file: str = None) -> str:
+                           log=print, sound_file: str = None,
+                           clear_frames: str = None) -> str:
     """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio;
     sound_file adds one at its own length (2026-10-11).
 
@@ -4696,9 +4875,22 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
         + (f" (out {out_fps:g}fps)" if out_fps != fps else ""))
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [ffmpeg, '-y'] + _tga_input_args(tga_files, tmp, _fps_expr(fps))
+        # Decision 54: clear frames added after any deinterlace, so one is one
+        # frame of the output; the sound one frame later with one at the start.
+        starts, ends = _clear_counts(clear_frames)
         if sound_file:
+            pcm = _sound_file_pcm24(sound_file, tmp, log)
+            if starts:
+                _pad_file(pcm, b'\0' * (_samples_per_frame(out_fps) * starts * 8), b'')
             cmd += ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
-                    '-i', _sound_file_pcm24(sound_file, tmp, log), '-map', '0:v', '-map', '1:a']
+                    '-i', pcm, '-map', '0:v', '-map', '1:a']
+        if starts or ends:
+            with Image.open(tga_files[0]) as im:
+                keyed = 'A' in im.getbands()
+            pad = (f"format=rgba,tpad=start={starts}:stop={ends}:start_mode=add:stop_mode=add:"
+                   f"color=black{'@0' if keyed else ''}")
+            vf = f"{vf},{pad}" if vf else pad
+            log(f"  Adding {'clear' if keyed else 'black'} frame(s): {starts} at the start, {ends} at the end")
         if vf:
             cmd += ['-vf', vf]
         cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
@@ -4716,7 +4908,8 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
 
 def _hula_convert_mov(sws_path: str, dest_parent: str,
                       include_audio: bool = True, out_name: str = None,
-                      log=print, sound_file: str = None) -> str:
+                      log=print, sound_file: str = None,
+                      clear_frames: str = None) -> str:
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
 
     Named after the source file rather than a slot number: this is an ordinary
@@ -4750,6 +4943,8 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
         else:
             stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
                           if include_audio else None)
+        _pad_mov_inputs(raw_rgba, header.width, header.height, bool(header.has_key),
+                        stereo_pcm, 4 if pcm_24bit else 2, header.fps, clear_frames, log)
         log("  Encoding ProRes 4444...")
         _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
                                 _fps_expr(header.fps), stereo_pcm, out_path,
@@ -4763,7 +4958,8 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
                     clip_names: list = None, include_audio: bool = True,
-                    log=print, sound_files: list = None):
+                    log=print, sound_files: list = None,
+                    clear_frames: str = None):
     """Convert a list of SWS or MOV files to the specified extraction target.
 
     clip_names, when given, is one Sony clip name per input path (bespoke
@@ -4779,12 +4975,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
         cn = clip_names[idx - 1] if clip_names else clip_name
         sound = sound_files[idx - 1] if sound_files else None
         try:
+            out = None
             ext = Path(path).suffix.lower()
             if ext == '.eif' and target == HULA_TARGET_QUICKTIME_MOV:
                 _hula_convert_eif_to_mov(path, dest_dir,
                                          include_audio=include_audio,
                                          out_name=(cn or None) if clip_names else None,
-                                         log=log, sound_file=sound)
+                                         log=log, sound_file=sound,
+                                         clear_frames=clear_frames)
             elif ext == '.eif':
                 weave = interlaced and kframe_tga_asks_desk_format(path)
                 if interlaced and not weave:
@@ -4793,11 +4991,11 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     log(f"  {Path(path).name} is 25fps, already interlaced - "
                         f"frames go through unchanged")
                 if weave:
-                    _hula_convert_eif_to_tga_interlaced(
+                    out = _hula_convert_eif_to_tga_interlaced(
                         path, dest_dir, target=target,
                         clip_name=cn, field_order=field_order, log=log)
                 else:
-                    _hula_convert_eif_to_tga(
+                    out = _hula_convert_eif_to_tga(
                         path, dest_dir, target=target,
                         clip_name=cn, log=log)
             elif ext == '.mov':
@@ -4805,19 +5003,20 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     raise ValueError(
                         "MOV input is not supported for QuickTime MOV output. "
                         "Select a TGA target or use an SWS file.")
-                _hula_convert_mov_to_tga(path, dest_dir, target, standard,
+                out = _hula_convert_mov_to_tga(path, dest_dir, target, standard,
                                          clip_name=cn,
                                          field_order=field_order, log=log)
             elif target == HULA_TARGET_QUICKTIME_MOV:
                 _hula_convert_mov(path, dest_dir,
                                   include_audio=include_audio,
                                   out_name=(cn or None) if clip_names else None,
-                                  log=log, sound_file=sound)
+                                  log=log, sound_file=sound,
+                                  clear_frames=clear_frames)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:
                     # Progressive source: field-weave pairs of frames into interlaced output.
-                    _hula_convert_tga_interlaced(path, dest_dir, target=target,
+                    out = _hula_convert_tga_interlaced(path, dest_dir, target=target,
                                                  clip_name=cn,
                                                  field_order=field_order, log=log)
                 else:
@@ -4825,11 +5024,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     log(f"  Source is {src_header.standard} ({src_header.fps:.4g}fps) "
                         f"— already interlaced, outputting as interlaced TGA frames. "
                         f"If re-importing into MacHuna, tick 'TGA source already interlaced'.")
-                    _hula_convert_tga(path, dest_dir, target,
+                    out = _hula_convert_tga(path, dest_dir, target,
                                       clip_name=cn, log=log)
             else:
-                _hula_convert_tga(path, dest_dir, target,
+                out = _hula_convert_tga(path, dest_dir, target,
                                   clip_name=cn, log=log)
+            if out and clear_frames:
+                # Decision 54: every TGA route, padded the same way afterwards.
+                add_clear_tga_frames(out, clear_frames, log=log)
             ok += 1
         except Exception as e:
             log(f"  ERROR: {e}")

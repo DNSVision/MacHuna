@@ -4842,3 +4842,268 @@ class TestSoundExport(unittest.TestCase):
             with self.subTest(source=os.path.basename(source)):
                 self.assertIsNone(m.write_sound_wav(source, out, log=self._quiet))
                 self.assertEqual(os.listdir(d), [], 'nothing written, not even a partial file')
+
+
+class TestClearFrames(unittest.TestCase):
+    """A clear frame added at the start, the end or both (David, 2026-10-12;
+    Swift decision 54): Creative's wipes that start and end on vision make the
+    desk show a graphic while cued and after it ends. The added frame is black
+    fill with the key fully OFF, so the desk sits invisibly on it; a keyless
+    output has no key to turn off, so there it is black. A frame added at the
+    start delays the sound by one frame of silence, so it stays in sync.
+    Every original frame must come through untouched."""
+
+    setUpClass = TestSoundForAnyClip.__dict__['setUpClass']
+    tearDownClass = TestSoundForAnyClip.__dict__['tearDownClass']
+    _dir = TestSoundForAnyClip._dir
+    _quiet = TestSoundForAnyClip._quiet
+
+    # ── reading outputs back, independently of the writers ────────────────
+    @staticmethod
+    def _sws_planes(path):
+        """(fill planes, key planes or None, (n, 2) sound) of an SWS."""
+        h = m.HulaSWSHeader(path)
+        b = Path(path).read_bytes()
+        ps, fc, off = h.plane_size, h.frame_count, h.data_offset
+        fill = [b[off + i * ps: off + (i + 1) * ps] for i in range(fc)]
+        key = ([b[off + (fc + i) * ps: off + (fc + i + 1) * ps] for i in range(fc)]
+               if h.has_key else None)
+        count, _n, lr = _sws_sound(path)
+        return fill, key, (lr[:count] if lr is not None else None)
+
+    @staticmethod
+    def _v210_is(plane, y, c):
+        """Every active sample of a BE v210 plane is luma y / chroma c."""
+        import numpy as np
+        yuv = m._v210_plane_to_yuv(plane, 1920, 1080, 1)[0]
+        return bool(np.all(yuv[:, :, 0] == y) and np.all(yuv[:, :, 1:] == c))
+
+    def _spf(self, fps):
+        return m._samples_per_frame(fps)
+
+    def _sws(self, clear=None, **kw):
+        return m.convert_tga_sequence(self.frames, 1, self._dir(), '1080p50', split_fat32=False,
+                                      log=self._quiet, write_log=False, sound_file=self.long,
+                                      clear_frames=clear, **kw)
+
+    # ── Kahuna SWS ────────────────────────────────────────────────────────
+    def test_the_clear_frame_is_ffmpegs_own_black(self):
+        """The constant frame matches what ffmpeg writes for black, so it is
+        legal v210 the desk already reads (Y 64, Cb/Cr 512)."""
+        import subprocess
+        out = os.path.join(self._dir(), 'black.v210')
+        src = os.path.join(self._dir(), 'black.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'color=c=black:size=1920x1080:rate=25', '-frames:v', '1',
+                        '-c:v', 'prores_ks', src], check=True)
+        m.convert_to_v210(src, out)
+        self.assertEqual(m._clear_v210_frame(1920, 1080), Path(out).read_bytes())
+
+    def test_sws_both_ends_clear_and_the_sound_one_frame_later(self):
+        import numpy as np
+        f0, k0, s0 = self._sws_planes(self._sws())
+        f1, k1, s1 = self._sws_planes(self._sws('both'))
+        self.assertEqual(len(f1), len(f0) + 2)
+        self.assertEqual(f1[1:-1], f0, 'the picture itself is untouched')
+        self.assertEqual(k1[1:-1], k0, 'the key itself is untouched')
+        for plane in (f1[0], f1[-1]):
+            self.assertTrue(self._v210_is(plane, 64, 512), 'black fill')
+        for plane in (k1[0], k1[-1]):
+            self.assertTrue(self._v210_is(plane, 64, 512), 'key fully off')
+        spf = self._spf(50)
+        self.assertEqual(len(s1), len(s0) + spf, 'one frame of silence in front')
+        self.assertEqual(int(np.abs(s1[:spf]).max()), 0)
+        self.assertTrue(np.array_equal(s1[spf:], s0), 'then the sound, sample for sample')
+
+    def test_sws_end_only_leaves_the_sound_where_it_was(self):
+        import numpy as np
+        f0, _, s0 = self._sws_planes(self._sws())
+        f1, k1, s1 = self._sws_planes(self._sws('end'))
+        self.assertEqual(f1[:-1], f0)
+        self.assertTrue(self._v210_is(k1[-1], 64, 512))
+        self.assertTrue(np.array_equal(s1, s0))
+
+    def test_sws_start_only(self):
+        f0, _, _ = self._sws_planes(self._sws())
+        f1, k1, _ = self._sws_planes(self._sws('start'))
+        self.assertEqual(f1[1:], f0)
+        self.assertTrue(self._v210_is(k1[0], 64, 512))
+
+    def test_a_keyless_sws_gets_a_black_frame(self):
+        f0, k0, _ = self._sws_planes(self._sws(ignore_alpha=True))
+        f1, k1, _ = self._sws_planes(self._sws('both', ignore_alpha=True))
+        self.assertIsNone(k1, 'still no key plane')
+        self.assertEqual(f1[1:-1], f0)
+        self.assertTrue(self._v210_is(f1[0], 64, 512))
+
+    def test_every_route_to_sws_pads(self):
+        """A clip, an SWS and an EIF as sources, not only a TGA sequence."""
+        d = self._dir()
+        clip = m.convert_clip(self.clip, 1, d, '1080p25', split_fat32=False, log=self._quiet,
+                              clear_frames='both')
+        src = self._sws()
+        sws = m.convert_sws_to_sws(src, 2, self._dir(), '1080p50', split_fat32=False,
+                                   log=self._quiet, clear_frames='both')
+        eif = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'TEST', 50.0, log=self._quiet,
+                                       out_name='0001')
+        from_eif = m.convert_eif_to_sws(eif, 3, self._dir(), '1080p50', split_fat32=False,
+                                        log=self._quiet, clear_frames='both')
+        for name, path, plain in (('clip', clip, None), ('sws', sws, src), ('eif', from_eif, None)):
+            with self.subTest(route=name):
+                f, k, _ = self._sws_planes(path)
+                self.assertTrue(self._v210_is(f[0], 64, 512) and self._v210_is(f[-1], 64, 512))
+                if k is not None:
+                    self.assertTrue(self._v210_is(k[0], 64, 512) and self._v210_is(k[-1], 64, 512))
+                if plain:
+                    self.assertEqual(len(f), m.HulaSWSHeader(plain).frame_count + 2)
+
+    # ── K-Frame EIF ───────────────────────────────────────────────────────
+    CLEAR_EIF_WORD = (64 << 20) | (64 << 10) | 512
+
+    @staticmethod
+    def _eif_frames(path):
+        import numpy as np
+        h = m.EIFHeader(path)
+        size = 3 * m._EIF_UNIT_BYTES
+        with open(path, 'rb') as f:
+            f.seek(h.video_start)
+            data = f.read(size * h.frame_count)
+        return [np.frombuffer(data[i * size:(i + 1) * size], '<u4') for i in range(h.frame_count)]
+
+    def test_eif_both_ends_clear_and_the_eaf_one_frame_later(self):
+        import numpy as np
+        eif0 = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'TEST', 50.0, log=self._quiet,
+                                        out_name='0001', sound_file=self.long)
+        eif1 = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'TEST', 50.0, log=self._quiet,
+                                        out_name='0001', sound_file=self.long, clear_frames='both')
+        a, b = self._eif_frames(eif0), self._eif_frames(eif1)
+        self.assertEqual(len(b), len(a) + 2)
+        for x, y in zip(a, b[1:-1]):
+            self.assertTrue(np.array_equal(x, y), 'the picture itself is untouched')
+        for edge in (b[0], b[-1]):
+            self.assertTrue(np.all(edge == self.CLEAR_EIF_WORD), 'black, key off')
+        e0 = m._read_eaf_words(m.eaf_path_for(eif0), log=self._quiet)
+        e1 = m._read_eaf_words(m.eaf_path_for(eif1), log=self._quiet)
+        spf = self._spf(50)
+        self.assertEqual(len(e1), (len(a) + 2) * spf, 'the .eaf is fitted to the new picture')
+        self.assertEqual(int(np.abs(e1[:spf]).max()), 0)
+        self.assertTrue(np.array_equal(e1[spf:spf + len(e0)], e0))
+
+    def test_every_route_to_eif_pads(self):
+        import numpy as np
+        clip = m.convert_clip_to_eif(self.clip, self._dir(), log=self._quiet, out_name='0001',
+                                     clear_frames='both')
+        sws = m.convert_sws_to_eif(self._sws(), self._dir(), log=self._quiet, out_name='0002',
+                                   clear_frames='start')
+        # The clip has no key, so its added frames are black (key full on);
+        # the SWS is keyed, so its frame is clear.
+        black = (940 << 20) | (64 << 10) | 512
+        for name, path, ends, word in (('clip', clip, (0, -1), black),
+                                       ('sws', sws, (0,), self.CLEAR_EIF_WORD)):
+            with self.subTest(route=name):
+                fr = self._eif_frames(path)
+                for i in ends:
+                    self.assertTrue(np.all(fr[i] == word))
+
+    # ── QuickTime MOV ─────────────────────────────────────────────────────
+    def _mov_alpha(self, path):
+        """Each frame's alpha, decoded by ffmpeg."""
+        import numpy as np, subprocess, json
+        info = json.loads(subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+             'stream=width,height', '-of', 'json', path], capture_output=True, text=True).stdout)
+        w, h = info['streams'][0]['width'], info['streams'][0]['height']
+        raw = subprocess.run([self.ff, '-v', 'error', '-i', path, '-f', 'rawvideo',
+                              '-pix_fmt', 'rgba', '-'], capture_output=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(-1, h, w, 4)[..., 3]
+
+    def test_mov_from_sws_both_ends_clear_and_the_sound_one_frame_later(self):
+        import numpy as np
+        src = self._sws()
+        d0, d1 = self._dir(), self._dir()
+        m._hula_run_batch([src], d0, m.HULA_TARGET_QUICKTIME_MOV, log=self._quiet)
+        m._hula_run_batch([src], d1, m.HULA_TARGET_QUICKTIME_MOV, log=self._quiet,
+                          clear_frames='both')
+        mov0, mov1 = (os.path.join(d, '1.mov') for d in (d0, d1))
+        a0, a1 = self._mov_alpha(mov0), self._mov_alpha(mov1)
+        self.assertEqual(len(a1), len(a0) + 2)
+        self.assertEqual(int(a1[0].max()), 0, 'first frame transparent')
+        self.assertEqual(int(a1[-1].max()), 0, 'last frame transparent')
+        self.assertTrue(np.array_equal(a1[1:-1], a0))
+        s0, s1 = m._source_stereo24(mov0), m._source_stereo24(mov1)
+        spf = self._spf(50)
+        self.assertEqual(int(np.abs(s1[:spf]).max()), 0)
+        self.assertTrue(np.array_equal(s1[spf:spf + len(s0)], s0))
+
+    def test_mov_from_a_tga_sequence(self):
+        d = self._dir()
+        mov = m.convert_tga_seq_to_mov(self.frames, d, 'SEQ', 25, log=self._quiet,
+                                       clear_frames='both')
+        a = self._mov_alpha(mov)
+        self.assertEqual(len(a), len(self.frames) + 2)
+        self.assertEqual((int(a[0].max()), int(a[-1].max())), (0, 0))
+        self.assertGreater(int(a[1].min()), 0)
+
+    # ── TGA ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _tgas(folder):
+        from PIL import Image
+        import numpy as np
+        names = sorted(f for f in os.listdir(folder) if f.lower().endswith('.tga'))
+        return names, [np.asarray(Image.open(os.path.join(folder, n)).convert('RGBA')) for n in names]
+
+    def test_tga_from_sws_numbered_on_with_clear_ends(self):
+        import numpy as np
+        src = self._sws()
+        for target, first in ((m.HULA_TARGET_KFRAME_TGA, '0001.tga'), (m.HULA_TARGET_SONY_TGA, 'ABCD0000.tga')):
+            with self.subTest(target=target):
+                d0, d1 = self._dir(), self._dir()
+                m._hula_run_batch([src], d0, target, clip_name='ABCD', log=self._quiet)
+                m._hula_run_batch([src], d1, target, clip_name='ABCD', log=self._quiet,
+                                  clear_frames='both')
+                sub = os.listdir(d1)[0]
+                n0, p0 = self._tgas(os.path.join(d0, sub))
+                n1, p1 = self._tgas(os.path.join(d1, sub))
+                self.assertEqual(len(n1), len(n0) + 2)
+                self.assertEqual(n1[0], first, 'numbering starts where it always did')
+                self.assertEqual(n1[:len(n0)], n0, 'and runs on without a gap')
+                self.assertEqual(int(p1[0][..., 3].max()), 0)
+                self.assertEqual(int(p1[-1][..., 3].max()), 0)
+                for x, y in zip(p0, p1[1:-1]):
+                    self.assertTrue(np.array_equal(x, y), 'the picture itself is untouched')
+
+    def test_a_tga_folder_can_be_padded_after_the_fact(self):
+        """For the routes the interface runs through ffmpeg directly."""
+        from PIL import Image
+        d = self._dir()
+        for i in range(3):
+            Image.new('RGB', (64, 36), (200, 10, 10)).save(os.path.join(d, f'SEQ_{i:04d}.tga'))
+        m.add_clear_tga_frames(d, 'both', log=self._quiet)
+        names, pics = self._tgas(d)
+        self.assertEqual(names, [f'SEQ_{i:04d}.tga' for i in range(5)])
+        # No alpha in the frames, so the clip is keyless: black, not clear.
+        self.assertEqual(int(pics[0][..., :3].max()), 0)
+        self.assertEqual(int(pics[0][..., 3].min()), 255)
+        self.assertEqual(int(pics[1][..., 0].min()), 200)
+
+    def test_no_clear_frames_is_unchanged(self):
+        """Off, and anything not start/end/both, leaves the output as it was."""
+        self.assertEqual(m._clear_counts(None), (0, 0))
+        self.assertEqual(m._clear_counts('both'), (1, 1))
+        with self.assertRaises(ValueError):
+            m._clear_counts('middle')
+
+    def test_tga_from_a_clip_is_padded_too(self):
+        """This route did not hand back its folder, so the padding pass had
+        nothing to work on (found while building, 2026-10-12)."""
+        d = self._dir()
+        m._hula_run_batch([self.clip], d, m.HULA_TARGET_KFRAME_TGA, standard='1080p25',
+                          log=self._quiet, clear_frames='both')
+        sub = os.path.join(d, os.listdir(d)[0])
+        names, pics = self._tgas(sub)
+        plain = self._dir()
+        m._hula_run_batch([self.clip], plain, m.HULA_TARGET_KFRAME_TGA, standard='1080p25',
+                          log=self._quiet)
+        n0, _ = self._tgas(os.path.join(plain, os.listdir(plain)[0]))
+        self.assertEqual(len(names), len(n0) + 2)
+        self.assertEqual(names[0], '0001.tga')
