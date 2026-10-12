@@ -86,6 +86,12 @@ git push
 
 > **This is the single authoritative list of open work.** `README.md` and `HANDOVER_NOTES.md` point here rather than keeping their own copies. The detailed sections lower down (EIF Roadmap, Outstanding review items, Extraction output hardware unknowns, Future Considerations) hold the specifics; this is the index. Reconcile it against git and the code when resuming - see the Session Anchor in `HANDOVER_NOTES.md`.
 
+**NEXT FEATURE (David, 2026-10-12: "the very next item", "a killer feature") - Save the sound out of a clip. Target MacHuna 2.4.0, after 2.3.0 ships (2.3.0 is frozen for the split desk test and the colleague preview; do not fold this in).** The reverse of sound for any clip: load a wipe in the player and take its sound out as a WAV, e.g. to lift an old wipe's sound onto a new one, or check it in an audio editor.
+  - *Engine:* a small new function that writes a WAV from the readers that already exist and are proven by ear: `read_sws_stereo16` (split files too, since `9ee023a`) -> 16-bit, which is all an SWS holds; `read_eaf_stereo24` -> 24-bit; MOV through ffmpeg. 48 kHz, stereo pair 1. An SWS gives its WHOLE sound, even where it outlasts the picture (NOTICIAS8); an EIF's is already fitted. Add a new function, do not change the readers' contracts (the bridge uses them). Test: write, read back, sample-exact against the source (e.g. NOTICIAS8_GEN's WAV top 16 bits, and the 961 tones).
+  - *Swift:* drag the player's PURPLE SOUND BAR out to Finder (the bar is the sound; purple already means "sound file"), always a copy, named after the clip (`961.wav`); plus a **Save Sound As…** menu item, because a drag nobody can see is not discoverable. Hidden when the clip has no sound.
+  - *Later, only if asked:* "sound only" as a batch output in the main list.
+  - Add to the colleague-preview questions: would taking the sound out of a wipe be useful to him?
+
 **Blocked on hardware:**
 - ~~**EIF hardware-test session**~~ - **DONE 2026-10-07** on a live K-Frame. EIF write confirmed at 50fps and 25fps/50i, K-Frame TGA from MOV/EIF/SWS, `.eaf` writing, the `0x60` flag (harmless), the KNOCKOUT_WIPE round trip. Results under "KNOCKOUT_WIPE round-trip RESULTS"; fixes in `CHANGELOG.md` "Unreleased".
 - ~~**Extraction outputs on real desks**~~ - K-Frame TGA and MOV to TGA **confirmed 2026-10-07**. **Sony TGA warning lifted by David on 2026-10-08 on his own judgement**; its naming and 25i field order have still never been loaded on a Sony desk in testing (engineering note only, not shown to users).
