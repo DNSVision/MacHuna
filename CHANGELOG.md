@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.14.0 — 2026-10-12
+
+**Save a clip's sound as a WAV.** The reverse of sound for any clip: take the sound out of an SWS, EIF or clip, for example to put an old wipe's sound on a new one. MacHuna 2.4 offers it by dragging a row's sound from the Sound column to the Finder; this is the engine half.
+
+### Added
+- `write_sound_wav(source, out_path)`: the source's whole sound as a 48 kHz stereo WAV. An SWS (a split folder too) gives its sound's own length, even where it runs past the picture, at 16-bit, which is all an SWS holds; an EIF its `.eaf` at 24-bit; a clip or sound file its first two channels (mono to both sides) at 24-bit, or 16 where that is all it holds. Written to a temporary name and moved into place, so a failure never leaves half a file. Returns `None`, writing nothing, when there is no sound.
+
+**Proof:** K-Watch's own split 961 gives a WAV equal to its source's sound; the user's NOTICIAS8_GEN.SWS gives the full 1:54 from a 10-second clip, exactly the top 16 bits of the WAV he gave Kahuna Manager.
+
+---
+
 ## v1.13.1 — 2026-10-12
 
 **Split SWS files (over 4 GB) are now written exactly as K-Watch writes them.** Measured against K-Watch's own split of a keyed 1080p50 clip with sound (961, made by David on 2026-10-11), and **confirmed on a Kahuna on 2026-10-12**: MacHuna's split of the same clip (965) and of a 20-second, 6-part clip (967) played exactly as K-Watch's (961, 966) - key, sound and length.

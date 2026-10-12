@@ -35,6 +35,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Include/exclude audio option
 - **Sound for any clip** (v1.13.0) - the engine takes a separate sound file for any TGA sequence, clip, SWS or EIF (`sound_file=`), as Kahuna Manager's Add Audio does; MacHuna 2 offers it in the interface. An SWS keeps a sound's own length, as Kahuna Manager writes it; an EIF's `.eaf` is fitted to the picture, as the K-Frame does
 - Auto play and Loop play flags baked into the SWS header at conversion time
+- **Save a clip's sound as a WAV** (v1.14.0) - `write_sound_wav` takes the whole sound out of an SWS (split too), EIF or clip, as deep as the file holds it; MacHuna 2 offers it by dragging a row's sound to the Finder
 - **Split SWS files written as K-Watch writes them** (v1.13.1) - sound kept, key fields kept, size field as K-Watch's; confirmed on a Kahuna on 2026-10-12 alongside K-Watch's own split. Keyed split clips made with an earlier version load with no key on a Kahuna: convert them again
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - **Batches can be built up from several folders** (v1.6.15) — the folder browser's **Add to List** button appends to the current selection instead of replacing it, so a single batch can draw files from anywhere. **Select** still replaces
