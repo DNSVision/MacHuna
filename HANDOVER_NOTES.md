@@ -399,7 +399,7 @@ MacHuna repo is currently **private**.
 
 ## Current Versions
 
-- **MacHuna (engine):** v1.13.0 (2026-10-11, sound for any clip: `sound_file=` on every SWS/EIF/MOV route, and an SWS keeps its sound's own length as Kahuna Manager does; MacHuna 2.3.0 pins it). v1.12.5 (2026-10-10, portable app layer for a PC fork; MacHuna 2.2.1 stays on v1.12.4, which it needs nothing from v1.12.5 to change). v1.12.4 (2026-10-09, SWS audio fixed and confirmed by ear on a Kahuna). Before that, v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
+- **MacHuna (engine):** v1.13.1 (2026-10-12, split SWS files as K-Watch writes them, confirmed on a Kahuna; reconvert keyed splits made earlier; colour-label log line; MacHuna 2.3.0 pins it). v1.13.0 (2026-10-11, sound for any clip: `sound_file=` on every SWS/EIF/MOV route, and an SWS keeps its sound's own length as Kahuna Manager does; MacHuna 2.3.0 pins it). v1.12.5 (2026-10-10, portable app layer for a PC fork; MacHuna 2.2.1 stays on v1.12.4, which it needs nothing from v1.12.5 to change). v1.12.4 (2026-10-09, SWS audio fixed and confirmed by ear on a Kahuna). Before that, v1.12.3 (2026-10-08, key precision fix from the real-material regression run): v1.12.1, the engine-soundness release (matrix, three reviews, black-box pass, decisions A-M). MacHuna 2.0 still pins v1.11.0 until its engine move.
 - **Hula (standalone, archived):** v0.1.1 — no longer maintained, use MacHuna's extraction outputs
 
 ---

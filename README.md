@@ -35,6 +35,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Include/exclude audio option
 - **Sound for any clip** (v1.13.0) - the engine takes a separate sound file for any TGA sequence, clip, SWS or EIF (`sound_file=`), as Kahuna Manager's Add Audio does; MacHuna 2 offers it in the interface. An SWS keeps a sound's own length, as Kahuna Manager writes it; an EIF's `.eaf` is fitted to the picture, as the K-Frame does
 - Auto play and Loop play flags baked into the SWS header at conversion time
+- **Split SWS files written as K-Watch writes them** (v1.13.1) - sound kept, key fields kept, size field as K-Watch's; confirmed on a Kahuna on 2026-10-12 alongside K-Watch's own split. Keyed split clips made with an earlier version load with no key on a Kahuna: convert them again
 - Large file support -- files over 4GB are automatically split into 2GB FAT32-safe chunks, matching K-Watch split file format exactly
 - **Batches can be built up from several folders** (v1.6.15) — the folder browser's **Add to List** button appends to the current selection instead of replacing it, so a single batch can draw files from anywhere. **Select** still replaces
 - Unified format-in / format-out interface -- open a folder and MacHuna detects the input type (SWS, video, TGA/stills) and adapts the Output dropdown and controls accordingly
@@ -214,7 +215,7 @@ The authoritative roadmap lives in [`DEVELOPMENT_NOTES.md`](DEVELOPMENT_NOTES.md
 
 - **The K-Frame desk session happened on 2026-10-07** and its fixes are in v1.12.0. K-Frame EIF (with audio) and K-Frame TGA are confirmed on hardware.
 - **The one hardware question left** is P→I field order on a genuine 1080i Kahuna.
-- Known engine limitations are listed in the roadmap (for example, split SWS files over 4GB carry no audio; MacHuna says so when it happens).
+- Known engine limitations are listed in the roadmap.
 - **Every input-output pair is checked by a full conversion matrix** (`MacHuna-Swift/testmedia/matrix/`): 254 conversions read back from disk, 0 rule breaks as of v1.12.1.
 
 See `DEVELOPMENT_NOTES.md` for the full status list.

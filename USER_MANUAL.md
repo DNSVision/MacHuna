@@ -1,4 +1,4 @@
-# MacHuna v1.13.0 — User Manual
+# MacHuna v1.13.1 — User Manual
 
 **Broadcast Media Format Converter**
 
@@ -351,6 +351,8 @@ Something found during the K-Frame testing that is worth knowing even if you nev
 
 **Converting through MacHuna keeps the colour accurate.** MacHuna reads a labelled file by its label, and an unlabelled HD file (720 lines or more) as HD colour, BT.709, which is the industry convention. For ProRes deliveries, convert to EIF in MacHuna rather than importing the MOV on the desk.
 
+**The log says when it has made that choice** (v1.13.1): "Source has no colour label, treated as HD colour (BT.709)". Grass Valley's own K-Watch makes the opposite choice for an unlabelled file, so the same unlabelled clip converted by each can look different on the desk; a labelled file looks the same from both.
+
 Two things to know. **Before v1.12.1, MacHuna read an unlabelled HD file as SD colour, just as the desk does**, so a conversion of such a file made with an earlier version has the same shift; convert it again. And if a file really is SD colour at HD size but carries no label, MacHuna cannot tell: label it when you export it.
 
 ---
@@ -546,7 +548,7 @@ The built-in Video Player lets you check a file without needing a Kahuna or K-Fr
 | Input | Fill / Key / Composite | Audio |
 |---|---|---|
 | `.SWS` | Yes | Yes (if present in file) |
-| `.SWS` **split files** (a folder of `01_OF_03._XX` parts) | Yes | Split files carry no audio |
+| `.SWS` **split files** (a folder of `01_OF_03._XX` parts) | Yes | Yes (v1.13.1; earlier MacHuna splits were written without sound) |
 | `.EIF` (K-Frame native) | Yes - fill, key, and composite all populated | Yes, from the companion `.eaf` (v1.12.0) |
 | `.TGA` sequence (pick any frame) | Yes (if TGAs have alpha) | No |
 | `.MOV`, `.MP4`, `.MXF`, `.MKV`, `.AVI` | Yes (alpha preserved for ProRes 4444 etc.) | Yes |
@@ -584,7 +586,7 @@ The player exists as a confidence check: to see that a clip is what you expected
 ### 10.5 Notes
 
 - Multiple player windows can be open simultaneously
-- Split `.SWS` files (>4GB, multi-chunk) cannot currently be previewed
+- Split `.SWS` files (>4GB, multi-chunk) play as one clip (v1.9.0), sound included (v1.13.1)
 - Audio playback uses the sounddevice library. If not installed, the player opens without audio but VU meters are still drawn
 
 ---
@@ -653,10 +655,11 @@ Files larger than 4GB are automatically split into 2GB chunks when **Split >4GB*
   03_OF_03._XX   (video data, remainder)
 ```
 
-- Chunk 1 contains the SWS header followed by video data
-- Subsequent chunks contain raw video data only
+- The parts are one ordinary SWS file cut into 2GB pieces: header, fill, key, then sound
+- Chunk 1 starts with the SWS header; the sound, if any, is at the end of the last part
 - The header in chunk 1 carries the total frame count across all chunks
-- Audio is not supported in split files
+
+> **Convert keyed split clips again if they were made before v1.13.1.** Earlier versions wrote every split file with a header saying it had no key, and left its sound out. Confirmed on a Kahuna on 2026-10-12: such a clip loads with **no key at all**. A v1.13.1 split, of the same clip as K-Watch's own, played identically on the desk: key, sound and length. Clips under 4GB, and clips with no key, are not affected by the key fault.
 
 > **IMPORTANT** When transferring to a Kahuna via USB, copy the entire `.SWS` folder (e.g. `201.SWS/`), not the individual chunk files inside it.
 
@@ -772,10 +775,8 @@ Check the conversion log for any warnings about P→I or interlaced detection.
 ## 15. Known Limitations
 
 - **Apple Silicon only** — Intel Mac builds are not supported
-- **Split .SWS files** cannot be previewed in the Video Player
 - **TGA sequence audio** is not supported
 - **HLG Rec.2020** colour space is not implemented (requires a reference HLG .SWS file to reverse-engineer the header values)
-- **SWS files over 4GB carry no audio.** A split SWS cannot include audio; MacHuna writes it without and says so in the log. Keep clips with sound under the split size
 - **An EIF does not record whether it is interlaced.** When converting a 25fps EIF to SWS, choose 1080i/50 for 50i material and 1080p/25 for progressive
 
 ---
