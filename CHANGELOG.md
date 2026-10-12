@@ -4,6 +4,21 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.15.0 — 2026-10-12
+
+**Clear frames, and split SWS files as a source.** A user's request for wipes supplied starting and ending on vision; and David found a split SWS could be played but not converted.
+
+### Added
+- **`clear_frames='start'|'end'|'both'`** on every route to Kahuna SWS, K-Frame EIF and QuickTime MOV, and on `_hula_run_batch` for every TGA route; **`add_clear_tga_frames(folder, clear)`** for TGA folders written elsewhere. One frame of black with the key fully off, so a desk sits invisibly on it while the clip is cued or after it ends; a keyless output gets a black frame, having no key to turn off. A frame at the start delays the sound by one frame of silence, so it stays in sync. Every original frame passes through untouched, and the sound sample for sample (the tests compare each route with an unpadded conversion).
+- **A split SWS can be converted, not only played.** `open_sws` opens a file or a split folder (or any part inside it) alike, and every route that reads an SWS uses it; `HulaSWSHeader` reads splits. A split converts to exactly what the same clip does unsplit, to SWS, EIF, MOV and TGA (tested), and K-Watch's own 961, 5.5 GB in three parts, converts to SWS with picture, key and sound identical.
+
+### Fixed
+- **An old MacHuna split keeps its key when converted.** Before v1.13.1 MacHuna blanked 0x1A8 in every split, so its header said "no key" (963 loaded keyless on a Kahuna). The conversion reader now counts the planes, as the player does - so converting such a file SWS to SWS writes a correct header, rescuing it without its source.
+- **An EIF over 517 frames (4 GB) is refused in plain words, before anything is written.** The header holds where the picture ends in 32 bits (0x080); a 1,000-frame clip failed with Python's own struct error. Whether a K-Frame can hold more is an open question (roadmap).
+- `_hula_convert_mov_to_tga` now returns its folder, as the other TGA routes do.
+
+---
+
 ## v1.14.0 — 2026-10-12
 
 **Save a clip's sound as a WAV.** The reverse of sound for any clip: take the sound out of an SWS, EIF or clip, for example to put an old wipe's sound on a new one. MacHuna 2.4 offers it by dragging a row's sound from the Sound column to the Finder; this is the engine half.
