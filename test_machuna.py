@@ -4745,3 +4745,100 @@ class TestSplitSwsIsKWatchs(unittest.TestCase):
         for off in (0x1A4, 0x1A8, 0x1B4, 0x1C0, 0x1CC, 0x1E8, 0x1EC):
             self.assertEqual(ho[off:off + 4].hex(), ht[off:off + 4].hex(), f'header 0x{off:X}')
         shutil.rmtree(d, True)
+
+
+class TestSoundExport(unittest.TestCase):
+    """Save a clip's sound out as a WAV (David, 2026-10-12: "a killer
+    feature"), the reverse of sound for any clip. The whole sound - an SWS's
+    own length even where it outlasts the picture - at the depth the file
+    holds it: an SWS is 16-bit, a .eaf or a MOV can be 24. Checked against the
+    samples that went in, read back with Python's own `wave`, not the engine."""
+
+    setUpClass = TestSoundForAnyClip.__dict__['setUpClass']
+    tearDownClass = TestSoundForAnyClip.__dict__['tearDownClass']
+    _dir = TestSoundForAnyClip._dir
+    _quiet = TestSoundForAnyClip._quiet
+
+    def _export(self, source):
+        out = os.path.join(self._dir(), 'out.wav')
+        info = m.write_sound_wav(source, out, log=self._quiet)
+        return out, info
+
+    @staticmethod
+    def _wav(path):
+        """(bits, rate, (n, 2) int64 samples), decoded independently."""
+        import numpy as np, wave
+        with wave.open(path, 'rb') as w:
+            bits, rate, ch = w.getsampwidth() * 8, w.getframerate(), w.getnchannels()
+            data = w.readframes(w.getnframes())
+        if bits == 16:
+            a = np.frombuffer(data, '<i2').astype(np.int64)
+        else:
+            b = np.frombuffer(data, np.uint8).reshape(-1, 3).astype(np.int64)
+            a = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
+            a = a - (a >= 1 << 23) * (1 << 24)
+        return bits, rate, a.reshape(-1, ch)
+
+    def test_an_sws_gives_its_whole_sound_even_past_the_picture(self):
+        """4 frames of picture (0.08s at 1080p50) and 1.00002s of sound: the
+        WAV is all of the sound, 16-bit because that is all an SWS holds."""
+        import numpy as np
+        sws = m.convert_tga_sequence(self.frames, 1, self._dir(), '1080p50', split_fat32=False,
+                                     log=self._quiet, write_log=False, sound_file=self.long)
+        out, info = self._export(sws)
+        bits, rate, lr = self._wav(out)
+        self.assertEqual((bits, rate, lr.shape), (16, 48000, (48001, 2)))
+        self.assertTrue(np.array_equal(lr[:, 0], self.LL >> 8))
+        self.assertTrue(np.array_equal(lr[:, 1], self.LR >> 8))
+        self.assertEqual((info['bits'], info['samples']), (16, 48001))
+
+    def test_a_split_sws_gives_its_sound(self):
+        import numpy as np
+        d = self._dir()
+        old = m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK
+        m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = 8 * 1024 * 1024, 16 * 1024 * 1024
+        try:
+            sws = m.convert_tga_sequence(self.frames, 1, d, '1080p50', split_fat32=True,
+                                         log=self._quiet, write_log=False, sound_file=self.long)
+        finally:
+            m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = old
+        self.assertGreaterEqual(len(m.split_parts(sws)), 2, 'it should have split')
+        out, _ = self._export(sws)
+        bits, _, lr = self._wav(out)
+        self.assertEqual(bits, 16)
+        self.assertTrue(np.array_equal(lr[:, 0], self.LL >> 8))
+        self.assertTrue(np.array_equal(lr[:, 1], self.LR >> 8))
+
+    def test_an_eif_gives_its_eaf_at_24_bit(self):
+        """The .eaf is fitted to the picture (4 frames at 50 = 3840 samples)
+        and holds 24 bits, so the WAV does too."""
+        import numpy as np
+        eif = m.convert_tga_seq_to_eif(self.frames, self._dir(), 'TEST', 50.0, log=self._quiet,
+                                       out_name='0001', sound_file=self.long)
+        bits, rate, lr = self._wav(self._export(eif)[0])
+        n = len(lr)
+        self.assertEqual((bits, rate, n), (24, 48000, 3840))
+        self.assertTrue(np.array_equal(lr[:, 0], self.LL[:n]))
+        self.assertTrue(np.array_equal(lr[:, 1], self.LR[:n]))
+
+    def test_a_mov_gives_its_sound_at_the_depth_it_holds(self):
+        import numpy as np, subprocess
+        bits, _, lr = self._wav(self._export(self.clip)[0])
+        self.assertEqual(bits, 24)
+        self.assertTrue(np.array_equal(lr[:, 0], self.CL))
+        self.assertTrue(np.array_equal(lr[:, 1], self.CR))
+        mov16 = os.path.join(self._dir(), 'clip16.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-i', self.w441, '-f', 'lavfi', '-t', '0.2',
+                        '-i', 'testsrc=size=192x108:rate=25', '-map', '1:v', '-map', '0:a',
+                        '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', '-ar', '48000', mov16], check=True)
+        self.assertEqual(self._wav(self._export(mov16)[0])[0], 16, 'a 16-bit sound stays 16-bit')
+
+    def test_no_sound_writes_nothing(self):
+        d = self._dir()
+        out = os.path.join(d, 'out.wav')
+        silent = m.convert_tga_sequence(self.frames, 1, self._dir(), '1080p50', split_fat32=False,
+                                        log=self._quiet, write_log=False)
+        for source in (silent, self.frames[0]):
+            with self.subTest(source=os.path.basename(source)):
+                self.assertIsNone(m.write_sound_wav(source, out, log=self._quiet))
+                self.assertEqual(os.listdir(d), [], 'nothing written, not even a partial file')

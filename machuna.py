@@ -4303,6 +4303,64 @@ def read_eaf_stereo(eaf_path: str, log=print):
     return None if pair is None else (pair >> 8).astype('<i2').tobytes()
 
 
+def _clip_sound_stereo24(source: str):
+    """Any source's programme sound as (n, 2) int64 24-bit values, or None.
+    Each format by its proven reader: an SWS (a split folder too) by
+    `read_sws_stereo16`, as 16-bit << 8, which is all an SWS holds; an EIF by
+    its companion .eaf at full 24 bits; anything else - a clip or a sound file -
+    by `_source_stereo24` (the first two channels, mono to both, 48 kHz)."""
+    ext = Path(source).suffix.lower()
+    if ext == '.sws':
+        pcm = read_sws_stereo16(source)
+        if not pcm:
+            return None
+        return np.frombuffer(pcm, '<i2').astype(np.int64).reshape(-1, 2) << 8
+    if ext in ('.eif', '.eaf'):
+        pair = _read_eaf_words(eaf_path_for(source) if ext == '.eif' else source, log=lambda *a: None)
+        return None if pair is None else np.asarray(pair, np.int64)
+    if not os.path.isfile(source) or ext in _STILL_EXTS:
+        return None
+    return _source_stereo24(source)
+
+
+def write_sound_wav(source: str, out_path: str, log=print):
+    """Save a clip's sound as a WAV (David, 2026-10-12: the reverse of sound
+    for any clip, for MacHuna 2.4's player). The WHOLE sound - an SWS keeps its
+    sound's own length, so this can run past the last frame - at 48 kHz stereo,
+    and as deep as the file holds it: 16-bit when that is all there is (every
+    SWS, and a 16-bit clip), otherwise 24. Written to a temporary name and
+    moved into place, so a failure never leaves half a WAV behind.
+
+    Returns {'path', 'samples', 'seconds', 'bits'}, or None, writing nothing,
+    when the source has no sound."""
+    import wave
+    stereo = _clip_sound_stereo24(source)
+    name = os.path.basename(source.rstrip('/'))
+    if stereo is None or len(stereo) == 0:
+        log(f"  {name} has no sound to save.")
+        return None
+    stereo = np.asarray(stereo, np.int64).reshape(-1, 2)
+    bits = 24 if np.any(stereo & 0xFF) else 16
+    if bits == 16:
+        data = (stereo >> 8).astype('<i2').tobytes()
+    else:
+        data = (stereo & 0xFFFFFF).astype('<u4').view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
+    tmp = f"{out_path}.part-{os.getpid()}"
+    try:
+        with wave.open(tmp, 'wb') as w:
+            w.setnchannels(2)
+            w.setsampwidth(bits // 8)
+            w.setframerate(EAF_SAMPLE_RATE)
+            w.writeframes(data)
+        os.replace(tmp, out_path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    seconds = len(stereo) / EAF_SAMPLE_RATE
+    log(f"  Saved the sound of {name}: {seconds:.2f}s, {bits}-bit, 48 kHz stereo")
+    return {'path': out_path, 'samples': int(len(stereo)), 'seconds': seconds, 'bits': bits}
+
+
 def _samples_per_frame(fps: float) -> int:
     return int(round(EAF_SAMPLE_RATE / fps))
 
