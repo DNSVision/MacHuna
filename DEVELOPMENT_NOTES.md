@@ -500,7 +500,10 @@ of them, and on a Mac every one behaves exactly as before).
   `_tga_input_args` uses it for every TGA-sequence route. **Fixed in v1.15.1** on the M5 (symlink, then hard
   link, then copy; byte-identical output). Nothing changes on a Mac, so MacHuna 2.x moves its pin with its next
   release. **Next on the M1:** re-run the suite on v1.15.1 without the test-only shim; convert a TGA sequence
-  from a drive other than temp, so the copy path runs for real.
+  from a drive other than temp, so the copy path runs for real. **Both done 2026-10-15:** 364 passed (the 1
+  failure was a timing-sensitive test, fixed in the tests: an SWS header holds the time to the second, so two
+  conversions are compared with the clock frozen); 5 TGAs from a memory stick took the copy path and gave an
+  SWS byte-identical to the same frames from C:.
 - **Working split:** the M1 investigates and builds the PC side. Engine fixes are made on the M5 (the
   authoritative repo) and released from there; the M1 does not change `machuna.py`.
 
