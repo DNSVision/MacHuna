@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.15.1 — 2026-10-15
+
+**TGA sequences convert on Windows.** Found by running the test suite inside Windows for the PC version. Nothing changes on a Mac.
+
+### Fixed
+- **A refused symbolic link no longer stops a TGA sequence converting.** `_tga_input_args` lines the frames up for ffmpeg as numbered symlinks, and an ordinary Windows user may not make one (WinError 1314), so every TGA-sequence route failed there. A refused symlink now falls back to a hard link, and a refused hard link (frames on another drive, such as a memory stick) to a copy in the temporary folder. The output is byte-identical whichever way (tested on SWS and MOV). On a Mac the symlink always succeeds.
+
+---
+
 ## v1.15.0 — 2026-10-12
 
 **Clear frames, and split SWS files as a source.** A user's request for wipes supplied starting and ending on vision; and David found a split SWS could be played but not converted.
