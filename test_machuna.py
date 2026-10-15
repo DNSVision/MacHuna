@@ -2977,6 +2977,19 @@ class TestTgaSequenceWithoutSymlinks(unittest.TestCase):
             p = os.path.join(self.tmp, f'seq_{i:04d}.tga')
             Image.new('RGBA', (1920, 1080), (60 * i, 90, 140, 200)).save(p)
             self.files.append(p)
+        # An SWS header holds the time it was written, to the second (found
+        # from Windows, where a conversion takes over half a second): freeze the
+        # clock, or two identical conversions differ when a second ticks over.
+        from unittest import mock
+        real = m.datetime
+
+        class Frozen(real):
+            @classmethod
+            def now(cls, tz=None):
+                return real(2026, 10, 15, 12, 0, 0)
+        patcher = mock.patch.object(m, 'datetime', Frozen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _sws_bytes(self, name):
         d = os.path.join(self.tmp, name); os.makedirs(d)
