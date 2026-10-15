@@ -4,6 +4,18 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.15.4 — 2026-10-15
+
+**ffmpeg can no longer read the requests meant for MacHuna.** Found by the PC version's first bridge test on Windows, and reproduced on a Mac. The files MacHuna writes are unchanged.
+
+### Fixed
+- **Every program the engine starts gets its own empty input** (`stdin=DEVNULL`, 15 places). ffmpeg reads its input for keys, and it inherited the input of whatever started it: in MacHuna 2.x, the bridge's request pipe. On a Mac a request sent during a conversion could lose its first byte, and a `q` reaching ffmpeg (from a file name such as "Squad.mov") stopped the job early while reporting success: 112 of 150 frames in the test. It is a race, so rare, but its result was a short clip marked as converted, or a Stop that did nothing. On Windows ffmpeg hung after finishing until the next request arrived.
+- **Proof:** a fail-first test sends `q` and a request into a running conversion and requires the request to arrive whole and every frame to be written; a guard fails if any child process is started without its own input (proved by breaking it).
+
+**Still to fix, outside the engine:** MacHuna 2.x's `bridge.py` starts two programs of its own the same way; MacHuna 2.5.4 fixes them and moves to this engine.
+
+---
+
 ## v1.15.3 — 2026-10-15
 
 **Clip names in any language work on Windows.** Found by the PC version's first test runs. Nothing changes on a Mac, which always uses UTF-8.

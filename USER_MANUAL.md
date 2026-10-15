@@ -1,4 +1,4 @@
-# MacHuna v1.15.3 — User Manual
+# MacHuna v1.15.4 — User Manual
 
 **Broadcast Media Format Converter**
 
