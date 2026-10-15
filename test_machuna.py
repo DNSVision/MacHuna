@@ -2959,6 +2959,63 @@ class TestTgaAlphaIsReadNotAssumed(unittest.TestCase):
         self.assertTrue(self._sws(self._seq('RGBA', 128)).has_key)
 
 
+class TestTgaSequenceWithoutSymlinks(unittest.TestCase):
+    """Found on Windows, 2026-10-15: an ordinary Windows user may not make
+    symbolic links (WinError 1314), so the numbered links that line a TGA
+    sequence up for ffmpeg failed and every TGA-sequence route failed with them.
+    A refused symlink must fall back to a hard link, and a refused hard link
+    (TGAs on a memory stick, temp on C:) to a copy, with the same output."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        from PIL import Image
+        self.files = []
+        for i in range(3):
+            p = os.path.join(self.tmp, f'seq_{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (60 * i, 90, 140, 200)).save(p)
+            self.files.append(p)
+
+    def _sws_bytes(self, name):
+        d = os.path.join(self.tmp, name); os.makedirs(d)
+        out = m.convert_tga_sequence(self.files, 1, d, '1080p25', False, False,
+                                     lambda *a: None, write_log=False)
+        return Path(out).read_bytes()
+
+    @staticmethod
+    def _refuse(*a, **k):
+        raise OSError(1314, 'A required privilege is not held by the client')
+
+    def test_refused_symlink_gives_the_same_sws(self):
+        from unittest import mock
+        reference = self._sws_bytes('ref')
+        with mock.patch('os.symlink', side_effect=self._refuse):
+            self.assertEqual(self._sws_bytes('hard'), reference)
+
+    def test_refused_symlink_and_hard_link_gives_the_same_sws(self):
+        from unittest import mock
+        reference = self._sws_bytes('ref')
+        with mock.patch('os.symlink', side_effect=self._refuse), \
+             mock.patch('os.link', side_effect=OSError(18, 'Cross-device link')):
+            self.assertEqual(self._sws_bytes('copy'), reference)
+
+    def test_refused_symlink_gives_the_same_mov(self):
+        """A second route through the same helper: TGA sequence to MOV."""
+        from unittest import mock
+        def mov(name):
+            d = os.path.join(self.tmp, name); os.makedirs(d)
+            return m.convert_tga_seq_to_mov(self.files, d, 'clip', 25.0, log=lambda *a: None)
+        outs = [mov('ref')]
+        with mock.patch('os.symlink', side_effect=self._refuse), \
+             mock.patch('os.link', side_effect=self._refuse):
+            outs.append(mov('nolink'))
+        self.assertTrue(os.path.getsize(outs[0]) > 0)
+        # ProRes in a MOV carries no timestamp, so the two must match exactly.
+        self.assertEqual(Path(outs[1]).read_bytes(), Path(outs[0]).read_bytes())
+
+
 class TestNoEmptySws(unittest.TestCase):
     """Fable black-box pass, 2026-10-08: some conversions wrote an SWS with no
     frames (and one claimed audio it did not have), reported as done."""

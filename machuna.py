@@ -1348,11 +1348,24 @@ def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
     read explicitly as TGA. A TGA has no signature, so letting ffmpeg probe
     each file (the concat demuxer did) let a frame of solid dark grey (byte 9)
     be read as CD+G karaoke graphics (2026-10-08). Numbered links in `tmp`
-    feed the image2 demuxer with the targa decoder forced."""
+    feed the image2 demuxer with the targa decoder forced.
+
+    An ordinary Windows user may not make symbolic links (WinError 1314,
+    found 2026-10-15), so a refused symlink falls back to a hard link, and a
+    refused hard link (frames on another drive, such as a memory stick) to a
+    copy. ffmpeg reads the same bytes whichever way. On a Mac the symlink
+    always succeeds."""
     seq_dir = os.path.join(tmp, 'seq')
     os.makedirs(seq_dir, exist_ok=True)
     for n, tga in enumerate(tga_files):
-        os.symlink(os.path.abspath(tga), os.path.join(seq_dir, f'{n:06d}.tga'))
+        src, dst = os.path.abspath(tga), os.path.join(seq_dir, f'{n:06d}.tga')
+        try:
+            os.symlink(src, dst)
+        except OSError:
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copyfile(src, dst)
     return ['-f', 'image2', '-framerate', str(framerate), '-start_number', '0',
             '-c:v', 'targa', '-i', os.path.join(seq_dir, '%06d.tga')]
 
