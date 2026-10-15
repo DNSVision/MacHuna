@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.15.2 — 2026-10-15
+
+**Tests only. The engine's code is identical to v1.15.1** apart from the version number. Released so the PC version can pin a tag whose suite is green on Windows.
+
+### Fixed
+- **Two v1.15.1 tests could fail by chance.** They compare two SWS conversions byte for byte, and an SWS header records the time it was written, to the second; when a second ticked over between them (most runs under Windows' x64 emulation, rarely on a Mac) they differed in that time alone. The tests now freeze the clock. Found from Windows.
+
+---
+
 ## v1.15.1 — 2026-10-15
 
 **TGA sequences convert on Windows.** Found by running the test suite inside Windows for the PC version. Nothing changes on a Mac.
