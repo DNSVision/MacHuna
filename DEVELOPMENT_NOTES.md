@@ -118,8 +118,8 @@ git push
 - ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
 
 **Possible features (not decided, waiting on users):**
-- **A PC (Windows) version (David, 2026-10-15; people are asking; NOT started).** Plan and requirements in
-  "Forking for PC" below, "The plan (2026-10-15)". David may start it in a Claude session on his M1 MacBook Air.
+- **A PC (Windows) version (David, 2026-10-15; people are asking; STARTED on the M1 the same day).** Plan and
+  requirements in "Forking for PC" below, "The plan (2026-10-15)"; progress under "Progress" there.
 - **Port the engine to Swift (thought experiment, David, 2026-10-15; NOT decided).** Feasible: ~5,800 lines of
   real code, mostly format knowledge (SWS/EIF headers, v210 and EIF packing, key planes, sound layouts, splits,
   `.eaf`) that translates directly. **Keep ffmpeg**, called from Swift with exactly the same arguments; replacing
@@ -492,6 +492,17 @@ of them, and on a Mac every one behaves exactly as before).
   Windows needs no memory-stick tidy-up: it makes no `._` files.
 
 ### The plan (2026-10-15)
+
+**Progress.**
+- **2026-10-15: started on the M1** (Windows 11 ARM in Parallels; x64 Python 3.12, ffmpeg 8.1.2; engine
+  v1.15.0). The engine's suite run inside Windows: 321 passed, 41 failed, 17 skipped (desk files absent). All 41
+  failures were one bug: `os.symlink` needs admin rights or Developer Mode on Windows (WinError 1314), and
+  `_tga_input_args` uses it for every TGA-sequence route. **Fixed in v1.15.1** on the M5 (symlink, then hard
+  link, then copy; byte-identical output). Nothing changes on a Mac, so MacHuna 2.x moves its pin with its next
+  release. **Next on the M1:** re-run the suite on v1.15.1 without the test-only shim; convert a TGA sequence
+  from a drive other than temp, so the copy path runs for real.
+- **Working split:** the M1 investigates and builds the PC side. Engine fixes are made on the M5 (the
+  authoritative repo) and released from there; the M1 does not change `machuna.py`.
 
 David asked what he would need to make the PC version himself (Claude writing the code, as for the Mac app).
 
