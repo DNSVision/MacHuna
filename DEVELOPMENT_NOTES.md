@@ -504,7 +504,12 @@ of them, and on a Mac every one behaves exactly as before).
   failure was a timing-sensitive test, fixed in the tests: an SWS header holds the time to the second, so two
   conversions are compared with the clock frozen); 5 TGAs from a memory stick took the copy path and gave an
   SWS byte-identical to the same frames from C:. On engine main `815a52f` (clock frozen): **365 passed, 0 failed,
-  17 skipped** on Windows. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  17 skipped** on Windows. **Later the same day:** the M1's UTF-8 finding (Python on Windows defaults to the
+  Western code page, so non-Latin clip names broke ffprobe's report and the logs) fixed in the engine as
+  **v1.15.3**, with a guard; v1.15.2 was a tests-only tag so the PC could pin a green suite. The PC repo
+  `DNSVision/MacHuna-PC` was pushed by the M1 with the engine as a submodule. Still open for the PC:
+  `bridge.py` (MacHuna-Swift) reads its requests with the default encoding, so the PC app runs Python in
+  UTF-8 mode until that is changed on the Swift side. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
