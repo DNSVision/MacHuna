@@ -20,6 +20,20 @@
 
 MacHuna is a single-file Python app (`machuna.py`) that translates broadcast media assets between formats: video, TGA sequences, and stills to/from Grass Valley Kahuna `.SWS`, K-Frame EIF, K-Frame TGA, Sony TGA, and QuickTime MOV. Built collaboratively by David Steer (DNS Vision) and Claude. David has no coding background — Claude writes all code.
 
+## Who may author this repo: the M5 only (David, 2026-10-15)
+
+**This repo is authored ONLY from the M5.** It is the single authoritative engine repo for MacHuna on Mac and
+PC, and the M5 session oversees both. Sessions on David's M1 MacBook Air (a Windows Claude building the PC
+version, and a Mac-side Claude that only relays messages) are **read-only consumers**: they pull to verify and
+never commit to or push to this repo. Their push URL is disabled
+(`git remote set-url --push origin DISABLED-the-M5-is-the-only-author`), so a push fails rather than relying on
+anyone remembering. **Findings flow up to the M5 as relayed text; commits never flow up from the M1.** The M5
+checks each finding against the code itself, writes the fix with a fail-first test, and commits and releases
+it here. Decisions made on the M1 are recorded here by the M5 from what David relays. **If you are not on the
+M5, do not commit here.** The PC version's own files (build recipe, publish script, interface) will live in a
+separate PC repo with this engine pinned to a released tag (David's decision, to be raised when the M1 is
+about to write its first build file).
+
 ## Dev environment
 
 - Machine: MacBook (Apple Silicon M5), **macOS 27.0 "Golden Gate"** (build 26A428, upgraded ~2026-09-17). The upgrade reset Terminal/Python TCC grants, so directory listing of `~/Desktop` may fail with "operation not permitted" while a known file path still reads. Ask David for exact paths rather than browsing. **Do not change macOS permissions.**

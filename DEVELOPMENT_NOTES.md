@@ -504,10 +504,12 @@ of them, and on a Mac every one behaves exactly as before).
   failure was a timing-sensitive test, fixed in the tests: an SWS header holds the time to the second, so two
   conversions are compared with the clock frozen); 5 TGAs from a memory stick took the copy path and gave an
   SWS byte-identical to the same frames from C:.
-- **Working split:** the M1 investigates and builds the PC side. Engine fixes are made on the M5 (the
-  authoritative repo) and released from there; the M1 does not change `machuna.py`.
-
-David asked what he would need to make the PC version himself (Claude writing the code, as for the Mac app).
+- **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
+  PC. The M1 sessions pull to verify and never commit or push here (their push URL is disabled); findings are
+  relayed to the M5, which decides and commits. The M1's own PC decisions are recorded here by the M5 from
+  David's relay. **To decide (raise when the M1 is about to write its first build file):** a separate private
+  PC repo (e.g. `DNSVision/MacHuna-PC`) for the PC version's own files, with this engine as a submodule pinned
+  to a released tag, as MacHuna-Swift does. The M1 would author that repo; the M5 this one.
 
 - **Build machine: David's M1 MacBook Air running Windows 11 in Parallels.** That Windows is **ARM**, while most
   users' PCs are x64. Build an **x64** app anyway: install the x64 Python, numpy, Pillow, PyInstaller and x64
