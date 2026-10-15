@@ -118,6 +118,8 @@ git push
 - ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
 
 **Possible features (not decided, waiting on users):**
+- **A PC (Windows) version (David, 2026-10-15; people are asking; NOT started).** Plan and requirements in
+  "Forking for PC" below, "The plan (2026-10-15)". David may start it in a Claude session on his M1 MacBook Air.
 - **Port the engine to Swift (thought experiment, David, 2026-10-15; NOT decided).** Feasible: ~5,800 lines of
   real code, mostly format knowledge (SWS/EIF headers, v210 and EIF packing, key planes, sound layouts, splits,
   `.eaf`) that translates directly. **Keep ffmpeg**, called from Swift with exactly the same arguments; replacing
@@ -488,6 +490,38 @@ of them, and on a Mac every one behaves exactly as before).
 - **The interface.** The Tk app does the right conversions but is behind
   MacHuna 2.x's interface (no K-Frame TGA desk question, no EIF + .eaf drag).
   Windows needs no memory-stick tidy-up: it makes no `._` files.
+
+### The plan (2026-10-15)
+
+David asked what he would need to make the PC version himself (Claude writing the code, as for the Mac app).
+
+- **Build machine: David's M1 MacBook Air running Windows 11 in Parallels.** That Windows is **ARM**, while most
+  users' PCs are x64. Build an **x64** app anyway: install the x64 Python, numpy, Pillow, PyInstaller and x64
+  ffmpeg/ffprobe, and build under Windows' built-in x64 emulation; the result runs on any ordinary PC. Slower to
+  build, which does not matter. Check on the M1: RAM (8 GB is tight with Windows and a build; 16 GB comfortable),
+  a few GB free in the VM, Windows activated and updated. A native ARM64 build for Snapdragon laptops is optional.
+- **Before anyone else gets it: one run on a real Intel/AMD PC.** The M1 only ever tests under emulation.
+- **How Claude works there:** Claude Code inside Windows (needs Git for Windows), or Claude Code on the M1's Mac
+  side driving the VM with Parallels' `prlctl exec` (edition-dependent; check). **Claude's memory files live on
+  the M5 only (`~/.claude/projects/...`); a session on the M1 starts with none of them.** Clone or pull BOTH repos
+  there and read `CLAUDE.md` and `HANDOVER_NOTES.md` (this repo) and `MacHuna-Swift/CLAUDE.md` first: the repo
+  docs carry everything that matters; the memories only index it.
+- **Interface: the big job.** The engine is the same `machuna.py` and was made Windows-ready in v1.12.5. The Tk
+  window was parked around 1.12 and lacks 2.x's features (Sound column, sound export, Clear frame, split SWS as
+  source, the EIF length warning, the Quick Start Guide, drop anywhere). Bring it up to 2.x or build a new Windows
+  interface: David's call when starting. Windows needs no `._` tidy-up on Eject.
+- **Code signing:** without it Windows shows "Windows protected your PC". Microsoft Trusted Signing is the cheapest
+  proper route (roughly 8 GBP a month; identity checks, in David's name like the Apple account).
+- **Distribution:** its own download on dnsvision.tv, **its own update manifest** (so the Mac and PC apps never
+  announce each other's versions; turn `_update_check_enabled` on for it), its own publish script modelled on
+  `MacHuna-Swift/publish.sh`.
+- **Licences: the same as the Mac app since 2.5.3** (Swift decision 58): licence notices inside, and the exact GPL
+  source of the bundled ffmpeg (and any GPL libraries in it) published beside each release. A Windows ffmpeg build
+  (e.g. gyan.dev or BtbN) states its licence and configuration; trace it the way `Scripts/licences.py` does.
+- **Testing:** a desk does not care which OS wrote a file. Run the 324-case matrix on Windows and diff against the
+  Mac engine's output; **byte-identical** routes inherit the Mac's desk proofs, and only differences need a desk.
+  Same rules as the Swift-engine idea above (explain every byte; diff proves sameness, not correctness).
+- **No licence file needed** for David's own fork; the LICENSE question only matters if others fork it.
 
 ## Completed milestones (history)
 
