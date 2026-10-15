@@ -572,7 +572,9 @@ def get_video_info(input_path: str) -> dict:
         _get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
         '-show_streams', '-show_format', input_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    # UTF-8 named, never the locale's: ffprobe writes UTF-8, and a Windows
+    # code page cannot read a clip named in Cyrillic (found 2026-10-15).
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', check=True)
     import json
     data = json.loads(result.stdout)
 
@@ -1566,7 +1568,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         log_filename = f"MacHuna_Log_{file_number}_{seq_id}_{date_str}.txt"
         log_path = os.path.join(dest_dir, log_filename)
         try:
-            with open(log_path, 'w') as lf:
+            with open(log_path, 'w', encoding='utf-8') as lf:
                 lf.write(f"MacHuna Conversion Log\n")
                 lf.write(f"{'=' * 40}\n")
                 lf.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
@@ -4630,7 +4632,7 @@ def sound_file_info(path: str):
     import json
     result = subprocess.run([_get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
                              '-select_streams', 'a:0', '-show_streams', '-show_format', path],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding='utf-8')
     if result.returncode != 0:
         return None
     data = json.loads(result.stdout or '{}')
@@ -5426,7 +5428,7 @@ def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn,
     log_path = os.path.join(dest_dir, log_filename)
     try:
         max_len = max(len(name) for _, name, _ in results)
-        with open(log_path, 'w') as f:
+        with open(log_path, 'w', encoding='utf-8') as f:
             f.write("MacHuna Conversion Log\n")
             f.write(f"{'=' * 40}\n")
             f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
@@ -5673,14 +5675,14 @@ def launch_gui():
 
     def load_settings():
         try:
-            with open(SETTINGS_FILE) as f:
+            with open(SETTINGS_FILE, encoding='utf-8') as f:
                 return json.load(f)
         except Exception:
             return {}
 
     def save_settings():
         try:
-            with open(SETTINGS_FILE, 'w') as f:
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump({
                     'dest':             dest_var.get(),
                     'standard':         std_var.get(),

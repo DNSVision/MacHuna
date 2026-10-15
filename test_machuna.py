@@ -861,12 +861,12 @@ class TestUnverifiedOutputNotes(unittest.TestCase):
     def test_the_proceed_anyway_dialogs_are_gone(self):
         """The Tk app asked "has not been tested on hardware... Proceed
         anyway?" before EIF output and MOV to TGA. Both are now proven."""
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         self.assertFalse('has not been tested on hardware' in src)
         self.assertFalse('Proceed anyway?' in src)
 
     def test_no_unconfirmed_markers_remain_for_lifted_outputs(self):
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         for marker in ('UNCONFIRMED: EIF output', 'UNCONFIRMED: generated EIF',
                        'UNCONFIRMED: K-Frame TGA', 'UNCONFIRMED — awaiting'):
             with self.subTest(marker=marker):
@@ -941,7 +941,7 @@ class TestUsableGeometry(unittest.TestCase):
 
 def _launch_gui_tree():
     import ast
-    src = Path(__file__).with_name('machuna.py').read_text()
+    src = Path(__file__).with_name('machuna.py').read_text(encoding='utf-8')
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.FunctionDef) and node.name == 'launch_gui':
             return node
@@ -1009,7 +1009,7 @@ class TestRemovedCodeStaysRemoved(unittest.TestCase):
     """Things deleted on purpose, which a well-meaning edit could reintroduce."""
 
     def setUp(self):
-        self.src = Path(__file__).with_name('machuna.py').read_text()
+        self.src = Path(__file__).with_name('machuna.py').read_text(encoding='utf-8')
 
     def test_parse_filename_is_gone(self):
         # removed with "Use source file number"; its only consumer
@@ -1869,7 +1869,7 @@ class TestAudioRoutes(unittest.TestCase):
     def test_the_tk_app_uses_the_engine_sws_to_sws(self):
         """The routing used to be written out inside the GUI (and again in the
         Swift bridge), and both copies dropped the audio. One copy now."""
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         gui = src[src.index('def launch_gui'):]
         self.assertIn('convert_sws_to_sws(', gui)
         self.assertFalse('does not carry audio through' in src)
@@ -1966,7 +1966,7 @@ class TestAudioRoutes(unittest.TestCase):
         """Independent review, 2026-10-08: the EIF converters return None when
         cancelled (and delete the partial file), but the Tk batch appended 'OK'
         regardless, so the row showed done and a re-run skipped it."""
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         body = src[src.index('        def _run_to_eif():'):]
         body = body[:body.index('        def _run_to_tga_seq():')]
         self.assertIn('made is None', body, 'the converter result must be checked')
@@ -2198,7 +2198,7 @@ class TestAudioRoutes(unittest.TestCase):
     def test_the_tk_app_does_not_mark_a_cancelled_eif_to_sws_done(self):
         """Second review: the sibling of the EIF-output fix. A cancelled EIF to
         SWS returned an empty result but the Tk batch appended 'OK'."""
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         body = src[src.index('        def _run_to_sws():'):]
         body = body[:body.index("results.append((fnum, Path(item['path']).stem, 'OK'))")]
         self.assertIn('if not made', body[body.index("if item['type'] == 'eif':"):])
@@ -2498,14 +2498,14 @@ class TestTkPlayerEifAudio(unittest.TestCase):
         self.assertFalse(has_aud)
 
     def test_the_tk_app_passes_include_audio_to_eif_to_sws(self):
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         gui = src[src.index('def launch_gui'):]
         call = gui[gui.index('convert_eif_to_sws('):]
         call = call[:call.index('results.append')]     # the whole call
         self.assertIn('include_audio=include_audio_var.get()', call)
 
     def test_the_player_loader_uses_it(self):
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         body = src[src.index('    def _load_eif(self, path: str):'):]
         body = body[:body.index('\n    def ', 10)]
         self.assertIn('_player_audio_for_eif(', body)
@@ -3029,6 +3029,103 @@ class TestTgaSequenceWithoutSymlinks(unittest.TestCase):
         self.assertEqual(Path(outs[1]).read_bytes(), Path(outs[0]).read_bytes())
 
 
+class TestTextIsUtf8Everywhere(unittest.TestCase):
+    """Found on Windows, 2026-10-15: Python there reads and writes text in the
+    old Western code page unless told otherwise, so a clip named in Polish,
+    Cyrillic or Greek could fail to be read (ffprobe's report) or leave no log.
+    A Mac is always UTF-8, so these tests make this Mac behave like Windows."""
+
+    NAME = 'Ёлка Łódź'   # 'Ё' is UTF-8 D0 81; 0x81 has no meaning in cp1252
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _clip(self):
+        import subprocess
+        src = os.path.join(self.tmp, f'{self.NAME}.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'testsrc=size=192x108:rate=25', '-f', 'lavfi', '-i', 'sine=sample_rate=48000',
+                        '-t', '0.2', '-c:v', 'prores_ks', '-c:a', 'pcm_s16le', src], check=True)
+        return src
+
+    def test_ffprobe_report_is_read_as_utf8_whatever_the_locale(self):
+        from unittest import mock
+        src = self._clip()
+        with mock.patch('locale.getencoding', return_value='cp1252'):
+            self.assertEqual(m.get_video_info(src)['width'], 192)
+            self.assertIsNotNone(m.sound_file_info(src))
+
+    def _run_as_windows(self, code):
+        """Run `code` in a fresh Python whose default text encoding is not
+        UTF-8 (Latin-1 here, the nearest a Mac offers to Windows' cp1252)."""
+        import subprocess
+        env = dict(os.environ, LC_ALL='en_US.ISO8859-1', LANG='en_US.ISO8859-1', PYTHONUTF8='0',
+                   PYTHONPATH=os.path.dirname(os.path.abspath(m.__file__)))
+        probe = subprocess.run([sys.executable, '-c', 'import locale; print(locale.getencoding())'],
+                               env=env, capture_output=True, text=True, encoding='utf-8')
+        if 'utf' in probe.stdout.lower():
+            self.skipTest('cannot set a non-UTF-8 locale on this machine')
+        r = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True,
+                           text=True, encoding='utf-8')
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def _only_log(self, d):
+        logs = [f for f in os.listdir(d) if f.startswith('MacHuna_Log_')]
+        self.assertEqual(len(logs), 1, f'no log written: {os.listdir(d)}')
+        return Path(d, logs[0]).read_text(encoding='utf-8')
+
+    def test_batch_log_holds_a_non_latin_name(self):
+        d = os.path.join(self.tmp, 'batch'); os.makedirs(d)
+        self._run_as_windows(
+            'import machuna as m\n'
+            f'm._write_batch_log([(1, {self.NAME!r}, "OK")], {d!r}, "1080p25", lambda *a: None)\n')
+        self.assertIn(self.NAME, self._only_log(d))
+
+    def test_tga_sequence_log_holds_a_non_latin_name(self):
+        from PIL import Image
+        files = []
+        for i in range(2):
+            p = os.path.join(self.tmp, f'{self.NAME}_{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (90, 90, 90, 255)).save(p)
+            files.append(p)
+        d = os.path.join(self.tmp, 'seq'); os.makedirs(d)
+        self._run_as_windows(
+            'import machuna as m\n'
+            f'm.convert_tga_sequence({files!r}, 1, {d!r}, "1080p25", False, False, '
+            'lambda *a: None, write_log=True)\n')
+        self.assertIn(self.NAME.split('_')[0], self._only_log(d))
+
+    def test_guard_every_text_read_and_write_names_its_encoding(self):
+        """Structural guard: in machuna.py, every text-mode open(), read_text(),
+        write_text() and text subprocess call says encoding=. Otherwise the next
+        one written works on a Mac and fails on a PC."""
+        import ast
+        tree = ast.parse(Path(m.__file__).read_text(encoding='utf-8'))
+        bad = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, 'id', '')
+            kw = {k.arg: k.value for k in node.keywords}
+            if 'encoding' in kw:
+                continue
+            if name == 'open' and isinstance(f, ast.Name):
+                mode = node.args[1] if len(node.args) > 1 else kw.get('mode')
+                if not (isinstance(mode, ast.Constant) and 'b' in str(mode.value)):
+                    bad.append(node.lineno)
+            elif name in ('read_text', 'write_text'):
+                bad.append(node.lineno)
+            elif name in ('run', 'Popen', 'check_output') and any(
+                    k in kw and isinstance(kw[k], ast.Constant) and kw[k].value
+                    for k in ('text', 'universal_newlines')):
+                bad.append(node.lineno)
+        self.assertEqual(bad, [], f'text I/O without encoding= at machuna.py lines {bad}')
+
+
 class TestNoEmptySws(unittest.TestCase):
     """Fable black-box pass, 2026-10-08: some conversions wrote an SWS with no
     frames (and one claimed audio it did not have), reported as done."""
@@ -3443,7 +3540,7 @@ class TestMovRateComesFromItsOwnControl(unittest.TestCase):
 
     def test_the_rate_control_is_actually_built(self):
         # A guard on a control that does not exist would assert nothing.
-        src = Path(__file__).with_name('machuna.py').read_text()
+        src = Path(__file__).with_name('machuna.py').read_text(encoding='utf-8')
         self.assertIn('frm_row_movfps', src)
         self.assertIn('mov_fps_var', src)
 
@@ -3540,7 +3637,7 @@ class TestKeylessSourceGetsNoKeyPlane(unittest.TestCase):
     """
 
     def test_generate_white_key_stays_deleted(self):
-        src = Path(__file__).with_name('machuna.py').read_text()
+        src = Path(__file__).with_name('machuna.py').read_text(encoding='utf-8')
         self.assertNotIn('_generate_white_key', src,
                          'the flat key plane is back - it loads as a black key '
                          'on a Kahuna and keys out to nothing')
@@ -3548,7 +3645,7 @@ class TestKeylessSourceGetsNoKeyPlane(unittest.TestCase):
     def test_no_flat_key_pattern_anywhere_in_the_writer(self):
         # The v210 bytes that produced Y=64. Documented in DEVELOPMENT_NOTES as
         # reference; must not reappear as something the app writes.
-        src = Path(__file__).with_name('machuna.py').read_text()
+        src = Path(__file__).with_name('machuna.py').read_text(encoding='utf-8')
         self.assertNotIn('0x20, 0x01, 0x02, 0x00, 0x04, 0x08, 0x00, 0x40', src)
 
 
@@ -4413,7 +4510,7 @@ class TestPortableAppLayer(unittest.TestCase):
     def test_no_bare_mac_open_left_in_the_app(self):
         """Every open goes through the two helpers, or a PC fork has to hunt."""
         import re
-        src = Path(m.__file__).read_text()
+        src = Path(m.__file__).read_text(encoding='utf-8')
         body = src.split('def _open_with_system', 1)[0] + src.split('def _reveal_in_file_browser', 1)[1].split('\ndef ', 1)[1]
         self.assertEqual(re.findall(r"\[\s*'open'", body), [])
 
