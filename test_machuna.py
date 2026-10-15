@@ -3126,6 +3126,60 @@ class TestTextIsUtf8Everywhere(unittest.TestCase):
         self.assertEqual(bad, [], f'text I/O without encoding= at machuna.py lines {bad}')
 
 
+class TestChildProcessesNeverReadOurInput(unittest.TestCase):
+    """Found from Windows, 2026-10-15, and true on a Mac too: ffmpeg listens to
+    its input for keys ('q' stops it, and still reports success), and it
+    inherited the bridge's input, the pipe the app's requests arrive on. On a
+    Mac a request sent during a conversion lost its first byte, and a 'q' cut a
+    150-frame job to 112 frames with exit code 0. On Windows ffmpeg hung after
+    finishing until the next request arrived."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_request_sent_mid_conversion_reaches_us_whole_and_the_job_finishes(self):
+        import subprocess, time
+        out = os.path.join(self.tmp, 'job.mov')
+        child = (
+            'import sys, os\n'
+            f'sys.path.insert(0, {os.path.dirname(os.path.abspath(m.__file__))!r})\n'
+            'import machuna as m\n'
+            'r = m._run_ffmpeg([m._get_ffmpeg_path("ffmpeg"), "-y", "-f", "lavfi", "-i",\n'
+            '                   "testsrc=size=1920x1080:rate=25", "-t", "6",\n'
+            f'                   "-c:v", "prores_ks", "-profile:v", "4", {out!r}])\n'
+            'os.set_blocking(0, False)\n'
+            'try: left = os.read(0, 1000)\n'
+            'except BlockingIOError: left = b""\n'
+            'sys.stdout.write(repr((left, r.returncode)))\n')
+        request = b'q{"id":7,"cmd":"cancel","path":"Squad.mov"}\n'
+        p = subprocess.Popen([sys.executable, '-c', child], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE)
+        time.sleep(0.6)
+        p.stdin.write(request); p.stdin.flush()
+        left, rc = eval(p.communicate(timeout=120)[0].decode())
+        self.assertEqual(left, request, 'ffmpeg read bytes meant for the bridge')
+        self.assertEqual(rc, 0)
+        self.assertEqual(m.get_video_info(out)['frame_count'], 150, 'ffmpeg stopped early')
+
+    def test_guard_every_child_process_is_given_its_own_input(self):
+        """Structural guard: every subprocess start in machuna.py says stdin=
+        (or input=). Otherwise the next one written inherits the app's pipe."""
+        import ast
+        tree = ast.parse(Path(m.__file__).read_text(encoding='utf-8'))
+        bad = []
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ('run', 'Popen', 'check_output', 'call', 'check_call')
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in ('subprocess', '_sp')
+                    and not {'stdin', 'input'} & {k.arg for k in node.keywords}):
+                bad.append(node.lineno)
+        self.assertEqual(bad, [], f'child process without stdin= at machuna.py lines {bad}')
+
+
 class TestNoEmptySws(unittest.TestCase):
     """Fable black-box pass, 2026-10-08: some conversions wrote an SWS with no
     frames (and one claimed audio it did not have), reported as done."""

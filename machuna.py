@@ -527,8 +527,12 @@ def _get_ffmpeg_path(binary: str = 'ffmpeg') -> str:
 def _run_ffmpeg(cmd, capture_output=True, check=False):
     import subprocess as _sp
     global _current_ffmpeg_proc
+    # stdin=DEVNULL on every child process (2026-10-15): ffmpeg reads its
+    # input for keys ('q' stops it and still reports success), and an
+    # inherited input is the bridge's request pipe. On a Mac it ate requests'
+    # bytes and a 'q' cut a job short; on Windows ffmpeg hung after finishing.
     with _ffmpeg_proc_lock:
-        proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE)
+        proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, stdin=_sp.DEVNULL)
         _current_ffmpeg_proc = proc
     stdout, stderr = proc.communicate()
     with _ffmpeg_proc_lock:
@@ -549,7 +553,7 @@ def _kill_current_ffmpeg():
 def check_ffmpeg():
     """Raise if ffmpeg is not found."""
     try:
-        subprocess.run([_get_ffmpeg_path('ffmpeg'), '-version'], capture_output=True, check=True)
+        subprocess.run([_get_ffmpeg_path('ffmpeg'), '-version'], capture_output=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError):
         raise RuntimeError(
             "ffmpeg not found. Install with: brew install ffmpeg\n"
@@ -574,7 +578,7 @@ def get_video_info(input_path: str) -> dict:
     ]
     # UTF-8 named, never the locale's: ffprobe writes UTF-8, and a Windows
     # code page cannot read a clip named in Cyrillic (found 2026-10-15).
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', check=True, stdin=subprocess.DEVNULL)
     import json
     data = json.loads(result.stdout)
 
@@ -3144,7 +3148,7 @@ def _load_video_frames(path: str, progress_cb=None):
         [ffprobe, '-v', 'error', '-select_streams', 'v:0',
          '-show_entries', 'stream=r_frame_rate,width,height,nb_frames,pix_fmt',
          '-of', 'json', path],
-        capture_output=True
+        capture_output=True, stdin=subprocess.DEVNULL
     )
     info    = json.loads(info_result.stdout or b'{}')
     streams = info.get('streams', [{}])
@@ -3171,7 +3175,7 @@ def _load_video_frames(path: str, progress_cb=None):
             [ffprobe, '-v', 'error', '-select_streams', 'v:0',
              '-count_packets', '-show_entries', 'stream=nb_read_packets',
              '-of', 'json', path],
-            capture_output=True
+            capture_output=True, stdin=subprocess.DEVNULL
         )
         cnt_s = json.loads(cnt.stdout or b'{}').get('streams', [{}])
         frame_count_hint = int(cnt_s[0].get('nb_read_packets', 0)) if cnt_s else 0
@@ -3185,7 +3189,7 @@ def _load_video_frames(path: str, progress_cb=None):
 
     proc = subprocess.Popen(
         [ffmpeg, '-i', path, '-f', 'rawvideo', '-pix_fmt', out_pix_fmt, 'pipe:1'],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
     )
 
     frame_bytes = width * height * bytes_per_pixel
@@ -3217,7 +3221,7 @@ def _load_video_frames(path: str, progress_cb=None):
         progress_cb(86, "Extracting audio...")
     audio_result = subprocess.run(
         [ffmpeg, '-i', path, '-vn', '-ac', '2', '-ar', '48000', '-f', 's16le', 'pipe:1'],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL
     )
     raw_stereo = audio_result.stdout
     if raw_stereo:
@@ -4632,7 +4636,7 @@ def sound_file_info(path: str):
     import json
     result = subprocess.run([_get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
                              '-select_streams', 'a:0', '-show_streams', '-show_format', path],
-                            capture_output=True, text=True, encoding='utf-8')
+                            capture_output=True, text=True, encoding='utf-8', stdin=subprocess.DEVNULL)
     if result.returncode != 0:
         return None
     data = json.loads(result.stdout or '{}')
@@ -5550,7 +5554,7 @@ def fetch_update_manifest(url: str = UPDATE_MANIFEST_URL,
         result = subprocess.run(
             [_curl_command(), '--silent', '--fail', '--location',
              '--max-time', str(timeout), url],
-            capture_output=True, timeout=timeout + 3,
+            capture_output=True, timeout=timeout + 3, stdin=subprocess.DEVNULL
         )
     except Exception:
         return None
@@ -5564,22 +5568,22 @@ def _open_with_system(target: str):
     The Mac's `open` on a Mac (unchanged); Windows' own handler on a PC; the
     desktop's on Linux. One place, so a PC fork has nothing to hunt for."""
     if sys.platform == 'darwin':
-        subprocess.run(['open', target])
+        subprocess.run(['open', target], stdin=subprocess.DEVNULL)
     elif sys.platform.startswith('win'):
         os.startfile(target)
     else:
-        subprocess.run(['xdg-open', target])
+        subprocess.run(['xdg-open', target], stdin=subprocess.DEVNULL)
 
 
 def _reveal_in_file_browser(path: str):
     """Show a file selected in its folder: the Finder on a Mac, File Explorer
     on Windows; on Linux, its folder."""
     if sys.platform == 'darwin':
-        subprocess.run(['open', '-R', path])
+        subprocess.run(['open', '-R', path], stdin=subprocess.DEVNULL)
     elif sys.platform.startswith('win'):
-        subprocess.run(['explorer', f'/select,{path}'])
+        subprocess.run(['explorer', f'/select,{path}'], stdin=subprocess.DEVNULL)
     else:
-        subprocess.run(['xdg-open', os.path.dirname(path) or '.'])
+        subprocess.run(['xdg-open', os.path.dirname(path) or '.'], stdin=subprocess.DEVNULL)
 
 
 def _file_browser_name(platform: str = None) -> str:
@@ -5597,7 +5601,7 @@ def _mac_model() -> str:
         return platform.platform() or 'unknown'
     try:
         out = subprocess.run(['sysctl', '-n', 'hw.model'],
-                             capture_output=True, timeout=3)
+                             capture_output=True, timeout=3, stdin=subprocess.DEVNULL)
         return out.stdout.decode().strip() or 'unknown'
     except Exception:
         return 'unknown'
