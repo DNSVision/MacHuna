@@ -510,9 +510,10 @@ of them, and on a Mac every one behaves exactly as before).
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
   PC. The M1 sessions pull to verify and never commit or push here (their push URL is disabled); findings are
   relayed to the M5, which decides and commits. The M1's own PC decisions are recorded here by the M5 from
-  David's relay. **To decide (raise when the M1 is about to write its first build file):** a separate private
-  PC repo (e.g. `DNSVision/MacHuna-PC`) for the PC version's own files, with this engine as a submodule pinned
-  to a released tag, as MacHuna-Swift does. The M1 would author that repo; the M5 this one.
+  David's relay. **The PC repo: CREATED 2026-10-15**, private, `DNSVision/MacHuna-PC`, for the PC version's own
+  files, with this engine as a submodule pinned to a released tag, as MacHuna-Swift does. **The M1 authors and
+  pushes it, and only it** (pushes are backups, not releases); the M5 oversees by pulling it read-only and
+  publishes after David types the version. Engine and MacHuna-Swift stay M5-only.
 
 - **Build machine: David's M1 MacBook Air running Windows 11 in Parallels.** That Windows is **ARM**, while most
   users' PCs are x64. Build an **x64** app anyway: install the x64 Python, numpy, Pillow, PyInstaller and x64

@@ -30,9 +30,16 @@ never commit to or push to this repo. Their push URL is disabled
 anyone remembering. **Findings flow up to the M5 as relayed text; commits never flow up from the M1.** The M5
 checks each finding against the code itself, writes the fix with a fail-first test, and commits and releases
 it here. Decisions made on the M1 are recorded here by the M5 from what David relays. **If you are not on the
-M5, do not commit here.** The PC version's own files (build recipe, publish script, interface) will live in a
-separate PC repo with this engine pinned to a released tag (David's decision, to be raised when the M1 is
-about to write its first build file).
+M5, do not commit here.**
+
+**The one exception: the PC repo** (David, 2026-10-15). The PC version's own files (Windows interface, build
+recipe, installer, licences, publish steps, its decision record) live in the private repo
+**`DNSVision/MacHuna-PC`**, with this engine as a submodule pinned to a released tag, as MacHuna-Swift does.
+**The M1's Windows session authors and pushes that repo, and only that one**, freely, because a push there is
+a backup, not a release (the M5 cannot build or test Windows code, so M5 commits of it would be rubber stamps).
+The M5 still oversees it by pulling it read-only. The engine and MacHuna-Swift stay M5-only, and the engine
+submodule inside the PC repo keeps its disabled push URL. **Publishing stays with the M5**, only after David
+types the version: signed zips are copied over unchanged and checked by SHA-256.
 
 ## Dev environment
 
