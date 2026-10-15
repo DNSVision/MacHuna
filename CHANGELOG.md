@@ -4,6 +4,20 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.15.3 — 2026-10-15
+
+**Clip names in any language work on Windows.** Found by the PC version's first test runs. Nothing changes on a Mac, which always uses UTF-8.
+
+### Fixed
+- **ffprobe's report on a clip is read as UTF-8, never the computer's own code page.** On Windows a clip named in Cyrillic (and some other names) could not be read at all: `get_video_info` and `sound_file_info` failed on a byte the Western code page has no meaning for.
+- **Both conversion logs are written in UTF-8.** On Windows a Polish, Cyrillic or Greek clip name left a half-written log, cut off at the name.
+- The Tk app's settings file names UTF-8 too.
+- **A guard keeps it so:** a test fails if any text read or write, or any text subprocess call, in `machuna.py` leaves out its encoding (proved by breaking it). The tests' own reads of `machuna.py` name UTF-8, so the suite runs on Windows without Python's UTF-8 mode.
+
+**Known, outside the engine:** MacHuna 2.x's `bridge.py` (in the MacHuna-Swift repo) reads its requests with the default encoding; a PC app driving it must run Python in UTF-8 mode or have it changed there.
+
+---
+
 ## v1.15.2 — 2026-10-15
 
 **Tests only. The engine's code is identical to v1.15.1** apart from the version number. Released so the PC version can pin a tag whose suite is green on Windows.
