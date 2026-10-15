@@ -118,6 +118,23 @@ git push
 - ~~**White key (INVESTIGATE ONLY)**~~ - **CLOSED 2026-09-17.** The hex comparison was done against K-Watch files predating MacHuna: the generated key matches the reference exactly and must not be changed. **There are now no open code items at all** - everything left is gated on the desk. What came out of it is a new *hardware* question (should a keyless source get a key plane at all?), on the checklist below. Detail in "Outstanding review items" 4. Everything else on this list has been done: Fix 9(b) and Fix 10 in v1.6.12, bespoke IDs in v1.6.13, the post-conversion selection clear in v1.6.21, the Help menu / update check / contact in v1.7.0, and QuickTime MOV output with `.eaf` audio reading in v1.10.0.
 
 **Possible features (not decided, waiting on users):**
+- **Port the engine to Swift (thought experiment, David, 2026-10-15; NOT decided).** Feasible: ~5,800 lines of
+  real code, mostly format knowledge (SWS/EIF headers, v210 and EIF packing, key planes, sound layouts, splits,
+  `.eaf`) that translates directly. **Keep ffmpeg**, called from Swift with exactly the same arguments; replacing
+  it with AVFoundation/VideoToolbox would change colour, levels, alpha and deinterlacing on every route (no yadif
+  equivalent) and put everything back on the desk. *Gains:* no bundled Python (a large part of the 85 MB), faster
+  start, one language, no bridge (where several bugs have lived). *Cost:* the Windows fork is based on the Python
+  engine; once Swift leads, every desk finding is fixed twice or Python drifts. **That choice decides it**: keep
+  Python if a PC version matters (people are asking, 2026-10-14), port if it does not.
+  - *Testing, agreed in principle:* the gate is a differential run against the Python engine requiring
+    **byte-identical output**, not "close": the 324-case matrix, the self-test media and David's real files through
+    both engines, file by file. Identical bytes inherit every route Python has proven on a desk, and the reference is
+    desk-judged code, not Claude's own expectation (the shared-misunderstanding weakness). Rules: (1) every
+    difference is explained, even one byte; only named, legitimate fields (e.g. header dates) are ignored; (2) a diff
+    proves sameness, not correctness, so what Python never had on a desk (1080i Kahuna, 59.94/60, Sony) stays
+    unproven; (3) any route that cannot be made identical goes back to the desk; (4) one short confirming desk
+    session (Kahuna and K-Frame, a handful of files) before release, because the harness may not write files exactly
+    as the app does (splits, names, atomic finish).
 - **Appearance setting in the Swift app (David, 2026-10-13; not built, goes with the next release).** MacHuna 2.x
   already follows the Mac's Light/Dark setting (nothing forces light mode; David checked dark: "it looks slick").
   macOS has no per-app switch, so add MacHuna's own: Settings > Appearance, **Match System** (default, so
