@@ -503,7 +503,10 @@ of them, and on a Mac every one behaves exactly as before).
   from a drive other than temp, so the copy path runs for real. **Both done 2026-10-15:** 364 passed (the 1
   failure was a timing-sensitive test, fixed in the tests: an SWS header holds the time to the second, so two
   conversions are compared with the clock frozen); 5 TGAs from a memory stick took the copy path and gave an
-  SWS byte-identical to the same frames from C:.
+  SWS byte-identical to the same frames from C:. On engine main `815a52f` (clock frozen): **365 passed, 0 failed,
+  17 skipped** on Windows. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
+  (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
   PC. The M1 sessions pull to verify and never commit or push here (their push URL is disabled); findings are
   relayed to the M5, which decides and commits. The M1's own PC decisions are recorded here by the M5 from
@@ -522,18 +525,39 @@ of them, and on a Mac every one behaves exactly as before).
   the M5 only (`~/.claude/projects/...`); a session on the M1 starts with none of them.** Clone or pull BOTH repos
   there and read `CLAUDE.md` and `HANDOVER_NOTES.md` (this repo) and `MacHuna-Swift/CLAUDE.md` first: the repo
   docs carry everything that matters; the memories only index it.
-- **Interface: the big job.** The engine is the same `machuna.py` and was made Windows-ready in v1.12.5. The Tk
-  window was parked around 1.12 and lacks 2.x's features (Sound column, sound export, Clear frame, split SWS as
-  source, the EIF length warning, the Quick Start Guide, drop anywhere). Bring it up to 2.x or build a new Windows
-  interface: David's call when starting. Windows needs no `._` tidy-up on Eject.
+- **Interface: DECIDED (David, 2026-10-15): the PC app is an IDENTICAL copy of the latest Mac app.** Same
+  interface, features and behaviour; every `MacHuna-Swift/DESIGN_DECISIONS.md` decision is inherited, not
+  reopened. Only differences Windows forces go back to David, each with the closest match offered. Neither the
+  parked Tk window nor a redesign: a Windows interface copying MacHuna 2.x, driving the same `bridge.py` and
+  engine. Windows needs no `._` tidy-up on Eject (one of the forced differences to put to David).
+  **Open, for the M5 to raise:** (a) what the Windows interface is built with (SwiftUI does not run on Windows);
+  (b) `bridge.py` lives in the private MacHuna-Swift repo, so the PC repo needs a way to share it without two
+  copies drifting apart.
 - **Code signing:** without it Windows shows "Windows protected your PC". Microsoft Trusted Signing is the cheapest
   proper route (roughly 8 GBP a month; identity checks, in David's name like the Apple account).
+- **Testing before signing (David, 2026-10-15).** An UNSIGNED build may go to a trusted colleague, who clicks past
+  "Windows protected your PC" (More info > Run anyway), as early Mac testers used right-click > Open. That first
+  test must be on a REAL Intel or AMD PC: it IS the "one run on real hardware" check above. Trusted Signing is
+  needed only before wider release, and **David starts its identity check only once the colleague confirms the
+  unsigned build works** (changed the same day from starting it in parallel); the check takes a few days, so
+  expect that wait between the colleague's OK and a signed release. **Even a test build carries the licence
+  notices and the ffmpeg GPL source.**
 - **Distribution:** its own download on dnsvision.tv, **its own update manifest** (so the Mac and PC apps never
   announce each other's versions; turn `_update_check_enabled` on for it), its own publish script modelled on
   `MacHuna-Swift/publish.sh`.
+- **How it is published (David, 2026-10-15).** Build AND sign on the M1's Windows (Windows signing only works on
+  Windows). Copy the finished signed zip, and the GPL source zip beside it, to the M5 **unchanged**: never rebuild
+  or re-zip on the Mac, because the bytes and signature uploaded must be exactly those that ran on the test PC
+  (the M1 records each zip's SHA-256; the PC publish step on the M5 must check it and refuse a mismatch). Publish
+  from the M5, which holds the Cloudflare key; **the key never goes to the M1.** The PC publish step is PC-only:
+  the PC download section and the PC manifest, nothing of the Mac app's, so it can never disturb the live Mac app.
+  **Still to decide, later:** where the PC download page and PC manifest live (dnsvision.tv is driven from the
+  Mac app's repo today). Flag it when closer; do not change the Mac app's repo to solve it.
 - **Licences: the same as the Mac app since 2.5.3** (Swift decision 58): licence notices inside, and the exact GPL
   source of the bundled ffmpeg (and any GPL libraries in it) published beside each release. A Windows ffmpeg build
   (e.g. gyan.dev or BtbN) states its licence and configuration; trace it the way `Scripts/licences.py` does.
+  **Note:** the M1 uses gyan.dev "essentials", a different build from the Mac's Homebrew one with its own set of
+  libraries, so its GPL source set must be traced from ITS configuration, not copied from the Mac's.
 - **Testing:** a desk does not care which OS wrote a file. Run the 324-case matrix on Windows and diff against the
   Mac engine's output; **byte-identical** routes inherit the Mac's desk proofs, and only differences need a desk.
   Same rules as the Swift-engine idea above (explain every byte; diff proves sameness, not correctness).
