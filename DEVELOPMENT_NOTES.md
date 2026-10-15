@@ -536,9 +536,16 @@ of them, and on a Mac every one behaves exactly as before).
   reopened. Only differences Windows forces go back to David, each with the closest match offered. Neither the
   parked Tk window nor a redesign: a Windows interface copying MacHuna 2.x, driving the same `bridge.py` and
   engine. Windows needs no `._` tidy-up on Eject (one of the forced differences to put to David).
-  **Open, for the M5 to raise:** (a) what the Windows interface is built with (SwiftUI does not run on Windows);
-  (b) `bridge.py` lives in the private MacHuna-Swift repo, so the PC repo needs a way to share it without two
-  copies drifting apart.
+  **Built with: C# on the current LTS .NET, WPF with its Fluent theme (David, 2026-10-15)**, as the M1
+  recommended. It drives `bridge.py` exactly as `Engine.swift` does (a long-lived process, line-delimited JSON,
+  replies matched by id), so the bridge needs no change. Ship .NET self-contained, so users install nothing.
+  Every interface feature is now written twice (Swift and C#). Prove the WAV drag-out (decision 53) early.
+  **`bridge.py` is shared, not copied (David, 2026-10-15):** MacHuna-Swift becomes a second read-only,
+  push-locked submodule in MacHuna-PC, pinned to the TAG of the Mac release the PC copies (`v2.5.3` tagged on
+  `e599846`, the commit built; its `bridge.py` matches the shipped app by SHA-256). Every Mac release is now
+  tagged (MacHuna-Swift `PUBLISHING.md` step 6). Moving `bridge.py` into the engine repo is a later idea, not
+  now. A Windows change to `bridge.py` comes to the M5 as text. `bridge.py:1367` reads stdin with the default
+  encoding: the PC runs Python in UTF-8 mode until that changes on the Swift side.
 - **Code signing:** without it Windows shows "Windows protected your PC". Microsoft Trusted Signing is the cheapest
   proper route (roughly 8 GBP a month; identity checks, in David's name like the Apple account).
 - **Testing before signing (David, 2026-10-15).** An UNSIGNED build may go to a trusted colleague, who clicks past
@@ -557,13 +564,24 @@ of them, and on a Mac every one behaves exactly as before).
   (the M1 records each zip's SHA-256; the PC publish step on the M5 must check it and refuse a mismatch). Publish
   from the M5, which holds the Cloudflare key; **the key never goes to the M1.** The PC publish step is PC-only:
   the PC download section and the PC manifest, nothing of the Mac app's, so it can never disturb the live Mac app.
-  **Still to decide, later:** where the PC download page and PC manifest live (dnsvision.tv is driven from the
-  Mac app's repo today). Flag it when closer; do not change the Mac app's repo to solve it.
+  **Where it lives: DECIDED (David, 2026-10-15): one download page with two buttons, Mac and PC**, each with
+  its own version. The existing page at `dnsvision.tv/machuna` (MacHuna-Swift `website/`, authored by the M5)
+  gains the PC button; the PC zip and its GPL source zip go in the same R2 bucket under their own names; the
+  PC update notice is its own file beside the Mac one (e.g. `machuna/version-pc.json`), so neither app is
+  told of the other's versions. David hands the M5 the zips; the M5 checks their SHA-256 and publishes after
+  he types the version. No new Worker, route, domain or token. **Guard to build:** the publish script refuses
+  a PC release that would change anything of the Mac's (version.json, Mac zip, Mac panel), and vice versa.
+  (This supersedes the M1's earlier "do not change the Mac app's repo", which only existed to protect it.)
 - **Licences: the same as the Mac app since 2.5.3** (Swift decision 58): licence notices inside, and the exact GPL
   source of the bundled ffmpeg (and any GPL libraries in it) published beside each release. A Windows ffmpeg build
   (e.g. gyan.dev or BtbN) states its licence and configuration; trace it the way `Scripts/licences.py` does.
-  **Note:** the M1 uses gyan.dev "essentials", a different build from the Mac's Homebrew one with its own set of
-  libraries, so its GPL source set must be traced from ITS configuration, not copied from the Mac's.
+  **DECIDED (David, 2026-10-15): our own ffmpeg 8.1.2 for x64 Windows**, built reproducibly from a script in
+  MacHuna-PC, SHA-256 recorded: **all of ffmpeg's own decoders, demuxers, encoders and filters, NO external
+  libraries.** Not "only what MacHuna writes with": users drop in any clip (phone H.264, HEVC, MXF...), so
+  every native reader stays. Still GPL (8.1.2's `configure`: `tinterlace_filter_deps="gpl"`, checked on the
+  M5), but the source to publish is one tarball (the same `ffmpeg-8.1.2.tar.xz` as the Mac's) plus the exact
+  configure line. **Forced difference for David:** AV1 clips will not open on the PC (the Mac decodes AV1
+  with libdav1d; ffmpeg's own AV1 decoder needs hardware). gyan.dev "essentials" stays for testing only.
 - **Testing:** a desk does not care which OS wrote a file. Run the 324-case matrix on Windows and diff against the
   Mac engine's output; **byte-identical** routes inherit the Mac's desk proofs, and only differences need a desk.
   Same rules as the Swift-engine idea above (explain every byte; diff proves sameness, not correctness).
