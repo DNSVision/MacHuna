@@ -124,6 +124,10 @@ is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_nam
   Say it before Convert, as "already there" is: on the still's row, Saves as a dash. Whether it blocks
   Convert or the rest still convert is to decide (the rest converting is today's behaviour). Found from
   the PC's step 8 screenshot; the PC copies the fix.
+- After a Write beside batch the status line says "Done. N written to <chosen destination>." though the
+  files went beside the sources (`ConversionView.swift` ~1251 uses `destination`; Write beside switches
+  itself off after the batch). Name the folder actually written into, captured when the batch starts.
+  Found by the PC (step 9).
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
