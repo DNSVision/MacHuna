@@ -99,6 +99,22 @@ git push
 a user only sees this if the app's own copy is missing, and then the advice is wrong on a Mac too: it should say
 MacHuna's own copy of FFmpeg is missing and to reinstall MacHuna, keeping the brew hint for running from source
 only. Check the Swift bridge's use (`bridge.py:72`) first; outcome test on the text a user would see.
+Also for that release (the PC's parity plan, Q7, agreed by the M5 2026-10-16): the MOV name check should also
+refuse Windows' reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an
+extension) and a name ending in a space or a dot. Kahuna and K-Frame desks are Windows machines, so such a name
+is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_name` parity test) moves with it.
+
+**For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):**
+- The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
+  (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
+- `bridge.py` `handle()` returns the whole Python traceback as the error, so a failed Save Sound reads
+  "Could not save the sound of X: Traceback (most recent call last):". Send the exception's message; keep
+  the traceback for the trace/log.
+- `cmd_sound_save` says "X has no sound to save." when the source has gone; say it can no longer be found.
+- Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
+  checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
+  CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
+
 
 **Blocked on hardware:**
 - ~~**EIF hardware-test session**~~ - **DONE 2026-10-07** on a live K-Frame. EIF write confirmed at 50fps and 25fps/50i, K-Frame TGA from MOV/EIF/SWS, `.eaf` writing, the `0x60` flag (harmless), the KNOCKOUT_WIPE round trip. Results under "KNOCKOUT_WIPE round-trip RESULTS"; fixes in `CHANGELOG.md` "Unreleased".
