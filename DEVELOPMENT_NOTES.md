@@ -509,7 +509,12 @@ of them, and on a Mac every one behaves exactly as before).
   **v1.15.3**, with a guard; v1.15.2 was a tests-only tag so the PC could pin a green suite. The PC repo
   `DNSVision/MacHuna-PC` was pushed by the M1 with the engine as a submodule. Still open for the PC:
   `bridge.py` (MacHuna-Swift) reads its requests with the default encoding, so the PC app runs Python in
-  UTF-8 mode until that is changed on the Swift side. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  UTF-8 mode until that is changed on the Swift side. **Closed 2026-10-16:** the M1 then found ffmpeg reading
+  the bridge's own input (a hang on Windows; on a Mac about 1 request in 200 lost while the bridge itself ran
+  ffmpeg), fixed as engine **v1.15.4** and **MacHuna 2.5.4** (live 2026-10-16, Swift tag `v2.5.4`), which also
+  reads requests as UTF-8. The PC takes `bridge.py` from `v2.5.4`. The M1's own ffmpeg 8.1.2 build (approved
+  configure, no external libraries) ran overnight 2026-10-15/16; its PC GPL source zip must later carry the
+  ffmpeg source, the build recipe and the sources of the statically linked zlib, bzip2, xz and winpthreads. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
