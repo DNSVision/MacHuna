@@ -94,6 +94,12 @@ git push
 
 **Open question (2026-10-12): can a K-Frame hold an EIF over 4 GB?** An EIF's header records where its picture ends in 32 bits (0x080), so MacHuna's EIF holds at most 517 frames at 1080 (10.3 s at 50fps, 20.7 s at 25). Found when split SWS files became convertible: a 1,000-frame clip failed with Python's own struct error; v1.15.0 refuses it in plain words before writing anything. Every reference EIF is under 4 GB, so whether the K-Frame has a wider field (0x084 as a high word?) or simply cannot hold longer clips is unknown. **To settle it:** export a clip longer than ~11 s at 1080p50 from a K-Frame (or import a long MOV on the desk and export its EIF) and read its header.
 
+**Small, for the next engine release (found by the M1, 2026-10-16; not worth a release on its own):**
+`check_ffmpeg` (`machuna.py:559`) says "Install with: brew install ffmpeg". Both apps bundle their own ffmpeg, so
+a user only sees this if the app's own copy is missing, and then the advice is wrong on a Mac too: it should say
+MacHuna's own copy of FFmpeg is missing and to reinstall MacHuna, keeping the brew hint for running from source
+only. Check the Swift bridge's use (`bridge.py:72`) first; outcome test on the text a user would see.
+
 **Blocked on hardware:**
 - ~~**EIF hardware-test session**~~ - **DONE 2026-10-07** on a live K-Frame. EIF write confirmed at 50fps and 25fps/50i, K-Frame TGA from MOV/EIF/SWS, `.eaf` writing, the `0x60` flag (harmless), the KNOCKOUT_WIPE round trip. Results under "KNOCKOUT_WIPE round-trip RESULTS"; fixes in `CHANGELOG.md` "Unreleased".
 - ~~**Extraction outputs on real desks**~~ - K-Frame TGA and MOV to TGA **confirmed 2026-10-07**. **Sony TGA warning lifted by David on 2026-10-08 on his own judgement**; its naming and 25i field order have still never been loaded on a Sony desk in testing (engineering note only, not shown to users).
