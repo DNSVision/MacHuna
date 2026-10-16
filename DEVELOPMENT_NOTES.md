@@ -539,7 +539,9 @@ of them, and on a Mac every one behaves exactly as before).
   ffmpeg source, the build recipe and the sources of the statically linked zlib, bzip2, xz and winpthreads.
   **PC minimum spec (told David 2026-10-16, from the parts chosen, NOT yet measured):** Windows 11 or
   Windows 10 22H2, 64-bit; any x64 Intel/AMD of the last ~15 years (numpy's CPU baseline to check); Windows 11
-  on ARM runs the x64 build under emulation (proved only in Parallels on the M1); Windows 10 on ARM cannot run
+  on ARM runs the x64 build under emulation (proved only in Parallels on the M1; **but the x64 build froze at
+  start-up in about 1 launch in 10 there, 2026-10-16, PC decision 15: cause being traced with dumps, so ARM is
+  "not yet confirmed"**); Windows 10 on ARM cannot run
   it; about 8 GB of memory recommended; window minimum 940x720. **In packaging (step P) the M1 measures** the
   unzipped size, peak memory in a long conversion and a player load, and the CPU baseline of the Python
   libraries; the colleague's real PC is the first real data point; then the M5 drafts the download-page
