@@ -536,7 +536,14 @@ of them, and on a Mac every one behaves exactly as before).
   ffmpeg), fixed as engine **v1.15.4** and **MacHuna 2.5.4** (live 2026-10-16, Swift tag `v2.5.4`), which also
   reads requests as UTF-8. The PC takes `bridge.py` from `v2.5.4`. The M1's own ffmpeg 8.1.2 build (approved
   configure, no external libraries) ran overnight 2026-10-15/16; its PC GPL source zip must later carry the
-  ffmpeg source, the build recipe and the sources of the statically linked zlib, bzip2, xz and winpthreads. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  ffmpeg source, the build recipe and the sources of the statically linked zlib, bzip2, xz and winpthreads.
+  **PC minimum spec (told David 2026-10-16, from the parts chosen, NOT yet measured):** Windows 11 or
+  Windows 10 22H2, 64-bit; any x64 Intel/AMD of the last ~15 years (numpy's CPU baseline to check); Windows 11
+  on ARM runs the x64 build under emulation (proved only in Parallels on the M1); Windows 10 on ARM cannot run
+  it; about 8 GB of memory recommended; window minimum 940x720. **In packaging (step P) the M1 measures** the
+  unzipped size, peak memory in a long conversion and a player load, and the CPU baseline of the Python
+  libraries; the colleague's real PC is the first real data point; then the M5 drafts the download-page
+  wording for David. A native ARM build only if a real user needs one. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
