@@ -118,7 +118,12 @@ is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_nam
   a later successful add or an emptied list. Clear it on a successful add and when the list empties.
   (Both built on the PC first, MacHuna-PC `fb81d3e`; copy its checks.)
 - The desk-question caption reads "Only the 1 progressive file at 50fps or more depend on this."
-  (`ConversionView.swift` ~1478): "depends" when there is one. Tell the M1 so the PC matches.
+  (`ConversionView.swift` ~1478): "depends" when there is one. (PC matched, `2a54471`.)
+- A still in a batch with a sequence or clip, with a format other than Kahuna SWS (e.g. Sony TGA), shows
+  "Queued" and a Saves as name, then fails at Convert (`bridge.py` "Stills convert to Kahuna SWS only.").
+  Say it before Convert, as "already there" is: on the still's row, Saves as a dash. Whether it blocks
+  Convert or the rest still convert is to decide (the rest converting is today's behaviour). Found from
+  the PC's step 8 screenshot; the PC copies the fix.
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
