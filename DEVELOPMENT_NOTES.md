@@ -550,7 +550,13 @@ of them, and on a Mac every one behaves exactly as before).
   `e599846`, the commit built; its `bridge.py` matches the shipped app by SHA-256). Every Mac release is now
   tagged (MacHuna-Swift `PUBLISHING.md` step 6). Moving `bridge.py` into the engine repo is a later idea, not
   now. A Windows change to `bridge.py` comes to the M5 as text. `bridge.py:1367` reads stdin with the default
-  encoding: the PC runs Python in UTF-8 mode until that changes on the Swift side.
+  encoding: the PC runs Python in UTF-8 mode until that changes on the Swift side. **Done 2026-10-16:** swift-ref
+  is pinned to `v2.5.4` (`6d49f1c`, bridge.py SHA-256 matches, kept LF with core.autocrlf=false in that clone
+  only) in MacHuna-PC `83d9dfd`; 43/45 bridge checks with no launcher and no UTF-8 mode, the 2 being the player
+  buffer the interface deletes. **UTF-8 mode is KEPT in the PC build (M5, 2026-10-16)**, no longer as a stopgap
+  but for parity: Python on a Mac already defaults to UTF-8, so UTF-8 mode makes any text read we have not seen
+  behave on the PC as it does on the Mac. The suite and the bridge checks keep running WITHOUT it too, so the
+  UTF-8 guards still catch a missing encoding.
 - **Code signing:** without it Windows shows "Windows protected your PC". Microsoft Trusted Signing is the cheapest
   proper route (roughly 8 GBP a month; identity checks, in David's name like the Apple account).
 - **Testing before signing (David, 2026-10-15).** An UNSIGNED build may go to a trusted colleague, who clicks past
