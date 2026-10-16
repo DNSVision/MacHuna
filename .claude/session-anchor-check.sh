@@ -7,8 +7,13 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
+# The FIRST "commit `...`" on the line is the anchor; the line keeps a history
+# after it, and a greedy match once picked the oldest (2026-10-16).
+# Read from the words "Understanding baseline" on, because the same line names
+# other commits before them.
 anchor=$(grep -m1 'Understanding baseline' HANDOVER_NOTES.md 2>/dev/null \
-         | sed -nE 's/.*commit `([0-9a-f]{7,40})`.*/\1/p')
+         | sed 's/.*Understanding baseline//' \
+         | grep -oE 'commit `[0-9a-f]{7,40}`' | head -1 | tr -d '`' | cut -d' ' -f2)
 [ -z "$anchor" ] && exit 0
 
 echo "MacHuna Session Anchor (from HANDOVER_NOTES.md): $anchor"
