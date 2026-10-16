@@ -111,6 +111,11 @@ is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_nam
   "Could not save the sound of X: Traceback (most recent call last):". Send the exception's message; keep
   the traceback for the trace/log.
 - `cmd_sound_save` says "X has no sound to save." when the source has gone; say it can no longer be found.
+- A refusal ("Not added. X cannot share a batch...") with a batch already loaded sets `problem`
+  (`ConversionView.swift` `add`), which greys Convert for the valid batch until files are added or the list
+  empties. Make it a note shown in red that does not block, as re-adding already is (found by the PC, step 6).
+- The status note (`lastLog`) is never cleared by adding or removing, so "X is already in the list." outlives
+  a later successful add or an emptied list. Clear it on a successful add and when the list empties.
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
