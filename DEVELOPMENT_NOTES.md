@@ -116,6 +116,9 @@ is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_nam
   empties. Make it a note shown in red that does not block, as re-adding already is (found by the PC, step 6).
 - The status note (`lastLog`) is never cleared by adding or removing, so "X is already in the list." outlives
   a later successful add or an emptied list. Clear it on a successful add and when the list empties.
+  (Both built on the PC first, MacHuna-PC `fb81d3e`; copy its checks.)
+- The desk-question caption reads "Only the 1 progressive file at 50fps or more depend on this."
+  (`ConversionView.swift` ~1478): "depends" when there is one. Tell the M1 so the PC matches.
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
@@ -545,12 +548,14 @@ of them, and on a Mac every one behaves exactly as before).
   **PC minimum spec (told David 2026-10-16, from the parts chosen, NOT yet measured):** Windows 11 or
   Windows 10 22H2, 64-bit; any x64 Intel/AMD of the last ~15 years (numpy's CPU baseline to check); Windows 11
   on ARM runs the x64 build under emulation (proved only in Parallels on the M1; **but the x64 build froze at
-  start-up in about 1 launch in 10 there, 2026-10-16, PC decision 15: cause being traced with dumps, so ARM is
-  "not yet confirmed"**); Windows 10 on ARM cannot run
+  start-up in about 1 launch in 10 there, 2026-10-16, PC decision 15: traced to a loader-lock deadlock in
+  Windows' x64 emulation, no MacHuna code involved; child processes 0/200 hung (PC decision 19). DECIDED by
+  the M5: ship a native ARM64 interface as well, Python and ffmpeg staying x64; ARM confirmed only once that
+  build is packaged and tested**); Windows 10 on ARM cannot run
   it; about 8 GB of memory recommended; window minimum 940x720. **In packaging (step P) the M1 measures** the
   unzipped size, peak memory in a long conversion and a player load, and the CPU baseline of the Python
   libraries; the colleague's real PC is the first real data point; then the M5 drafts the download-page
-  wording for David. A native ARM build only if a real user needs one. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  wording for David. Native ARM64 interface: decided (above); how users get the right one goes to David at packaging. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
