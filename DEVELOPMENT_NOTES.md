@@ -166,6 +166,21 @@ minutes may cost; the M5 to come back with details and cost then.
   and the clip is refused at Convert ("...is already a video file"). Same pattern as the still: say it
   before Convert. **DECIDED by David 2026-10-17 (this and the still): the row is flagged before Convert and
   just skipped; everything else in the batch converts.**
+- **"Ignore key" works only for Kahuna SWS output** (found by David in use, 2026-10-17, an SWS to MOV;
+  checked on the M5, nothing changed yet). The box is always shown (`ConversionView.swift` ~1510) but only
+  `_to_sws` reads `ignoreKey` (`bridge.py` ~474); `_to_eif`, `_to_tga_seq` and `_from_sws` never do, and the
+  engine's extraction routes have no parameter for it (`_hula_convert_mov` always writes the decoded key into
+  the MOV's alpha). Not split-specific. **DECIDED by David 2026-10-17:**
+  - **QuickTime MOV, box ticked: the MOV has NO alpha channel at all** (ProRes 4444 without alpha), not a
+    solid white one. **Nothing else changes**: box unticked is byte-identical to today, and a keyless source
+    keeps today's behaviour (David: "We spent a long time nailing the SWS alpha situation, I don't want to undo
+    that"). A clear frame (decision 54) on such a MOV is opaque black, as for a keyless source.
+    Needs an engine change (next engine release): an option on the SWS, EIF and TGA-sequence to MOV routes and
+    on `_prores_cmd`, default off; fail-first test reading the written file's pixel format.
+  - **K-Frame TGA, Sony TGA and K-Frame EIF: the box is hidden.** EIF cannot be keyless: the key is packed
+    into every pixel word (`_encode_eif_frame_from_yuv`), so the nearest is a solid key, which David declined.
+  - Kahuna SWS: unchanged (the SWS key handling is hardware-confirmed; do not touch it).
+  - Mac gate: the parity kit runs every case with the box off, so all 44 must stay identical; the PC copies it.
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
