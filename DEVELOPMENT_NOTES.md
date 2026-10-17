@@ -103,6 +103,14 @@ Also for that release (the PC's parity plan, Q7, agreed by the M5 2026-10-16): t
 refuse Windows' reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`, with or without an
 extension) and a name ending in a space or a dot. Kahuna and K-Frame desks are Windows machines, so such a name
 is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_name` parity test) moves with it.
+Also for that release, with the matching `bridge.py` change in MacHuna 2.5.5 (the parity kit, 2026-10-17):
+the PC's first kit run was 40/44 SAME. The 4 are routes where ffmpeg writes TGA straight from a 4:2:2 10-bit
+source (`_hula_convert_mov_to_tga` for K-Frame/Sony TGA from a clip; `bridge.py` `_to_tga_seq`'s clip branch):
+on Intel, ffmpeg's scaler takes a CPU-specific shortcut that rounds differently (at most 3 levels of 255, mean
+0.19, alpha identical; the PC with `-cpuflags 0` matches the Mac exactly). Fix: `scale=flags=bitexact` in the
+filter chain (inside the filter; global `-sws_flags` does nothing). **M5 checked on the Mac 2026-10-17:** the flag
+changes nothing on Apple silicon (SMALL and CLIP50P frames identical with and without). After the release, re-run
+the kit on both machines: expect 44/44. Until then the 4 are known, explained differences.
 
 **Supporting Mac and PC in parallel (told David 2026-10-17, the long-term plan):** shared once: the engine
 (pinned tags; the parity kit re-run on every engine release), `bridge.py` (the PC pins MacHuna-Swift tags),
