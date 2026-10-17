@@ -602,7 +602,7 @@ of them, and on a Mac every one behaves exactly as before).
   it; about 8 GB of memory recommended; window minimum 940x720. **In packaging (step P) the M1 measures** the
   unzipped size, peak memory in a long conversion and a player load, and the CPU baseline of the Python
   libraries; the colleague's real PC is the first real data point; then the M5 drafts the download-page
-  wording for David. Native ARM64 interface: decided (above); how users get the right one goes to David at packaging. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  wording for David. **Measured in step P (2026-10-17):** numpy needs X86_V2 (SSE4.2, POPCNT), i.e. Intel/AMD from about 2009; about 650 MB peak memory on a 60 s 1080p50 conversion, so 4 GB RAM is ample; 266 MB unpacked (x64), 277 MB (ARM64); outputs are large (60 s of 1080p50 with key to SWS is 31.7 GB), so free disk space matters more than RAM. On ARM the conversion runs emulated, so an Intel/AMD PC of similar power converts faster. Native ARM64 interface: decided (above); how users get the right one goes to David at packaging. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
