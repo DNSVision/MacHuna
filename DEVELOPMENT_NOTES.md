@@ -128,6 +128,19 @@ is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_nam
   files went beside the sources (`ConversionView.swift` ~1251 uses `destination`; Write beside switches
   itself off after the batch). Name the folder actually written into, captured when the batch starts.
   Found by the PC (step 9).
+- **The manual promises what the code does not** (found by the PC, step 10, confirmed): USER_MANUAL.md:325
+  "Convert only ever runs rows that have not been done ... only the new ones run". `convert()` clears every
+  status and sends every row (`ConversionView.swift` ~1186), and after a batch each finished row's file is
+  "already there" (validate has no exception for Done rows), so Convert is blocked until those rows are
+  removed. Recommended: make the code keep the promise (Done rows whose output still exists are skipped
+  and not counted as "already there"). David to decide.
+- **A typed MOV name is written upper-cased** (found by the PC, confirmed): `bridge.py` ~818
+  `clip_name = raw.upper()` for any non-number, so "wipe_out" is written WIPE_OUT.mov while Saves as and
+  `bespoke_output_name` (machuna.py ~5278) say wipe_out.mov. Sony needs no help (`sony_clip_name` upper-cases).
+  Fix in the bridge, with a test that the written name equals the prediction for every route.
+- **QuickTime MOV is offered for a batch with a clip in it** (a clip with a sequence or still: `to_sws_only`),
+  and the clip is refused at Convert ("...is already a video file"). Same pattern as the still: say it
+  before Convert. Decide both together.
 - Fixed straight away in MacHuna-Swift `d5a0df2` (no app change): `publish.sh` had lost its version-agreement
   checks in 2.5.1 (version.json, the page, the download and source links); restored and each falsified.
   CLAUDE.md's bundle-id note (stale since decision 39) and PUBLISHING.md's "2/2" corrected.
