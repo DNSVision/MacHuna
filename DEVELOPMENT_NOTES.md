@@ -94,6 +94,13 @@ git push
 
 **Open question (2026-10-12): can a K-Frame hold an EIF over 4 GB?** An EIF's header records where its picture ends in 32 bits (0x080), so MacHuna's EIF holds at most 517 frames at 1080 (10.3 s at 50fps, 20.7 s at 25). Found when split SWS files became convertible: a 1,000-frame clip failed with Python's own struct error; v1.15.0 refuses it in plain words before writing anything. Every reference EIF is under 4 GB, so whether the K-Frame has a wider field (0x084 as a high word?) or simply cannot hold longer clips is unknown. **To settle it:** export a clip longer than ~11 s at 1080p50 from a K-Frame (or import a long MOV on the desk and export its EIF) and read its header.
 
+**THE MAC COMES FIRST (David, 2026-10-17, stressed: "I do not want to risk damaging the mac version").** No engine
+change reaches MacHuna for Mac unless: the full suite passes (pytest and unittest); the parity kit
+(`MacHuna-Swift/testmedia/parity-kit`) run on the Mac with the new engine and bridge gives files IDENTICAL to
+`manifest-mac.json` (made from live 2.5.4) in all 44 cases, unless a changed file is the approved purpose of the
+change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
+version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
+
 **Small, for the next engine release (found by the M1, 2026-10-16; not worth a release on its own):**
 `check_ffmpeg` (`machuna.py:559`) says "Install with: brew install ffmpeg". Both apps bundle their own ffmpeg, so
 a user only sees this if the app's own copy is missing, and then the advice is wrong on a Mac too: it should say
