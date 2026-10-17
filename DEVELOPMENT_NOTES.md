@@ -104,6 +104,15 @@ refuse Windows' reserved names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1
 extension) and a name ending in a space or a dot. Kahuna and K-Frame desks are Windows machines, so such a name
 is a problem for a Mac user too; the Swift app's prediction (`bespoke_output_name` parity test) moves with it.
 
+**Supporting Mac and PC in parallel (told David 2026-10-17, the long-term plan):** shared once: the engine
+(pinned tags; the parity kit re-run on every engine release), `bridge.py` (the PC pins MacHuna-Swift tags),
+the website (two buttons, separate manifests, the M5 publishes both with a guard). Made twice: the window
+(SwiftUI and WPF). Kept in step by `MacHuna-PC/PARITY_PLAN.md` as the permanent feature map, and a rule that
+every Mac interface change gets a PC item and vice versa; releases may be independent. Weak spot: only the M1
+VM can build and test the PC, through David. **Proposal for after the PC ships:** a GitHub Actions Windows
+runner to build and test MacHuna-PC (suite, --selftest, parity kit; UI tests if they run there); private-repo
+minutes may cost; the M5 to come back with details and cost then.
+
 **For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):**
 - The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
   (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
