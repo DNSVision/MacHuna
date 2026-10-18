@@ -617,7 +617,7 @@ of them, and on a Mac every one behaves exactly as before).
   it; about 8 GB of memory recommended; window minimum 940x720. **In packaging (step P) the M1 measures** the
   unzipped size, peak memory in a long conversion and a player load, and the CPU baseline of the Python
   libraries; the colleague's real PC is the first real data point; then the M5 drafts the download-page
-  wording for David. **Measured in step P (2026-10-17):** numpy needs X86_V2 (SSE4.2, POPCNT), i.e. Intel/AMD from about 2009; about 650 MB peak memory on a 60 s 1080p50 conversion, so 4 GB RAM is ample; 266 MB unpacked (x64), 277 MB (ARM64); outputs are large (60 s of 1080p50 with key to SWS is 31.7 GB), so free disk space matters more than RAM. On ARM the conversion runs emulated, so an Intel/AMD PC of similar power converts faster. Native ARM64 interface: decided (above); how users get the right one goes to David at packaging. M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
+  wording for David. **Measured in step P (2026-10-17):** numpy needs X86_V2 (SSE4.2, POPCNT), i.e. Intel/AMD from about 2009; about 650 MB peak memory on a 60 s 1080p50 conversion, so 4 GB RAM is ample; 266 MB unpacked (x64), 277 MB (ARM64); outputs are large (60 s of 1080p50 with key to SWS is 31.7 GB), so free disk space matters more than RAM. On ARM the conversion runs emulated, so an Intel/AMD PC of similar power converts faster. Native ARM64 interface: decided (above); how users get the right one: DECIDED 2026-10-18, two labelled downloads with the page highlighting the right one (see "Where it lives"). M1 toolchain: Git 2.55, x64 Python 3.12.10, numpy 2.5.4, Pillow 12.3.0, pytest 9.1.1,
   ffmpeg 8.1.2 (gyan.dev "essentials", SHA-256 checked). The M1 keeps a local, unpublished decision record
   (`MacHuna-PC/pc/DESIGN_DECISIONS.md`); decisions below are recorded here by the M5 from David's relay.
 - **Working split (David's rule, 2026-10-15):** this repo is authored only from the M5, which oversees Mac and
@@ -686,6 +686,15 @@ of them, and on a Mac every one behaves exactly as before).
   he types the version. No new Worker, route, domain or token. **Guard to build:** the publish script refuses
   a PC release that would change anything of the Mac's (version.json, Mac zip, Mac panel), and vice versa.
   (This supersedes the M1's earlier "do not change the Mac app's repo", which only existed to protect it.)
+  **Intel/AMD or ARM: DECIDED (David, 2026-10-18): two labelled PC downloads, and the page highlights the
+  right one.** Buttons along the lines of "Windows (Intel or AMD)" and "Windows on ARM (Snapdragon and other
+  ARM laptops)", with a "Not sure?" line (Settings > System > About > System type: x64-based or ARM-based).
+  Where the browser can say (Edge and Chrome, via `navigator.userAgentData.getHighEntropyValues(['architecture'])`)
+  the page highlights the matching button; both always stay visible (Firefox cannot say). One zip holding both
+  was rejected (twice the size, and its chooser would hit the ARM start-up freeze). Wording to David before the
+  site changes. Wrong choice: the ARM zip will not start on Intel/AMD (Windows says so); the x64 zip mostly runs
+  on ARM but freezes at start-up in 2-12% of launches. **So the PC manifest names both downloads** and each copy
+  takes the one for its own architecture (told to the M1 for step 14, which builds the update check).
 - **Licences: the same as the Mac app since 2.5.3** (Swift decision 58): licence notices inside, and the exact GPL
   source of the bundled ffmpeg (and any GPL libraries in it) published beside each release. A Windows ffmpeg build
   (e.g. gyan.dev or BtbN) states its licence and configuration; trace it the way `Scripts/licences.py` does.
