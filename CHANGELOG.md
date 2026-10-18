@@ -4,7 +4,9 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased (next engine release, with MacHuna 2.5.5)
+## v1.16.0 — 2026-10-18
+
+**Ignore key for QuickTime MOV, and three fixes found while building the PC version.** Every Mac output is unchanged unless Ignore key is ticked for a MOV: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.5.5 pins it.
 
 ### Added
 - **Ignore key for QuickTime MOV** (David, 2026-10-17): `no_alpha` on every route that writes a MOV (`_hula_convert_mov`, `_hula_convert_eif_to_mov`, `convert_tga_seq_to_mov`) and on `_prores_cmd`. The MOV is ProRes 4444 with no alpha channel at all, not a solid white one; a clear frame on it is opaque black. Off (the default) writes exactly what it did before. Fail-first test reading the written file's pixel format and picture on all three routes; broken on purpose, it fails.
