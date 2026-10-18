@@ -129,6 +129,15 @@ runner to build and test MacHuna-PC (suite, --selftest, parity kit; UI tests if 
 minutes may cost; the M5 to come back with details and cost then.
 
 **For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):**
+- **Player memory on a Retina screen (found by the PC's step 13 measurement, 2026-10-18; checked in the code; NOT
+  changed, Mac-first rule: measure, then David decides).** `PlayerView.swift` caches every frame (up to
+  `cacheLimit` 1600) at panel width x `backingScaleFactor`; its comments say "about 1.8 MB a frame ... about 3 GB",
+  true only at 1x. At 2x a keyed frame is three ~1000 px images, measured on the PC at ~6.3 MB, so a 60 s 1080p50
+  keyed clip wants ~10 GB (the PC stopped at 5.7 GB on 8 GB). Measure on the M5 (a long keyed clip, peak memory),
+  then consider the PC's fix: cap the cache by physical memory (min of 1600 and a quarter of RAM / bytes per
+  frame), past it the existing "first N frames cached" behaviour.
+- Engine Check window's "MISSING — <path>" (`App.swift:101`) could become "MISSING: <path>" as the PC's
+  (David's no-em-dash preference; `main.swift:21` already uses the colon). Optional.
 - The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
   (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
 - `bridge.py` `handle()` returns the whole Python traceback as the error, so a failed Save Sound reads
