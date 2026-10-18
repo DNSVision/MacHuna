@@ -128,7 +128,7 @@ VM can build and test the PC, through David. **Proposal for after the PC ships:*
 runner to build and test MacHuna-PC (suite, --selftest, parity kit; UI tests if they run there); private-repo
 minutes may cost; the M5 to come back with details and cost then.
 
-**For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):**
+**For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):** **BUILT 2026-10-18** (engine v1.16.0; MacHuna-Swift decisions 60, 60.1; notarised build passes every check; awaiting David's test). Done: everything below except the optional nothing; Clear decided as no Mac change (PC to warn). The list is kept as the record.
 - **Player memory on a Retina screen (found by the PC's step 13 measurement, 2026-10-18; checked in the code; NOT
   changed, Mac-first rule: measure, then David decides).** `PlayerView.swift` caches every frame (up to
   `cacheLimit` 1600) at panel width x `backingScaleFactor`; its comments say "about 1.8 MB a frame ... about 3 GB",
