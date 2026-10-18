@@ -146,6 +146,12 @@ minutes may cost; the M5 to come back with details and cost then.
   K-Frame desk - proceed with caution" (MacHuna-Swift `USER_MANUAL.md` ~974, ~982; both confirmed 2026-10-07), and
   Known Limitations still says "TGA sequence audio is not supported" (~1016; sound for any clip since 2.3.0). Remove
   them; regenerate the PDF; also the engine repo's copy if kept. (Sony ~975 is still true.)
+- **Clear… where nothing can be recovered (BOTH versions; found by the M1 2026-10-18; to decide with David).** Under
+  Parallels the PC's default destination (Videos\MacHuna Out) IS the Mac app's own MacHuna Out (\\Mac\Home\Movies),
+  and a network share has no Recycle Bin, so Clear deletes outright (its confirmation only says "unless the folder
+  is on a drive that has none"). Check what the Mac's Clear does on a drive with no Trash (network volume, FAT
+  stick). Options: refuse, or warn plainly that the files cannot be got back; on the PC also a different default
+  folder name. Mac first, then the PC copies it.
 - ~~Example file names in the manual~~: CLOSED. David 2026-10-18: "not an issue, very generic". They stay.
 - The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
   (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
