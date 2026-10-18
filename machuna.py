@@ -5036,13 +5036,14 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
                     clip_names: list = None, include_audio: bool = True,
                     log=print, sound_files: list = None,
-                    clear_frames: str = None):
+                    clear_frames: str = None, no_alpha: bool = False):
     """Convert a list of SWS or MOV files to the specified extraction target.
 
     clip_names, when given, is one Sony clip name per input path (bespoke
     names) and overrides the single shared clip_name for that item.
     sound_files, when given, is one sound file (or None) per input path, for
-    QuickTime MOV output; TGA cannot carry sound.
+    QuickTime MOV output; TGA cannot carry sound. no_alpha (Ignore key) makes
+    a QuickTime MOV with no alpha channel; TGA output is not affected.
     """
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
@@ -5059,7 +5060,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                          include_audio=include_audio,
                                          out_name=(cn or None) if clip_names else None,
                                          log=log, sound_file=sound,
-                                         clear_frames=clear_frames)
+                                         clear_frames=clear_frames, no_alpha=no_alpha)
             elif ext == '.eif':
                 weave = interlaced and kframe_tga_asks_desk_format(path)
                 if interlaced and not weave:
@@ -5088,7 +5089,7 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                   include_audio=include_audio,
                                   out_name=(cn or None) if clip_names else None,
                                   log=log, sound_file=sound,
-                                  clear_frames=clear_frames)
+                                  clear_frames=clear_frames, no_alpha=no_alpha)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:

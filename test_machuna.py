@@ -5610,3 +5610,22 @@ class TestMovNameRefusesWindowsReservedNames(unittest.TestCase):
                           ('my con', 'my con'), ('wipe.mov', 'wipe'), ('nulls', 'nulls')):
             with self.subTest(raw=raw):
                 self.assertEqual(m.normalise_bespoke_value(raw, m.BESPOKE_MODE_MOV), want)
+
+
+class TestMovIgnoreKeyThroughTheBatchRunner(TestMovIgnoreKey):
+    """The apps reach the SWS and EIF MOV routes through _hula_run_batch, so
+    the option must come through it too (exercise the dispatcher)."""
+
+    def _routes(self, **kw):
+        q = lambda *a: None
+        out = {}
+        for route, src in (('SWS', self.sws), ('EIF', self.eif)):
+            d = self._out()
+            m._hula_run_batch([src], d, m.HULA_TARGET_QUICKTIME_MOV, log=q, **kw)
+            movs = [os.path.join(d, n) for n in os.listdir(d) if n.endswith('.mov')]
+            self.assertEqual(len(movs), 1, f'{route}: one MOV written')
+            out[route] = movs[0]
+        return out
+
+    def test_clear_frames_without_alpha_are_opaque_black(self):
+        pass  # the TGA route, tested directly above
