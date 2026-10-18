@@ -555,6 +555,12 @@ def check_ffmpeg():
     try:
         subprocess.run([_get_ffmpeg_path('ffmpeg'), '-version'], capture_output=True, check=True, stdin=subprocess.DEVNULL)
     except (FileNotFoundError, subprocess.CalledProcessError):
+        # The apps carry their own FFmpeg, so a user only gets here if that
+        # copy is missing; the Homebrew hint is for running from source.
+        if getattr(sys, 'frozen', False):
+            raise RuntimeError(
+                "MacHuna's own copy of FFmpeg is missing or damaged. "
+                "Reinstall MacHuna from dnsvision.tv/machuna.")
         raise RuntimeError(
             "ffmpeg not found. Install with: brew install ffmpeg\n"
             "Or download from https://ffmpeg.org/download.html"
@@ -1108,6 +1114,13 @@ def _dual_mono_stereo24(input_path: str):
 
 
 _UNTAGGED_HD_AS_709 = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709'
+# The colour conversion to RGB done by an explicit scale filter with bitexact
+# set, so it rounds the same on every processor. Without it ffmpeg's scaler
+# takes a CPU-specific shortcut on Intel/AMD and a 10-bit 4:2:2 clip's TGA
+# differs from the Mac's by up to 3 levels of 255 (the parity kit, 2026-10-17).
+# On Apple silicon it changes nothing. It must be inside the filter: the global
+# -sws_flags does not reach the scaler ffmpeg inserts for a format change.
+_SCALE_BITEXACT = 'scale=flags=bitexact'
 
 
 def _assume_709(info: dict) -> bool:
@@ -4346,8 +4359,10 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     vf = [_UNTAGGED_HD_AS_709] if _assume_709_and_say(info, log) else []
     if (info.get('width'), info.get('height')) != (1920, 1080):
         fields = info.get('is_interlaced', False) and not interlaced
-        vf.append('scale=1920:1080' + (':interl=1' if fields else ''))
+        vf.append('scale=1920:1080' + (':interl=1' if fields else '') + ':flags=bitexact')
         log(f"  Scaling {info.get('width')}×{info.get('height')} → 1920×1080")
+    else:
+        vf.append(_SCALE_BITEXACT)
 
     if not interlaced:
         # Progressive: extract frames directly to dest with correct naming.
@@ -4763,11 +4778,13 @@ def _abandon_eif(dest_path: str, exc, log=print):
 
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
-                stereo_pcm: str, out_path: str, pcm_24bit: bool = False) -> list:
+                stereo_pcm: str, out_path: str, pcm_24bit: bool = False,
+                no_alpha: bool = False) -> list:
     """The one ProRes 4444 encode used by every MOV path.
 
     Kept in one place so SWS, EIF and TGA sources cannot drift apart in
-    colour handling or alpha.
+    colour handling or alpha. no_alpha ("Ignore key", 2026-10-17): ProRes
+    4444 with no alpha channel at all, not a solid white one.
     """
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     cmd = [ffmpeg, '-y',
@@ -4780,7 +4797,7 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
         cmd += ['-f', 's32le' if pcm_24bit else 's16le',
                 '-ar', str(EAF_SAMPLE_RATE), '-ac', '2', '-i', stereo_pcm]
     cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
-            '-pix_fmt', 'yuva444p10le',
+            '-pix_fmt', _prores_pix_fmt(no_alpha),
             '-color_primaries', 'bt709',
             '-color_trc', 'bt709',
             '-colorspace', 'bt709']
@@ -4789,6 +4806,11 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
                 '-ar', str(EAF_SAMPLE_RATE)]
     cmd.append(out_path)
     return cmd
+
+
+def _prores_pix_fmt(no_alpha: bool) -> str:
+    """ProRes 4444 with the key as alpha, or with no alpha channel at all."""
+    return 'yuv444p10le' if no_alpha else 'yuva444p10le'
 
 
 def _pad_mov_inputs(raw_rgba: str, width: int, height: int, keyed: bool,
@@ -4863,7 +4885,7 @@ def _sound_file_pcm24(sound_file: str, tmp: str, log=print) -> str:
 def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                              include_audio: bool = True, out_name: str = None,
                              log=print, sound_file: str = None,
-                             clear_frames: str = None) -> str:
+                             clear_frames: str = None, no_alpha: bool = False) -> str:
     """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
 
     The output is an ordinary QuickTime file: picture, key as a real alpha
@@ -4897,10 +4919,11 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                     af.write(pcm)
             else:
                 log("  No companion .eaf - MOV will be silent")
-        _pad_mov_inputs(raw_rgba, 1920, 1080, True, stereo_pcm, 4, h.fps, clear_frames, log)
-        log("  Encoding ProRes 4444...")
+        _pad_mov_inputs(raw_rgba, 1920, 1080, not no_alpha, stereo_pcm, 4, h.fps, clear_frames, log)
+        log("  Encoding ProRes 4444..." + (" (no alpha: Ignore key)" if no_alpha else ""))
         _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, _fps_expr(h.fps),
-                                stereo_pcm, out_path, pcm_24bit=True), check=True)
+                                stereo_pcm, out_path, pcm_24bit=True,
+                                no_alpha=no_alpha), check=True)
     log(f"  Done → {out_path}")
     return out_path
 
@@ -4908,7 +4931,7 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                            fps: float, vf: str = None, out_fps: float = None,
                            log=print, sound_file: str = None,
-                           clear_frames: str = None) -> str:
+                           clear_frames: str = None, no_alpha: bool = False) -> str:
     """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio;
     sound_file adds one at its own length (2026-10-11).
 
@@ -4939,7 +4962,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                     '-i', pcm, '-map', '0:v', '-map', '1:a']
         if starts or ends:
             with Image.open(tga_files[0]) as im:
-                keyed = 'A' in im.getbands()
+                keyed = 'A' in im.getbands() and not no_alpha
             pad = (f"format=rgba,tpad=start={starts}:stop={ends}:start_mode=add:stop_mode=add:"
                    f"color=black{'@0' if keyed else ''}")
             vf = f"{vf},{pad}" if vf else pad
@@ -4947,7 +4970,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
         if vf:
             cmd += ['-vf', vf]
         cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
-                '-pix_fmt', 'yuva444p10le',
+                '-pix_fmt', _prores_pix_fmt(no_alpha),
                 '-color_primaries', 'bt709', '-color_trc', 'bt709',
                 '-colorspace', 'bt709',
                 '-r', _fps_expr(out_fps)]
@@ -4962,7 +4985,7 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
 def _hula_convert_mov(sws_path: str, dest_parent: str,
                       include_audio: bool = True, out_name: str = None,
                       log=print, sound_file: str = None,
-                      clear_frames: str = None) -> str:
+                      clear_frames: str = None, no_alpha: bool = False) -> str:
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
 
     Named after the source file rather than a slot number: this is an ordinary
@@ -4996,12 +5019,13 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
         else:
             stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
                           if include_audio else None)
-        _pad_mov_inputs(raw_rgba, header.width, header.height, bool(header.has_key),
+        _pad_mov_inputs(raw_rgba, header.width, header.height,
+                        bool(header.has_key) and not no_alpha,
                         stereo_pcm, 4 if pcm_24bit else 2, header.fps, clear_frames, log)
-        log("  Encoding ProRes 4444...")
+        log("  Encoding ProRes 4444..." + (" (no alpha: Ignore key)" if no_alpha else ""))
         _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
                                 _fps_expr(header.fps), stereo_pcm, out_path,
-                                pcm_24bit=pcm_24bit),
+                                pcm_24bit=pcm_24bit, no_alpha=no_alpha),
                     check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -5233,6 +5257,10 @@ BESPOKE_MODE_MOV  = 'mov'    # QuickTime MOV — free filename, writes <name>.mo
                              # blank is allowed and means "use the source name"
 
 
+_WINDOWS_RESERVED = ({'CON', 'PRN', 'AUX', 'NUL'}
+                     | {f'COM{i}' for i in range(1, 10)} | {f'LPT{i}' for i in range(1, 10)})
+
+
 def normalise_bespoke_value(raw, mode: str):
     """Canonical form of one bespoke ID, or None if it is not valid.
 
@@ -5254,6 +5282,11 @@ def normalise_bespoke_value(raw, mode: str):
             return None
         if v.lower().endswith('.mov'):
             v = v[:-4]
+        # Names Windows cannot hold: desks are Windows machines, and so is
+        # the PC version. A device name is reserved with any extension, and
+        # Windows silently drops a trailing space or dot.
+        if v.endswith((' ', '.')) or v.split('.')[0].upper() in _WINDOWS_RESERVED:
+            return None
         return v or None
     if mode == BESPOKE_MODE_SONY:
         try:

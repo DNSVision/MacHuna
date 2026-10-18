@@ -4,6 +4,18 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased (next engine release, with MacHuna 2.5.5)
+
+### Added
+- **Ignore key for QuickTime MOV** (David, 2026-10-17): `no_alpha` on every route that writes a MOV (`_hula_convert_mov`, `_hula_convert_eif_to_mov`, `convert_tga_seq_to_mov`) and on `_prores_cmd`. The MOV is ProRes 4444 with no alpha channel at all, not a solid white one; a clear frame on it is opaque black. Off (the default) writes exactly what it did before. Fail-first test reading the written file's pixel format and picture on all three routes; broken on purpose, it fails.
+
+### Fixed
+- **A clip's TGA rounds the same on every processor.** On Intel/AMD ffmpeg's scaler took a CPU-specific shortcut, so a TGA made from a 10-bit 4:2:2 clip differed from the Mac's by up to 3 levels of 255 (found by the PC's parity kit). The colour conversion is now done by a scale filter set `bitexact`. Apple silicon writes the same as before. A guard test fails if any extraction converts without it (proved by breaking it two ways).
+- **"FFmpeg is missing" now gives the right advice in the apps:** reinstall MacHuna, not `brew install ffmpeg`, which only applies when running from source (found by the M1).
+- **A MOV name Windows cannot hold is refused before Convert:** `CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9` (with any extension), and a name ending in a space or a dot. Kahuna and K-Frame desks are Windows machines, and so is the PC version.
+
+---
+
 ## v1.15.4 — 2026-10-15
 
 **ffmpeg can no longer read the requests meant for MacHuna.** Found by the PC version's first bridge test on Windows, and reproduced on a Mac. The files MacHuna writes are unchanged.

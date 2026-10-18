@@ -5463,3 +5463,150 @@ class TestEifSizeLimit(unittest.TestCase):
                                      out_name='0001')
         self.assertIn('1,000 frames', str(cm.exception))
         self.assertEqual(os.listdir(out), [], 'nothing written, not even a partial file')
+
+
+class TestMovIgnoreKey(unittest.TestCase):
+    """Ignore key on a QuickTime MOV (David, 2026-10-17): the MOV has NO alpha
+    channel at all, not a solid white one, from every route that writes one
+    (SWS, EIF, TGA sequence). Off, the MOV keeps its key as alpha, as today.
+    Read back from the written file: its pixel format, and its picture."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PIL import Image
+        cls.tmp = tempfile.mkdtemp()
+        cls.frames = []
+        for i in range(2):
+            f = os.path.join(cls.tmp, f'k_{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (200, 100, 50, 128)).save(f)
+            cls.frames.append(f)
+        q = lambda *a: None
+        src = os.path.join(cls.tmp, 'src')
+        os.makedirs(src)
+        cls.sws = m.convert_tga_sequence(cls.frames, 1, src, '1080p50', log=q, write_log=False)
+        cls.eif = m.convert_tga_seq_to_eif(cls.frames, src, 'KEY', 50.0, log=q, out_name='0002')
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _out(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    @staticmethod
+    def _pix_fmt(mov):
+        import subprocess
+        out = subprocess.run([m._get_ffmpeg_path('ffprobe'), '-v', 'error', '-select_streams', 'v:0',
+                              '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', mov],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL, check=True)
+        return out.stdout.strip()
+
+    @staticmethod
+    def _rgb(mov):
+        import subprocess
+        import numpy as np
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', mov, '-frames:v', '1',
+                              '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+                             capture_output=True, stdin=subprocess.DEVNULL, check=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(1080, 1920, 3)
+
+    def _routes(self, **kw):
+        q = lambda *a: None
+        return {
+            'SWS': m._hula_convert_mov(self.sws, self._out(), log=q, **kw),
+            'EIF': m._hula_convert_eif_to_mov(self.eif, self._out(), log=q, **kw),
+            'TGA': m.convert_tga_seq_to_mov(self.frames, self._out(), 'seq', 25.0, log=q, **kw),
+        }
+
+    def test_ticked_writes_no_alpha_and_the_same_picture(self):
+        import numpy as np
+        keyed = self._routes()
+        plain = self._routes(no_alpha=True)
+        for route in keyed:
+            with self.subTest(route=route):
+                # ffprobe names the decoder's format (12-bit); what matters is the "a".
+                self.assertTrue(self._pix_fmt(keyed[route]).startswith('yuva444'), 'off: the key stays')
+                self.assertTrue(self._pix_fmt(plain[route]).startswith('yuv444'), 'on: no alpha channel at all')
+                diff = np.abs(self._rgb(keyed[route]).astype(int) - self._rgb(plain[route]).astype(int))
+                self.assertLessEqual(int(diff.max()), 2, 'the picture itself must not change')
+
+    def test_clear_frames_without_alpha_are_opaque_black(self):
+        mov = m.convert_tga_seq_to_mov(self.frames, self._out(), 'clear', 25.0, log=lambda *a: None,
+                                       clear_frames='start', no_alpha=True)
+        self.assertTrue(self._pix_fmt(mov).startswith('yuv444'), 'no alpha channel')
+        self.assertLessEqual(int(self._rgb(mov).max()), 16, 'the added frame is black')
+
+
+class TestTgaFromClipIsBitexact(unittest.TestCase):
+    """A clip's TGA rounds the same on every processor (the parity kit,
+    2026-10-17): on Intel/AMD ffmpeg's scaler took a CPU-specific shortcut and
+    differed from the Mac by up to 3 levels of 255. Apple silicon writes the
+    same either way, so the Mac cannot see the outcome; this guards that every
+    extraction's colour conversion is done by a scale filter set bitexact."""
+
+    def _chains(self, size, standard, interlaced_src=False):
+        from unittest import mock
+        cmds = []
+        info = {'width': size[0], 'height': size[1], 'is_interlaced': interlaced_src,
+                'color_space': 'bt709'}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(m, 'get_video_info', return_value=info), \
+                mock.patch.object(m, '_run_ffmpeg', side_effect=lambda c, **k: cmds.append(c)):
+            try:
+                m._hula_convert_mov_to_tga('clip.mov', d, m.HULA_TARGET_KFRAME_TGA, standard,
+                                           log=lambda *a: None)
+            except ValueError:
+                pass  # the interlaced route stops after extracting: no frames were made
+        return [c[c.index('-vf') + 1] for c in cmds if '-vf' in c]
+
+    def test_every_extraction_converts_bitexact(self):
+        for size in ((1920, 1080), (1280, 720)):
+            for standard in ('1080p50', '1080i50'):
+                with self.subTest(size=size, standard=standard):
+                    chains = self._chains(size, standard)
+                    self.assertTrue(chains, 'an extraction was run')
+                    for vf in chains:
+                        steps = vf.split(',')
+                        fmt = next(i for i, s in enumerate(steps) if s.startswith('format='))
+                        self.assertTrue(any(s.startswith('scale') and 'flags=bitexact' in s
+                                            for s in steps[:fmt]), vf)
+
+
+class TestFfmpegMissingAdvice(unittest.TestCase):
+    """What a user reads when the app's own FFmpeg is missing (Engine Check
+    shows it): reinstall MacHuna, never "brew install", which is only true
+    when running from source (found by the M1, 2026-10-16)."""
+
+    def _message(self, frozen):
+        from unittest import mock
+        with mock.patch.object(m, '_get_ffmpeg_path', return_value='/nonexistent/ffmpeg'), \
+                mock.patch.object(m.sys, 'frozen', frozen, create=True):
+            with self.assertRaises(RuntimeError) as cm:
+                m.check_ffmpeg()
+        return str(cm.exception)
+
+    def test_the_app_says_reinstall(self):
+        msg = self._message(True)
+        self.assertIn('Reinstall MacHuna', msg)
+        self.assertNotIn('brew', msg)
+
+    def test_source_keeps_the_brew_hint(self):
+        self.assertIn('brew install ffmpeg', self._message(False))
+
+
+class TestMovNameRefusesWindowsReservedNames(unittest.TestCase):
+    """Kahuna and K-Frame desks are Windows machines, and so is the PC
+    version: a MOV name Windows cannot hold is refused before Convert
+    (PARITY_PLAN Q7, agreed 2026-10-16), and the prediction moves with it."""
+
+    def test_reserved_names_are_refused(self):
+        for raw in ('CON', 'con', 'Prn', 'AUX', 'NUL', 'COM1', 'com9', 'LPT1', 'lpt9',
+                    'nul.mov', 'CON.txt', 'aux.tar.gz', 'wipe.', 'wipe..mov', 'wipe .mov'):
+            with self.subTest(raw=raw):
+                self.assertIsNone(m.normalise_bespoke_value(raw, m.BESPOKE_MODE_MOV))
+
+    def test_near_misses_are_fine(self):
+        for raw, want in (('CONSOLE', 'CONSOLE'), ('COM10', 'COM10'), ('LPT0x', 'LPT0x'),
+                          ('my con', 'my con'), ('wipe.mov', 'wipe'), ('nulls', 'nulls')):
+            with self.subTest(raw=raw):
+                self.assertEqual(m.normalise_bespoke_value(raw, m.BESPOKE_MODE_MOV), want)
