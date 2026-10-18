@@ -138,6 +138,9 @@ minutes may cost; the M5 to come back with details and cost then.
   frame), past it the existing "first N frames cached" behaviour.
 - Engine Check window's "MISSING — <path>" (`App.swift:101`) could become "MISSING: <path>" as the PC's
   (David's no-em-dash preference; `main.swift:21` already uses the colon). Optional.
+- The Quick Start PDF's page header says "MacHuna User Manual" (`manual_style.css` `@top-right`, shared with the
+  manual; reported by the M1 2026-10-18, not yet checked on the M5). Give the guide its own header, "MacHuna Quick
+  Start Guide" (e.g. a pandoc `--css` override or a `<style>` in the build), rebuild the PDF, update app + site copies.
 - The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
   (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
 - `bridge.py` `handle()` returns the whole Python traceback as the error, so a failed Save Sound reads
