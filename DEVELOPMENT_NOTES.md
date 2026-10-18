@@ -146,8 +146,7 @@ minutes may cost; the M5 to come back with details and cost then.
   K-Frame desk - proceed with caution" (MacHuna-Swift `USER_MANUAL.md` ~974, ~982; both confirmed 2026-10-07), and
   Known Limitations still says "TGA sequence audio is not supported" (~1016; sound for any clip since 2.3.0). Remove
   them; regenerate the PDF; also the engine repo's copy if kept. (Sony ~975 is still true.)
-- **Example file names in the manual** (sections 7.3, 8, 8.1, 9.3): ASKED David 2026-10-18 whether any are real
-  clients, jobs or source files. If so, replace them with neutral names (the PC draft's) in both manual copies.
+- ~~Example file names in the manual~~: CLOSED. David 2026-10-18: "not an issue, very generic". They stay.
 - The output chip's tooltip says "double-click to reveal it", but double-click PLAYS
   (`ConversionView.swift` `dragHelp`). Say "double-click to play it".
 - `bridge.py` `handle()` returns the whole Python traceback as the error, so a failed Save Sound reads
