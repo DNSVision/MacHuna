@@ -973,6 +973,7 @@ MacHuna's `0901.eif` (untouched engine v1.11.0 output of KNOCKOUT_WIPE, flag `0x
 - Sony MVS 25i field order confirmation -- BFF assumed for PAL/50Hz; needs live hardware test on a Sony MVS desk
 - ~~Sony MVS 50i TGA output in Hula~~ -- DONE (v1.5.20/v1.5.21 as Sony MVS TGA 25i with BFF/TFF toggle and source guard)
 - ~~True drag and drop~~ -- Dropped. Current file picker workflow is sufficient.
+- **One frame of a TGA sequence as a still (PARKED by David, 2026-10-19: "too niche to worry about"; he keeps it in mind).** A tester wanted one frame from a sequence as an SWS still, but dropping one frame adds the whole sequence, so today the frame must be copied into a folder of its own (the workaround). Ideas weighed: a Still/Clip choice per row (rejected by David as clutter for a niche need, and once the sequence is in there is no way to pick the frame); a modifier key on drop (invisible, and clashes with Explorer's Ctrl/Shift/Alt drag meanings on Windows); the M5's preferred one if it is ever wanted: **Add Frame as Still in the player**, choosing the frame by looking, one menu item, the main window and the smart drop unchanged. Mac first, then the PC.
 
 ### Unified App (implemented in v1.5.33)
 
