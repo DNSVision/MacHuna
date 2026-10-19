@@ -128,6 +128,8 @@ VM can build and test the PC, through David. **Proposal for after the PC ships:*
 runner to build and test MacHuna-PC (suite, --selftest, parity kit; UI tests if they run there); private-repo
 minutes may cost; the M5 to come back with details and cost then.
 
+**For the next Mac release, 2.5.6 (found by PC testers, checked on the M5 2026-10-19; not urgent, nothing shipped yet):** (1) **Player status says "the sound runs 0.0s past the picture"** when the sound is longer by less than 0.05 s (`PlayerView.swift`, `length > info.frames` then `%.1f`); seen on a PC tester's 1.SWS, the Mac has the same code. Mention it only when it rounds to at least 0.1 s. (2) **An em dash in an engine message**: `machuna.py` "The destination folder already contains {kind} — used by:" (the conflict check), shown in full in the tooltip on both apps; make it " - " in the next engine release (the Swift `oneLine` already accepts both). Fail-first tests, Mac parity kit byte-identical, as always.
+
 **For the next Mac release, 2.5.5 (found by the PC's inventory, checked on the M5 2026-10-16):** **SHIPPED: MacHuna 2.5.5 LIVE 2026-10-18** (engine v1.16.0; MacHuna-Swift decisions 60, 60.1; tag v2.5.5 on 2c61755). The PC copies it next. Done: everything below except the optional nothing; Clear decided as no Mac change (PC to warn). The list is kept as the record.
 - **Player memory on a Retina screen (found by the PC's step 13 measurement, 2026-10-18; checked in the code; NOT
   changed, Mac-first rule: measure, then David decides).** `PlayerView.swift` caches every frame (up to
