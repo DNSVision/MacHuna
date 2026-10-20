@@ -4701,18 +4701,35 @@ class _EifCancelled(Exception):
     """Raised inside an EIF writer's frame loop when the user cancels."""
 
 
+_EIF_PARTIAL_DIR = '.machuna-partial'
+
+
 def _eif_partial_path(path: str) -> str:
-    """Where an EIF output is written before it is finished: hidden, beside
-    the destination (so the rename is on the same disk), and without the
-    .eif/.eaf ending, so nothing reads it as a clip."""
+    """Where an EIF output is written before it is finished: inside a hidden
+    folder in the destination (so the rename is on the same disk), and without
+    the .eif/.eaf ending, so nothing reads it as a clip.
+
+    The FOLDER is dot-named, not the file. A dot-named file in a folder iCloud
+    syncs is flagged hidden by iCloud, sometimes seconds later, and the flag
+    survives the rename: finished EIFs vanished from Finder (David,
+    2026-10-20). Measured in an iCloud folder: 6 of 18 hidden as
+    `.<name>.partial`, none of 36 written inside a dot-named folder."""
     d, b = os.path.split(path)
-    return os.path.join(d, f'.{b}.partial')
+    return os.path.join(d, _EIF_PARTIAL_DIR, f'{b}.partial')
 
 
 def _drop(path: str):
     try:
         if path and os.path.exists(path):
             os.remove(path)
+    except OSError:
+        pass
+
+
+def _tidy_eif_partial_dir(dest_path: str):
+    """Remove the partial folder once it is empty; never anything in it."""
+    try:
+        os.rmdir(os.path.join(os.path.dirname(dest_path), _EIF_PARTIAL_DIR))
     except OSError:
         pass
 
@@ -4727,7 +4744,9 @@ def _open_eif_output(dest_path: str):
     for p in (dest_path, eaf_path_for(dest_path)):
         if os.path.exists(p) and not os.access(p, os.W_OK):
             raise PermissionError(errno.EACCES, 'Existing file is read-only', p)
-    return open(_eif_partial_path(dest_path), 'wb')
+    partial = _eif_partial_path(dest_path)
+    os.makedirs(os.path.dirname(partial), exist_ok=True)
+    return open(partial, 'wb')
 
 
 def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=print):
@@ -4745,6 +4764,7 @@ def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=prin
         os.replace(tmp_eif, dest_path)
     except BaseException:
         _drop(tmp_eaf)
+        _tidy_eif_partial_dir(dest_path)
         raise
     try:
         if tmp_eaf:
@@ -4756,9 +4776,11 @@ def _commit_eif(dest_path: str, stereo24, frame_count: int, fps: float, log=prin
         # leave it beside an old clip's .eaf (third review, 2026-10-08).
         _drop(tmp_eaf)
         _drop(dest_path)
+        _tidy_eif_partial_dir(dest_path)
         log(f"  The audio could not be put in place, so the new "
             f"{os.path.basename(dest_path)} was removed rather than left with the wrong sound")
         raise
+    _tidy_eif_partial_dir(dest_path)
     if tmp_eaf:
         log(f"  Audio → {os.path.basename(eaf)} (24-bit, "
             f"{frame_count * _samples_per_frame(fps)} samples)")
@@ -4771,6 +4793,7 @@ def _abandon_eif(dest_path: str, exc, log=print):
     """Throw away an unfinished EIF. Anything already at dest_path is untouched."""
     _drop(_eif_partial_path(dest_path))
     _drop(_eif_partial_path(eaf_path_for(dest_path)))
+    _tidy_eif_partial_dir(dest_path)
     if isinstance(exc, _EifCancelled):
         log(f"  Cancelled - {os.path.basename(dest_path)} not written")
     else:

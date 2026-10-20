@@ -1962,6 +1962,31 @@ class TestAudioRoutes(unittest.TestCase):
                 want = ['0001.eaf', '0001.eif'] if route != 'tga' else ['0001.eif']
                 self.assertEqual(sorted(os.listdir(d)), want)
 
+    def test_an_unfinished_eif_is_never_a_dot_named_file_in_the_destination(self):
+        """In a folder iCloud syncs, iCloud flags a dot-named file hidden and
+        the flag survives the rename, so finished EIFs vanished from Finder
+        (David, 2026-10-20). Measured in an iCloud folder: 6 of 18 hidden with
+        `.<name>.partial`, none of 36 with the partial file inside a dot-named
+        FOLDER under a plain name. So the picture and its sound are written
+        inside such a folder, and only a plain-named file is renamed out."""
+        from unittest import mock
+        d = self._dir('e_nodot')
+        for route, run in self._eif_routes(d, 'e_nodot').items():
+            with self.subTest(route=route), \
+                    mock.patch.object(m.os, 'replace', wraps=os.replace) as spy:
+                self.assertIsNotNone(run())
+                moves = [(a[0], a[1]) for a, _ in spy.call_args_list
+                         if os.path.dirname(a[1]) == d and a[1].endswith(('.eif', '.eaf'))]
+                self.assertTrue(moves, 'nothing was renamed into place')
+                for src, dst in moves:
+                    self.assertFalse(os.path.basename(src).startswith('.'),
+                                     f'{os.path.basename(dst)} was written as a dot-named file')
+                    self.assertTrue(os.path.basename(os.path.dirname(src)).startswith('.'),
+                                    f'{os.path.basename(dst)} was not written inside a hidden folder')
+                    self.assertNotEqual(os.path.dirname(src), d)
+                self.assertEqual([f for f in os.listdir(d) if f.startswith('.')], [],
+                                 'the partial folder was left behind')
+
     def test_the_tk_app_does_not_mark_a_cancelled_eif_done(self):
         """Independent review, 2026-10-08: the EIF converters return None when
         cancelled (and delete the partial file), but the Tk batch appended 'OK'
