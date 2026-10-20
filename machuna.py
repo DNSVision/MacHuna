@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.17.0"
+VERSION = "1.17.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -524,6 +524,35 @@ def _get_ffmpeg_path(binary: str = 'ffmpeg') -> str:
     return binary
 
 
+class ConversionStopped(RuntimeError):
+    """Stop was asked for (`request_stop`): the step in hand is incomplete, so
+    the route must stop there rather than use it. Raised by `_run_ffmpeg` and
+    by the long processing loops; nothing else raises it."""
+
+
+# Stop, for the whole engine (MacHuna 2.6.0). Until then Stop only killed the
+# ffmpeg that happened to be running, and the routes went on with its cut-short
+# output, or with a long processing step of their own: a clip to SWS ran on and
+# wrote its file (David pressed Stop and "nothing happened").
+_stop_requested = __import__('threading').Event()
+
+
+def request_stop():
+    """Stop the conversion in progress: kill its ffmpeg, start no more, and
+    make the long processing loops stop. Until clear_stop()."""
+    _stop_requested.set()
+    _kill_current_ffmpeg()
+
+
+def clear_stop():
+    _stop_requested.clear()
+
+
+def _check_stop():
+    if _stop_requested.is_set():
+        raise ConversionStopped("Stopped.")
+
+
 def _run_ffmpeg(cmd, capture_output=True, check=False):
     import subprocess as _sp
     global _current_ffmpeg_proc
@@ -531,12 +560,17 @@ def _run_ffmpeg(cmd, capture_output=True, check=False):
     # input for keys ('q' stops it and still reports success), and an
     # inherited input is the bridge's request pipe. On a Mac it ate requests'
     # bytes and a 'q' cut a job short; on Windows ffmpeg hung after finishing.
+    _check_stop()       # no new ffmpeg once Stop has been asked for
     with _ffmpeg_proc_lock:
         proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, stdin=_sp.DEVNULL)
         _current_ffmpeg_proc = proc
     stdout, stderr = proc.communicate()
     with _ffmpeg_proc_lock:
         _current_ffmpeg_proc = None
+    if getattr(proc, '_machuna_stopped', False):
+        # Killed by Stop: the step's output is cut short, so the route must
+        # not go on and use it as if it were whole (MacHuna 2.6.0).
+        raise ConversionStopped("Stopped.")
     result = _sp.CompletedProcess(cmd, proc.returncode, stdout, stderr)
     if check and proc.returncode != 0:
         raise _sp.CalledProcessError(proc.returncode, cmd, stdout, stderr)
@@ -546,6 +580,8 @@ def _kill_current_ffmpeg():
     global _current_ffmpeg_proc
     with _ffmpeg_proc_lock:
         proc = _current_ffmpeg_proc
+        if proc is not None:
+            proc._machuna_stopped = True    # _run_ffmpeg then raises ConversionStopped
     if proc is not None:
         try: proc.kill()
         except Exception: pass
@@ -760,6 +796,7 @@ def _byteswap_v210(path: str):
     data = np.memmap(path, dtype='<u4', mode='r+')
     step = 16 * 1024 * 1024
     for i in range(0, len(data), step):
+        _check_stop()
         data[i:i + step] = data[i:i + step].byteswap()
     data.flush()
     del data
@@ -865,26 +902,36 @@ def write_sws(dest_path: str,
     audio_size = os.path.getsize(audio_raw) if audio_raw else 0
     total      = SWS_HEADER_SIZE + fill_size + key_size + audio_size
 
-    if split_fat32 and total > FAT32_LIMIT:
-        # A split SWS keeps its sound (K-Watch's 961, 2026-10-11): it is the
-        # same stream, sound last, cut into parts. Decision F left it out while
-        # that layout was unknown.
-        _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log,
-                         audio_raw=audio_raw)
-    else:
-        with open(dest_path, 'wb') as out:
-            out.write(header)
-            _copy_file(fill_raw, out)
-            if key_raw:
-                _copy_file(key_raw, out)
-            if audio_raw:
-                _copy_file(audio_raw, out)
-        log(f"  Written: {dest_path}  ({total:,} bytes)")
+    try:
+        if split_fat32 and total > FAT32_LIMIT:
+            # A split SWS keeps its sound (K-Watch's 961, 2026-10-11): it is the
+            # same stream, sound last, cut into parts. Decision F left it out while
+            # that layout was unknown.
+            _write_sws_split(dest_path, fill_raw, key_raw, header, frame_count, log=log,
+                             audio_raw=audio_raw)
+        else:
+            with open(dest_path, 'wb') as out:
+                out.write(header)
+                _copy_file(fill_raw, out)
+                if key_raw:
+                    _copy_file(key_raw, out)
+                if audio_raw:
+                    _copy_file(audio_raw, out)
+            log(f"  Written: {dest_path}  ({total:,} bytes)")
+    except ConversionStopped:
+        # Never leave a cut-short clip under a real name. The name was checked
+        # free before the batch, so what is removed is this write alone.
+        if os.path.isdir(dest_path):
+            shutil.rmtree(dest_path, ignore_errors=True)
+        elif os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise
 
 
 def _copy_file(src: str, dest_fh):
     with open(src, 'rb') as f:
         while chunk := f.read(1024 * 1024):
+            _check_stop()
             dest_fh.write(chunk)
 
 

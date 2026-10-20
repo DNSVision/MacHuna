@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.17.1 — 2026-10-21
+
+**Stop stops.** Every finished output is unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.6.0 pins it.
+
+### Fixed
+- **Stop now stops the conversion in progress, within half a second, and leaves nothing behind** (David pressed Stop on a long conversion and "nothing happened"). `request_stop()` / `clear_stop()`: Stop kills the running ffmpeg, no new ffmpeg starts, and the long processing loops (the v210 byte-swap, the SWS write) stop where they are, raising `ConversionStopped`. A killed ffmpeg used to return as if it had finished, so the routes went on with its cut-short output; it now raises. An SWS whose writing is stopped is removed, never left short under its real name. Measured through MacHuna 2's bridge with a 30 s 1080p50 clip: before, EIF stopped 49 s after Stop and SWS and TGA Sequence ignored it and wrote their files; now every route stops in under 0.5 s, pressed at 1, 4, 9 or 15 s. Fail-first tests, each protection broken once and caught.
+
+---
+
 ## v1.17.0 — 2026-10-20
 
 **EIFs of any length, except on a FAT drive.** Every output under 4 GB is unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.6.0 pins it.

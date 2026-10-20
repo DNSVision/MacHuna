@@ -5461,6 +5461,76 @@ class TestSplitSwsAsSource(unittest.TestCase):
         self.assertTrue(np.array_equal(m._sws_stereo24(whole), m._sws_stereo24(split)))
 
 
+class TestStopStopsTheRowInFlight(unittest.TestCase):
+    """Stop kills the running ffmpeg (`_kill_current_ffmpeg`), and the route
+    must stop THERE. Until 2.6.0 the call simply returned, and the routes went
+    on to process the half-made picture as if it were whole: a clip to SWS
+    carried on byte-swapping it for 10 s, and some steps could write a short
+    file (David pressed Stop and "nothing happened")."""
+
+    def _long_ffmpeg(self, out):
+        return [m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-y', '-f', 'lavfi',
+                '-i', 'testsrc=size=1920x1080:rate=50:duration=60', '-f', 'rawvideo', out]
+
+    def test_a_killed_ffmpeg_raises_instead_of_returning(self):
+        import threading, time
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        caught = {}
+
+        def run():
+            try:
+                caught['result'] = m._run_ffmpeg(self._long_ffmpeg(os.path.join(d, 'x.raw')))
+            except Exception as e:      # noqa: BLE001 - the type is the point
+                caught['error'] = e
+
+        t = threading.Thread(target=run); t.start()
+        time.sleep(1.0)
+        m._kill_current_ffmpeg()
+        t.join(30)
+        self.assertNotIn('result', caught, 'a stopped ffmpeg returned as if it had finished')
+        self.assertIsInstance(caught.get('error'), m.ConversionStopped)
+
+    def test_after_stop_no_new_ffmpeg_starts_and_the_long_loops_stop(self):
+        import numpy as np
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        self.addCleanup(m.clear_stop)
+        raw = os.path.join(d, 'plane.raw')
+        np.zeros(40 * 1024 * 1024, dtype='<u4').tofile(raw)      # several byte-swap blocks
+        m.request_stop()
+        with self.assertRaises(m.ConversionStopped):
+            m._run_ffmpeg(self._long_ffmpeg(os.path.join(d, 'never.raw')))
+        self.assertFalse(os.path.exists(os.path.join(d, 'never.raw')), 'an ffmpeg started after Stop')
+        with self.assertRaises(m.ConversionStopped):
+            m._byteswap_v210(raw)
+        m.clear_stop()
+        m._byteswap_v210(raw)          # cleared, it runs as ever
+
+    def test_a_stopped_sws_write_leaves_no_file_under_its_name(self):
+        from unittest import mock
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        self.addCleanup(m.clear_stop)
+        fill = os.path.join(d, 'fill.raw'); open(fill, 'wb').write(b'\0' * (8 * 1024 * 1024))
+        dest = os.path.join(d, '12.SWS')
+        real = m._copy_file
+        def copy_then_stop(src, fh):
+            fh.write(b'partial')
+            m.request_stop()
+            real(src, fh)
+        with mock.patch.object(m, '_copy_file', copy_then_stop), self.assertRaises(m.ConversionStopped):
+            m.write_sws(dest, fill, None, b'H' * 512, split_fat32=False, frame_count=1, log=lambda *a: None)
+        self.assertFalse(os.path.exists(dest), 'a cut-short SWS was left under its real name')
+
+    def test_an_ordinary_run_is_untouched(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        r = m._run_ffmpeg([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-y', '-f', 'lavfi',
+                           '-i', 'testsrc=size=64x36:rate=25:duration=1', os.path.join(d, 'x.mov')])
+        self.assertEqual(r.returncode, 0)
+        # and a failing one still just reports its code, as before
+        r = m._run_ffmpeg([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', os.path.join(d, 'missing.mov'),
+                           os.path.join(d, 'y.mov')])
+        self.assertNotEqual(r.returncode, 0)
+
+
 class TestEifSizeLimit(unittest.TestCase):
     """An EIF's header holds where its picture ends in 32 bits (0x080), so
     past 517 frames at 1080 (about 10.3 s at 50fps) the field overflows.
