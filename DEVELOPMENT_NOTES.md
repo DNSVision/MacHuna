@@ -934,6 +934,14 @@ picture data to the last byte - almost certainly FAT32's 4 GB limit, with no war
 as EIF (David expects that to make an EIF), and the stick's format. Reading .isf in MacHuna would be easy, but not
 from a truncated sample.
 
+**Same day, exFAT:** saved cache -> the K-Frame's internal storage -> an exFAT stick. **The K-Frame reads exFAT and
+writes files over 4 GB to it**: 11,943,968,768 bytes, header plus exactly 1440 frames (`0912-exfat-full.isf`), still
+.isf after internal storage. Its picture matches the FAT32 export for the first 4 GB, but **only frames 0-1023 hold
+picture; 1025-1439 are zeros** (the data ends 1 MiB past frame 1024). The desk's own log explains it: "Error: Issue
+copying to C:\Images\...\0912.isf" - the save into internal storage failed partway - then "Copy Operation Completed"
+exported the incomplete file. The stick and the Mac copy are not at fault. Why the internal save failed (space, or a
+1024-frame store limit) is unknown. **Next:** export straight from the cache to the exFAT stick.
+
 ### EIF write CONFIRMED on a live K-Frame, 50fps (2026-10-07)
 
 MacHuna's `0901.eif` (untouched engine v1.11.0 output of KNOCKOUT_WIPE, flag `0x03`, no `.eaf`, blank thumbnail, no timestamp, 128-byte tail) loaded on the K-Frame at 1080p50 and, in David's words, **"looks identical to 900"**, the desk's own import of the same MOV. So none of the header items MacHuna leaves blank (FILETIME, thumbnail, `0x8DC`, the `0x3318` metadata block, the long tail) is required by the desk. **The 50fps EIF write path is hardware-confirmed**; the warning can come off for 50fps (engine change, after the session).
