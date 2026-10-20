@@ -949,6 +949,11 @@ internal save. **Still open, and the one that matters for MacHuna:** does a K-Fr
 (an EIF, or this .isf)? If it does, MacHuna could write EIFs longer than ~517 frames at 1080p50 to exFAT sticks (the
 32-bit video-end field wraps, as the desk's own does). A decision for after that test.
 
+**Then: the K-Frame imported the complete 12 GB .isf from the exFAT stick ("loaded fine", David).** Playing to the very
+end to be confirmed. **2.6 candidate, David's decision:** long EIFs (keyed, with sound) when the destination is exFAT or
+a Mac folder, the ~517-frame cap kept for FAT32 sticks with a message pointing to exFAT or QuickTime MOV. First a test
+build that writes an EIF over 4 GB (video end wrapped as the desk writes it) for David to load at a desk.
+
 ### EIF write CONFIRMED on a live K-Frame, 50fps (2026-10-07)
 
 MacHuna's `0901.eif` (untouched engine v1.11.0 output of KNOCKOUT_WIPE, flag `0x03`, no `.eaf`, blank thumbnail, no timestamp, 128-byte tail) loaded on the K-Frame at 1080p50 and, in David's words, **"looks identical to 900"**, the desk's own import of the same MOV. So none of the header items MacHuna leaves blank (FILETIME, thumbnail, `0x8DC`, the `0x3318` metadata block, the long tail) is required by the desk. **The 50fps EIF write path is hardware-confirmed**; the warning can come off for 50fps (engine change, after the session).
