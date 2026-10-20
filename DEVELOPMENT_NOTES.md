@@ -920,6 +920,20 @@ David renamed the source `0900.mov` (byte-identical to KNOCKOUT_WIPE.mov, checke
 - `0x3318`-`0x4753`: an `00db` chunk, the string `10.42.129.1` (an IP address, presumably the desk's), and `0xEE` fill. Not in the references; probably import metadata.
 - **Tail:** 1,305,708 bytes of `0x040101xx` words after video_end, about the size of the `.eaf` body. The audio-bearing 25fps references show the same pattern (tail = audio bytes + 108 to 140). MacHuna writes 128 bytes, which matches audio-less clips.
 
+### .isf - a Kayenne cache export (2026-10-20, 1080p50)
+
+David loaded a MacHuna MOV (made from an SWS) into a Kayenne, which accepted it, and exported it "from the cache to the
+stick": the desk wrote `0912.isf` (in `MacHuna-Swift/testmedia/desk/2026-10-20-kayenne/`). It is an EIF in all but
+name: the same header layout, magic `eba5 05 00` against the EIF's `eba5 04 00`; `EIFHeader`'s fields read it (flags
+0x60 = 3, frame count 0x6C = 1440, video start 0x70 = 0x8000, video end 0x80); the same 80x45 thumbnail AVI at 0xDC; no
+FILETIME at 0x58; pixels in the EIF 32-bit word format from 0x8000 (first word 0x3AC10200 = Y 64, C 512, key 940); no
+.eaf beside it. **The sample is truncated**: exactly 4 GiB - 1 MiB, about 517 of the 1440 frames the header claims,
+picture data to the last byte - almost certainly FAT32's 4 GB limit, with no warning from the desk; and the header's
+32-bit video-end field has wrapped (11,943,968,768 mod 2^32). The same 4 GB ceiling as MacHuna's EIF length limit.
+**Next desk visit:** a short (<10 s) clip exported as .isf AND the same clip saved into switcher memory and exported
+as EIF (David expects that to make an EIF), and the stick's format. Reading .isf in MacHuna would be easy, but not
+from a truncated sample.
+
 ### EIF write CONFIRMED on a live K-Frame, 50fps (2026-10-07)
 
 MacHuna's `0901.eif` (untouched engine v1.11.0 output of KNOCKOUT_WIPE, flag `0x03`, no `.eaf`, blank thumbnail, no timestamp, 128-byte tail) loaded on the K-Frame at 1080p50 and, in David's words, **"looks identical to 900"**, the desk's own import of the same MOV. So none of the header items MacHuna leaves blank (FILETIME, thumbnail, `0x8DC`, the `0x3318` metadata block, the long tail) is required by the desk. **The 50fps EIF write path is hardware-confirmed**; the warning can come off for 50fps (engine change, after the session).
