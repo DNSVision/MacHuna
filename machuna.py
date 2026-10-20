@@ -1828,8 +1828,44 @@ _EIF_AUDIO_EXT = bytes.fromhex(
 )
 
 
+_FAT_LARGEST_FILE = 0xFFFFFFFF     # 4 GB less one byte
+
+
+def _volume_is_fat(path: str) -> bool:
+    """Is `path` (or the folder it will be made in) on a FAT drive - FAT32,
+    FAT16 or FAT12, which hold no file over 4 GB? exFAT is not FAT here.
+
+    Asked of the file system itself (macOS statfs, Windows
+    GetVolumeInformationW), never guessed from a name. False when it cannot
+    tell; a write past 4 GB would then fail on its own."""
+    p = os.path.abspath(path)
+    while not os.path.exists(p) and os.path.dirname(p) != p:
+        p = os.path.dirname(p)
+    try:
+        import ctypes
+        if sys.platform == 'darwin':
+            buf = ctypes.create_string_buffer(2400)      # struct statfs (64-bit), with room
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.statfs(os.fsencode(p), buf) != 0:
+                return False
+            # f_fstypename[16] follows 72 bytes of counts and ids
+            return buf.raw[72:88].split(b'\0')[0].decode() == 'msdos'
+        if sys.platform == 'win32':
+            k32 = ctypes.windll.kernel32
+            root = ctypes.create_unicode_buffer(261)
+            if not k32.GetVolumePathNameW(p, root, 261):
+                return False
+            name = ctypes.create_unicode_buffer(261)
+            if not k32.GetVolumeInformationW(root, None, 0, None, None, None, name, 261):
+                return False
+            return name.value.upper() in ('FAT', 'FAT12', 'FAT16', 'FAT32')
+    except Exception:
+        return False
+    return False
+
+
 def _build_eif_header(clip_name: str, frame_count: int, fps: float,
-                       has_audio: bool = False) -> bytes:
+                       has_audio: bool = False, dest_dir: str = None) -> bytes:
     """Build 18260-byte EIF file header (Grass Valley K-Frame format).
 
     Confirmed on a live K-Frame on 2026-10-07, at 50fps and (with the 0x064
@@ -1847,16 +1883,17 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float,
     movi_tag = b'RIFFRIFF' if is_25 else b'\x00\x02\x01\x04\x00\x02\x01\x04'
 
     video_end = _EIF_HDR_SIZE + frame_count * 3 * _EIF_UNIT_BYTES
-    if video_end > 0xFFFFFFFF:
-        # 0x080 holds where the picture ends in 32 bits, so an EIF can describe
-        # at most this many 1080 frames (David, 2026-10-12: a 1,000-frame
-        # split SWS failed with Python's own struct error). Whether a K-Frame
-        # can hold more is unknown - every reference EIF is under 4 GB.
-        most = (0xFFFFFFFF - _EIF_HDR_SIZE) // (3 * _EIF_UNIT_BYTES)
+    if video_end > _FAT_LARGEST_FILE and dest_dir and _volume_is_fat(dest_dir):
+        # A FAT drive cannot hold a file over 4 GB, so an EIF there can be at
+        # most this many 1080 frames. Off FAT there is no limit: a K-Frame
+        # exported a 1440-frame, 11.9 GB clip to exFAT and played it back to
+        # the end (David, 2026-10-20). Refused before anything is written.
+        most = (_FAT_LARGEST_FILE - _EIF_HDR_SIZE) // (3 * _EIF_UNIT_BYTES)
         raise ValueError(
-            f"This clip is {frame_count:,} frames, and an EIF can hold at most "
-            f"{most} (about {most / 50:.1f} seconds at 50fps, {most / 25:.1f} at 25): its header "
-            f"records the clip's size in 32 bits. Nothing was written.")
+            f"This clip is {frame_count:,} frames, too long for an EIF on a FAT32 drive: "
+            f"FAT32 holds files up to 4 GB, which is {most} frames (about {most / 50:.1f} "
+            f"seconds at 50fps, {most / 25:.1f} at 25). Use an exFAT stick, which a K-Frame "
+            f"reads, or QuickTime MOV. Nothing was written.")
 
     buf = bytearray(_EIF_HDR_SIZE)
 
@@ -1871,7 +1908,9 @@ def _build_eif_header(clip_name: str, frame_count: int, fps: float,
     struct.pack_into('<I', buf, 0x064, 0x00010400 | unk064)
     struct.pack_into('<I', buf, 0x06C, frame_count)
     struct.pack_into('<I', buf, 0x070, _EIF_HDR_SIZE)        # video_start
-    struct.pack_into('<I', buf, 0x080, video_end)
+    # 32 bits: past 4 GB it WRAPS, exactly as a K-Frame writes it (its own
+    # 11.9 GB export, 2026-10-20). No reader uses it; they go by 0x06C.
+    struct.pack_into('<I', buf, 0x080, video_end & 0xFFFFFFFF)
     struct.pack_into('<I', buf, 0x0A8, 0x002D0050)           # thumbnail 80×45
     struct.pack_into('<I', buf, 0x0AC, 1)                    # thumbnail frame count
     struct.pack_into('<I', buf, 0x0B0, 0x00010000)
@@ -2091,7 +2130,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         clear = _clear_eif_frame(bool(key_path)) if starts or ends else b''
         stereo = _delay_sound(stereo, fps, clear_frames)
         header = _build_eif_header(clip_name, frame_count + starts + ends, fps,
-                                   has_audio=stereo is not None)
+                                   has_audio=stereo is not None, dest_dir=dest_dir)
         try:
             key_fh = open(key_path, 'rb') if key_path else None
             try:
@@ -2159,7 +2198,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     clear = _clear_eif_frame(keyed) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
     header = _build_eif_header(clip_name[:31].upper(), frame_count + starts + ends, fps,
-                               has_audio=stereo is not None)
+                               has_audio=stereo is not None, dest_dir=dest_dir)
     try:
         with _open_eif_output(dest_path) as out_fh:
             out_fh.write(header)
@@ -2246,7 +2285,7 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     clear = _clear_eif_frame(bool(h.has_key)) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
     header   = _build_eif_header(stem[:31].upper(), out_count + starts + ends, fps,
-                                 has_audio=stereo is not None)
+                                 has_audio=stereo is not None, dest_dir=dest_dir)
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count
 

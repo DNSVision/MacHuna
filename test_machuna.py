@@ -5462,32 +5462,78 @@ class TestSplitSwsAsSource(unittest.TestCase):
 
 
 class TestEifSizeLimit(unittest.TestCase):
-    """An EIF's header holds where its picture ends in 32 bits (0x080), so at
-    1080 it can describe at most 517 frames - about 10.3 seconds at 50fps.
-    David, 2026-10-12: a 1,000-frame split SWS to EIF failed with Python's own
-    "'I' format requires 0 <= number <= 4294967295". Longer clips are refused
-    in plain words before anything is written. (Whether a K-Frame has a way to
-    hold more is unknown: every reference EIF is under 4 GB.)"""
+    """An EIF's header holds where its picture ends in 32 bits (0x080), so
+    past 517 frames at 1080 (about 10.3 s at 50fps) the field overflows.
+    Until 2.6 MacHuna refused those. Then a K-Frame exported a 1440-frame,
+    11.9 GB .isf (an EIF with magic 05) to an exFAT stick with that field
+    WRAPPED, imported it back and played all 28.8 s (David, 2026-10-20). So the
+    field wraps here too, and the only real limit is a FAT drive's 4 GB file
+    size: there a long EIF is refused in plain words before anything is
+    written, pointing at exFAT or QuickTime MOV."""
 
-    def test_517_frames_fit_and_518_are_refused_in_plain_words(self):
-        m._build_eif_header('OK', 517, 50.0)
-        with self.assertRaises(ValueError) as cm:
-            m._build_eif_header('LONG', 518, 50.0)
+    LONG = 1440    # the desk's own long clip
+
+    def _fat(self, answer):
+        from unittest import mock
+        return mock.patch.object(m, '_volume_is_fat', return_value=answer)
+
+    def test_a_long_eif_header_wraps_its_end_field_as_the_desk_does(self):
+        import struct
+        hdr = m._build_eif_header('LONG', self.LONG, 50.0)
+        total = m._EIF_HDR_SIZE + self.LONG * 3 * m._EIF_UNIT_BYTES
+        self.assertGreater(total, 0xFFFFFFFF)
+        self.assertEqual(struct.unpack_from('<I', hdr, 0x06C)[0], self.LONG)
+        self.assertEqual(struct.unpack_from('<I', hdr, 0x080)[0], total & 0xFFFFFFFF,
+                         'the end field must wrap exactly as the K-Frame writes it')
+
+    def test_off_fat_any_length_is_allowed(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        with self._fat(False):
+            m._build_eif_header('LONG', self.LONG, 50.0, dest_dir=d)
+
+    def test_on_fat_517_fit_and_518_are_refused_in_plain_words(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        with self._fat(True):
+            m._build_eif_header('OK', 517, 50.0, dest_dir=d)
+            with self.assertRaises(ValueError) as cm:
+                m._build_eif_header('LONG', 518, 50.0, dest_dir=d)
         text = str(cm.exception)
-        self.assertIn('517', text)
+        for words in ('FAT32', 'exFAT', 'QuickTime MOV', 'Nothing was written'):
+            self.assertIn(words, text)
         self.assertNotIn("'I' format", text)
 
-    def test_a_long_sequence_is_refused_before_anything_is_written(self):
+    def test_a_long_sequence_onto_fat_is_refused_before_anything_is_written(self):
         from PIL import Image
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
         frame = os.path.join(d, 'F_0000.tga')
         Image.new('RGBA', (16, 9), (1, 2, 3, 255)).save(frame)
         out = os.path.join(d, 'out'); os.makedirs(out)
-        with self.assertRaises(ValueError) as cm:
+        with self._fat(True), self.assertRaises(ValueError) as cm:
             m.convert_tga_seq_to_eif([frame] * 1000, out, 'LONG', 50.0, log=lambda *a: None,
                                      out_name='0001')
         self.assertIn('1,000 frames', str(cm.exception))
         self.assertEqual(os.listdir(out), [], 'nothing written, not even a partial file')
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('hdiutil'), 'macOS disk images')
+    def test_fat_is_told_from_exfat_and_apfs_on_real_volumes(self):
+        """Measured on real file systems, not by name: two small disk images
+        made and mounted in a scratch folder, never a real drive."""
+        import subprocess
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        self.assertFalse(m._volume_is_fat(d), 'the Mac disk (APFS) is not FAT')
+        for fs, want in (('MS-DOS FAT32', True), ('ExFAT', False)):
+            img = os.path.join(d, fs.split()[-1] + '.dmg')
+            mnt = os.path.join(d, 'mnt-' + fs.split()[-1])
+            os.makedirs(mnt)
+            subprocess.run(['hdiutil', 'create', '-quiet', '-size', '64m', '-fs', fs,
+                            '-volname', 'MHTEST', img], check=True, stdin=subprocess.DEVNULL)
+            subprocess.run(['hdiutil', 'attach', '-quiet', '-nobrowse', '-mountpoint', mnt, img],
+                           check=True, stdin=subprocess.DEVNULL)
+            try:
+                inner = os.path.join(mnt, 'not', 'made', 'yet')   # a destination still to be created
+                self.assertEqual(m._volume_is_fat(inner), want, fs)
+            finally:
+                subprocess.run(['hdiutil', 'detach', '-quiet', mnt], stdin=subprocess.DEVNULL)
 
 
 class TestMovIgnoreKey(unittest.TestCase):
