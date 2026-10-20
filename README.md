@@ -35,6 +35,7 @@ Converted files are placed into a destination folder, ready to be loaded onto a 
 - Include/exclude audio option
 - **Sound for any clip** (v1.13.0) - the engine takes a separate sound file for any TGA sequence, clip, SWS or EIF (`sound_file=`), as Kahuna Manager's Add Audio does; MacHuna 2 offers it in the interface. An SWS keeps a sound's own length, as Kahuna Manager writes it; an EIF's `.eaf` is fitted to the picture, as the K-Frame does
 - Auto play and Loop play flags baked into the SWS header at conversion time
+- **EIFs of any length** (v1.17.0) - the 517-frame limit (4 GB) applies only when writing to a FAT drive; a K-Frame reads exFAT and plays a long clip from it
 - **Ignore key for QuickTime MOV** (v1.16.0) - `no_alpha=` on every MOV route writes ProRes 4444 with no alpha channel at all, not a solid white one
 - **Clear frames** (v1.15.0) - `clear_frames=` adds one transparent frame (black, key off; black for a keyless clip) at the start, end or both of every output, the sound kept in sync; for wipes supplied starting and ending on vision
 - **Split SWS files can be converted** (v1.15.0) - a split folder, or any part in it, reads as one SWS on every route; an old MacHuna split keeps its key

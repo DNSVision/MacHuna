@@ -4,6 +4,16 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.17.0 — 2026-10-20
+
+**EIFs of any length, except on a FAT drive.** Every output under 4 GB is unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.6.0 pins it.
+
+### Changed
+- **The 517-frame EIF limit now applies only on a FAT drive** (David, 2026-10-20). An EIF's header holds where its picture ends in 32 bits, so past 517 frames at 1080 (about 10.3 seconds at 50fps) the field overflows, and MacHuna refused such clips. Then a K-Frame exported a 1440-frame, 11.9 GB clip (its `.isf`, an EIF with magic 05) to an exFAT stick with that field WRAPPED, imported it back and played all 28.8 seconds. So the field now wraps the same way (no reader uses it; they go by the frame count), and the refusal stays only where the limit is real: a FAT32, FAT16 or FAT12 drive, which holds no file over 4 GB. exFAT is not FAT here. The file system is asked of the system itself (`statfs` on macOS, `GetVolumeInformationW` on Windows), never guessed from a name; the message points at an exFAT stick or QuickTime MOV, and nothing is written.
+- **Proof:** fail-first tests; the FAT32 / exFAT / APFS test mounts two small disk images in a scratch folder and fails when detection is broken; a 1500-frame (30 s) keyed EIF with sound, 12.4 GB, written through MacHuna 2's bridge and read back: frame count, the wrapped field, the .eaf (1,440,000 samples, 30.00 s), and the picture and key of the last frame.
+
+---
+
 ## v1.16.1 — 2026-10-20
 
 **Finished EIFs no longer go missing in an iCloud folder.** The files MacHuna writes are unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.5.6 pins it.
