@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.16.1 — 2026-10-20
+
+**Finished EIFs no longer go missing in an iCloud folder.** The files MacHuna writes are unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.5.6 pins it.
+
+### Fixed
+- **An unfinished EIF is written inside a hidden folder, not as a hidden file** (David, 2026-10-20). Since v1.12.0 (Decision L) an EIF and its .eaf were written as `.<name>.partial` and renamed when complete. In a folder iCloud syncs (Desktop and Documents, when "Desktop & Documents Folders" is on), iCloud marks a dot-named file hidden, sometimes seconds later, and the mark survives the rename, so finished EIFs vanished from Finder and could not be dragged. They now go in `<destination>/.machuna-partial/<name>.partial`, under a plain name, and the folder is removed once empty. Measured through MacHuna 2's bridge in an iCloud folder: v1.16.0 left 7 of 12 EIFs hidden, this none of 18; the same rename outside iCloud never hid anything. Fail-first test on all three EIF routes; breaking the folder's clean-up fails 20 existing tests.
+
+---
+
 ## v1.16.0 — 2026-10-18
 
 **Ignore key for QuickTime MOV, and three fixes found while building the PC version.** Every Mac output is unchanged unless Ignore key is ticked for a MOV: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.5.5 pins it.
