@@ -949,8 +949,8 @@ internal save. **Still open, and the one that matters for MacHuna:** does a K-Fr
 (an EIF, or this .isf)? If it does, MacHuna could write EIFs longer than ~517 frames at 1080p50 to exFAT sticks (the
 32-bit video-end field wraps, as the desk's own does). A decision for after that test.
 
-**Then: the K-Frame imported the complete 12 GB .isf from the exFAT stick ("loaded fine", David).** Playing to the very
-end to be confirmed. **2.6 candidate, David's decision:** long EIFs (keyed, with sound) when the destination is exFAT or
+**Then: the K-Frame imported the complete 12 GB .isf from the exFAT stick ("loaded fine", David)** and played to the very
+end, all 28.8 s (David). **2.6 candidate, David's decision:** long EIFs (keyed, with sound) when the destination is exFAT or
 a Mac folder, the ~517-frame cap kept for FAT32 sticks with a message pointing to exFAT or QuickTime MOV. First a test
 build that writes an EIF over 4 GB (video end wrapped as the desk writes it) for David to load at a desk.
 
