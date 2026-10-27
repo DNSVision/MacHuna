@@ -4,6 +4,15 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.18.0 — 2026-10-27
+
+**Your own description for an EIF.** Every output is unchanged unless a description is given: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.7.0 pins it.
+
+### Added
+- **`description` on every EIF writer** (`convert_clip_to_eif`, `convert_tga_seq_to_eif`, `convert_sws_to_eif`). The clip name in an EIF's header is what a K-Frame shows as the clip's description, and it was always the source's file name; a K-Frame user asked to type a shorter one for long names (2026-10-27). Given, it replaces the file name; blank or absent, the file name, exactly as before. Either way in capitals and at most 31 characters (`_eif_description`). The file name (0001.eif) is unchanged. Fail-first tests through all three writers, read back from the file; the feature broken once and caught.
+
+---
+
 ## v1.17.1 — 2026-10-21
 
 **Stop stops.** Every finished output is unchanged: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.6.0 pins it.

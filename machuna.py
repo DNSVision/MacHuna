@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.17.1"
+VERSION = "1.18.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1911,6 +1911,15 @@ def _volume_is_fat(path: str) -> bool:
     return False
 
 
+def _eif_description(description, fallback: str) -> str:
+    """The clip name an EIF carries, which a K-Frame shows as its description:
+    the typed description if there is one, else the file name (as it always
+    was), in capitals and at most 31 characters. A K-Frame user asked to type
+    a shorter one than a long source name (2026-10-27)."""
+    text = (description or '').strip() or fallback
+    return text[:31].upper()
+
+
 def _build_eif_header(clip_name: str, frame_count: int, fps: float,
                        has_audio: bool = False, dest_dir: str = None) -> bytes:
     """Build 18260-byte EIF file header (Grass Valley K-Frame format).
@@ -2113,11 +2122,13 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          cancel_event=None, out_name: str = None,
                          include_audio: bool = True,
                          sound_file: str = None,
-                         clear_frames: str = None) -> str:
+                         clear_frames: str = None,
+                         description: str = None) -> str:
     """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format, with its
     .eaf audio when the source has sound. Confirmed on a live K-Frame,
     2026-10-07. sound_file: a sound to carry instead (2026-10-11), fitted to
-    the picture as every .eaf is.
+    the picture as every .eaf is. description: what the K-Frame shows for the
+    clip; blank means the file name (`_eif_description`).
     """
     if Path(input_path).suffix.lower() in _STILL_EXTS:
         # Settled: stills convert to Kahuna SWS only. The apps block this; the
@@ -2139,7 +2150,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         log(f"  Note: source {fps_in:.3g}fps → EIF {fps:.0f}fps")
 
     stem      = Path(input_path).stem
-    clip_name = stem[:31].upper()
+    clip_name = _eif_description(description, stem)
     dest_path = os.path.join(dest_dir, (out_name or stem) + '.eif')
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2215,9 +2226,11 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              out_name: str = None,
                              source_interlaced: bool = False,
                              sound_file: str = None,
-                             clear_frames: str = None) -> str:
+                             clear_frames: str = None,
+                             description: str = None) -> str:
     """Convert a TGA sequence to K-Frame EIF format, with sound_file in an
     .eaf if given (2026-10-11), fitted to the picture as the K-Frame does.
+    description: what the K-Frame shows; blank means clip_name, as before.
 
     An interlaced sequence is written the way a K-Frame stores 50i: the woven
     frames as they are, at 25fps. Desk session 2026-10-07: the desk's own
@@ -2244,7 +2257,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     keyed = bool(tga_files) and 'A' in Image.open(tga_files[0]).getbands()
     clear = _clear_eif_frame(keyed) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
-    header = _build_eif_header(clip_name[:31].upper(), frame_count + starts + ends, fps,
+    header = _build_eif_header(_eif_description(description, clip_name),
+                               frame_count + starts + ends, fps,
                                has_audio=stereo is not None, dest_dir=dest_dir)
     try:
         with _open_eif_output(dest_path) as out_fh:
@@ -2288,11 +2302,12 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None,
                         include_audio: bool = True,
                         sound_file: str = None,
-                        clear_frames: str = None) -> str:
+                        clear_frames: str = None,
+                        description: str = None) -> str:
     """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
     into an .eaf. Same header and picture encoder as the desk-confirmed MOV
     route. sound_file: a sound to carry instead (2026-10-11), fitted to the
-    picture.
+    picture. description: what the K-Frame shows; blank means the file name.
     """
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     h    = HulaSWSHeader(sws_path)
@@ -2331,7 +2346,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     starts, ends = _clear_counts(clear_frames)
     clear = _clear_eif_frame(bool(h.has_key)) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
-    header   = _build_eif_header(stem[:31].upper(), out_count + starts + ends, fps,
+    header   = _build_eif_header(_eif_description(description, stem),
+                                 out_count + starts + ends, fps,
                                  has_audio=stereo is not None, dest_dir=dest_dir)
     fill_off = h.data_offset
     key_off  = h.data_offset + h.plane_size * h.frame_count

@@ -5770,3 +5770,67 @@ class TestMovIgnoreKeyThroughTheBatchRunner(TestMovIgnoreKey):
 
     def test_clear_frames_without_alpha_are_opaque_black(self):
         pass  # the TGA route, tested directly above
+
+
+class TestEifDescription(unittest.TestCase):
+    """The description a K-Frame shows for an EIF is the clip name in its
+    header (0x004, 31 characters). It was always the source's file name; a
+    K-Frame user asked to type a shorter one (2026-10-27). Every EIF writer
+    takes `description`; given, it replaces the file name, in capitals and cut
+    to 31 as before; blank or absent, the file name, exactly as before.
+    Read back from the file on disk, through all three writers."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.q = lambda *a, **k: None
+        import subprocess
+        self.mov = os.path.join(self.tmp, 'Wipe_Long_Source_Name_For_Testing.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=50', '-frames:v', '2',
+                        '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le',
+                        self.mov], check=True)
+        from PIL import Image
+        self.tgas = []
+        for i in range(2):
+            p = os.path.join(self.tmp, f'SEQ_{i:04d}.tga')
+            Image.new('RGBA', (1920, 1080), (40 * i, 80, 160, 255)).save(p)
+            self.tgas.append(p)
+        self.sws = m.convert_tga_sequence(self.tgas, 7, self.tmp, '1080p50', log=self.q,
+                                          write_log=False)
+
+    def _write(self, route, n, **kw):
+        d = os.path.join(self.tmp, f'{route}{n}')
+        os.makedirs(d)
+        if route == 'clip':
+            return m.convert_clip_to_eif(self.mov, d, log=self.q, out_name='0001', **kw)
+        if route == 'tga':
+            return m.convert_tga_seq_to_eif(self.tgas, d, 'SEQ', 50.0, log=self.q,
+                                            out_name='0001', **kw)
+        return m.convert_sws_to_eif(self.sws, d, log=self.q, out_name='0001', **kw)
+
+    def _name(self, path):
+        return m.EIFHeader(path).clip_name
+
+    def test_a_typed_description_is_what_the_desk_shows(self):
+        for n, route in enumerate(('clip', 'tga', 'sws')):
+            with self.subTest(route=route):
+                made = self._write(route, n, description='Aja opener')
+                self.assertEqual(self._name(made), 'AJA OPENER')
+                self.assertEqual(os.path.basename(made), '0001.eif', 'the file name is unchanged')
+
+    def test_a_long_description_is_cut_to_31(self):
+        for n, route in enumerate(('clip', 'tga', 'sws')):
+            with self.subTest(route=route):
+                made = self._write(route, 10 + n, description='x' * 40)
+                self.assertEqual(self._name(made), 'X' * 31)
+
+    def test_blank_or_absent_keeps_the_file_name(self):
+        want = {'clip': 'WIPE_LONG_SOURCE_NAME_FOR_TESTING', 'tga': 'SEQ', 'sws': '7'}
+        for n, route in enumerate(('clip', 'tga', 'sws')):
+            for k, kw in enumerate(({}, {'description': ''}, {'description': '   '})):
+                with self.subTest(route=route, kw=kw):
+                    made = self._write(route, 20 + 3 * n + k, **kw)
+                    self.assertEqual(self._name(made), want[route][:31])
