@@ -2573,9 +2573,19 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
 # ─────────────────────────────────────────────────────────────
 
 # Matches generic TGA sequence frames: base name + optional separator + frame number
-# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  FEDX0000.tga
-_GENERIC_TGA_RE = re.compile(r'^(.+?)(?:[._-]?)(\d+)$')
+# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  FEDX0000.tga  0001.tga
+# The base may be EMPTY: frames named only with numbers (000.tga ... 229.tga)
+# are one sequence. It was `.+?`, which took the first digit as the base and
+# split such a folder at every hundred (a PC tester, 2026-10-28).
+_GENERIC_TGA_RE = re.compile(r'^(.*?)(?:[._-]?)(\d+)$')
 GENERIC_TGA_QUIET_SECS = 3.0
+
+
+def _sequence_name(base: str, first_frame: str) -> str:
+    """What a sequence is called: its base without trailing separators, or,
+    for frames named only with numbers, the folder they are in."""
+    name = (base or '').rstrip('._- ')
+    return name or os.path.basename(os.path.dirname(os.path.abspath(first_frame))) or 'CLIP'
 
 # ─────────────────────────────────────────────────────────────
 #  Video Player
@@ -5297,7 +5307,7 @@ def _scan_folder_unified(folder: str) -> tuple:
     for base, files in sequences:
         seq_items.append({
             'type': 'tga_seq', 'base': base, 'files': files,
-            'display': f"{base.rstrip('._- ')}  ({len(files)} frames)",
+            'display': f"{_sequence_name(base, files[0])}  ({len(files)} frames)",
         })
 
     has_sws    = bool(sws_items)

@@ -7,6 +7,7 @@ Run with:  /opt/homebrew/bin/python3.12 -m pytest test_machuna.py -v
 
 import json
 import os
+import re
 import shutil
 import struct
 import sys
@@ -5853,3 +5854,59 @@ class TestEifDescription(unittest.TestCase):
                 with self.subTest(route=route, kw=kw):
                     made = self._write(route, 20 + 3 * n + k, **kw)
                     self.assertEqual(self._name(made), want[route][:31])
+
+
+class TestNumbersOnlySequences(unittest.TestCase):
+    """A folder of frames named only with numbers is one sequence (a PC
+    tester, 2026-10-28): 000.tga to 229.tga used to become sequences "0", "1"
+    and "2", split at each hundred, because the first digit was taken as the
+    sequence's name. Such a sequence is named after its folder."""
+
+    # The rule as it was, to prove names with letters group exactly as before.
+    OLD = re.compile(r'^(.+?)(?:[._-]?)(\d+)$')
+
+    def _folder(self, names):
+        d = tempfile.mkdtemp(prefix='ARTE_')
+        self.addCleanup(shutil.rmtree, d, True)
+        for n in names:
+            open(os.path.join(d, n), 'wb').close()
+        return d
+
+    def test_numbers_only_folder_is_one_sequence(self):
+        d = self._folder([f'{i:03d}.tga' for i in range(230)])
+        seqs = m._find_tga_sequences(d)
+        self.assertEqual(len(seqs), 1, [b for b, _ in seqs])
+        self.assertEqual(len(seqs[0][1]), 230)
+        self.assertEqual(os.path.basename(seqs[0][1][0]), '000.tga')
+        self.assertEqual(os.path.basename(seqs[0][1][-1]), '229.tga')
+
+    def test_numbers_only_first_frame_finds_them_all(self):
+        d = self._folder([f'{i:03d}.tga' for i in range(150)])
+        files = m._tga_sequence_files(os.path.join(d, '000.tga'))
+        self.assertEqual(len(files), 150)
+
+    def test_numbers_only_named_after_its_folder(self):
+        d = self._folder(['000.tga', '001.tga'])
+        base = m._find_tga_sequences(d)[0][0]
+        self.assertEqual(m._sequence_name(base, os.path.join(d, '000.tga')),
+                         os.path.basename(d))
+
+    def test_named_sequences_keep_their_name(self):
+        for base, want in (('ARTE_', 'ARTE'), ('STING', 'STING'), ('clip.', 'clip')):
+            self.assertEqual(m._sequence_name(base, '/x/FOLDER/f.tga'), want)
+
+    def test_names_with_letters_group_as_before(self):
+        names = ['STING0001', 'REPLAY1_100_0001', 'shot1_0001', 'A1', 'clip.0001',
+                 'x-12', 'Gen_E_Agora_00001', 'ARTE_000', 'v2_final_010', 'B_0', 'a1b2c3']
+        for n in names:
+            with self.subTest(name=n):
+                self.assertEqual(m._GENERIC_TGA_RE.match(n).groups(), self.OLD.match(n).groups())
+
+    def test_numbers_beside_a_named_sequence_stay_apart(self):
+        d = self._folder(['ARTE_000.tga', 'ARTE_001.tga', '000.tga', '001.tga'])
+        seqs = sorted((b, len(f)) for b, f in m._find_tga_sequences(d))
+        self.assertEqual(seqs, [('', 2), ('ARTE', 2)])
+
+    def test_a_lone_numbered_still_is_not_a_sequence(self):
+        d = self._folder(['0230.tga'])
+        self.assertEqual(m._find_tga_sequences(d), [])
