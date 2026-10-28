@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased (v1.20.0)
+
+### Changed
+- **A picture that is not 16:9 is placed in the frame, not stretched** (decision 68.2, from a PC tester's report). Kahuna SWS, K-Frame EIF, K-Frame TGA and Sony TGA stretched every picture to 1920x1080: a 608x32 strip filled the screen, 4:3 video came out wide. Now, judged by the shape on screen (`get_video_info` reads the sample aspect, so 1440x1080 HDV and 720x576 widescreen still fill): a still or sequence is centred at its own size, shrunk to fit if bigger, as Kahuna Manager places a graphic; a clip is fitted with bars. Around a picture with a key is clear; around one without is black and no key is added (David). One rule, `_fit_on_frame`, and one filter, `_fit_filter`, used by every route (stills, clips and sequences to SWS, clips and sequences to EIF, clips to K-Frame and Sony TGA). TGA Sequence and MOV keep the source's own size, unchanged. 16:9 is untouched: the parity kit gives 44 of 44 identical. Measured on the files for every route, with the key's position checked against the picture's; every route test fails on v1.19.0.
+
+---
+
 ## v1.19.0 — 2026-10-28
 
 **From a PC tester's report, item by item, each tested by David on his Mac.** SWS clip names keep their first letter on a Kahuna; frames named only with numbers and numbered PNGs are sequences; 25p clips to an interlaced standard are kept frame for frame (PsF); the TGA rate (50 | 25i | 25p) for TGA sequences, with K-Frame EIF weaving a 50p render for an interlaced desk; a row converted again replaces its own untouched output; several PNG stills that failed now convert. Parity kit: the 25 non-SWS cases identical, the 19 SWS cases differing in the clip name only (by design). MacHuna 2.8.0 pins it.

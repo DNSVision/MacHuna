@@ -632,6 +632,14 @@ def get_video_info(input_path: str) -> dict:
         if stream.get('codec_type') == 'video':
             info['width'] = stream.get('width', 0)
             info['height'] = stream.get('height', 0)
+            # Sample aspect: a pixel's width over its height (1440x1080 HDV
+            # and 720x576 widescreen are 16:9 on screen with SAR 4:3 and
+            # 64:45). Decides where a picture sits in the frame (`_fit_on_frame`).
+            try:
+                sn, sd = (stream.get('sample_aspect_ratio') or '1:1').split(':')
+                info['sar'] = float(sn) / float(sd) if float(sn) > 0 and float(sd) > 0 else 1.0
+            except (ValueError, ZeroDivisionError):
+                info['sar'] = 1.0
 
             # Frame rate
             fps_str = stream.get('r_frame_rate', '25/1')
@@ -697,11 +705,56 @@ def get_video_info(input_path: str) -> dict:
     return info
 
 
+def _fit_on_frame(w: int, h: int, sar: float = 1.0, whole: bool = False):
+    """Where a picture sits in a 1920x1080 frame (decision 68.2, a PC tester's
+    report, 2026-10-28). Until v1.20.0 every desk format stretched every
+    picture to fill the frame: a 608x32 strip, a 200x200 logo, 4:3 video.
+
+    None when the picture is 16:9 on screen (sample aspect included, so 1440x1080
+    HDV and 720x576 widescreen still fill): the caller scales to 1920x1080
+    exactly as it always has, so those outputs are unchanged.
+
+    Otherwise (sw, sh, x, y): scale to sw x sh square pixels and place it at
+    (x, y). A still or sequence (whole=True) keeps its own size when it fits,
+    as Kahuna Manager places a graphic, and is shrunk to fit when it does not;
+    a clip is fitted (bars). Centred on even rows and columns, so an
+    interlaced picture keeps its field order. A picture kept at its own size
+    is not resized at all, not even by a pixel.
+    """
+    sar = sar or 1.0
+    dw = w * sar
+    if abs(dw / h - 16 / 9) <= 0.01 * 16 / 9:
+        return None
+    if whole and sar == 1.0 and w <= 1920 and h <= 1080:
+        sw, sh = w, h
+    else:
+        k = min(1920 / dw, 1080 / h) if not whole or dw > 1920 or h > 1080 else 1.0
+        sw = min(1920, max(2, int(round(dw * k / 2)) * 2))
+        sh = min(1080, max(2, int(round(h * k / 2)) * 2))
+    return sw, sh, (1920 - sw) // 4 * 2, (1080 - sh) // 4 * 2
+
+
+def _fit_filter(fit, interlaced: bool = False, clear: bool = False, bitexact: bool = False) -> str:
+    """The ffmpeg filters that put a picture where `_fit_on_frame` says: scaled
+    if its size changes (each field on its own when interlaced), then padded
+    to 1920x1080 with black. Padding a key with black makes it clear there,
+    so a keyed picture is transparent around it; a picture with no key gets
+    black around it and no key (David, option a). `clear` pads with
+    transparent black, for a picture that carries its key in its own alpha
+    (the TGA outputs); `bitexact` keeps those routes' cross-processor scaling."""
+    sw, sh, x, y = fit
+    parts = [f'scale={sw}:{sh}' + (':interl=1' if interlaced else '')
+             + (':flags=bitexact' if bitexact else '') + ',setsar=1']
+    if (sw, sh) != (1920, 1080):
+        parts.append(f'pad=1920:1080:{x}:{y}:' + ('black@0' if clear else 'black'))
+    return ','.join(parts)
+
+
 def convert_to_v210(input_path: str, output_path: str,
                     extract_alpha: bool = False,
                     width: int = 0, height: int = 0,
                     vf_extra: str = '', interlaced: bool = False,
-                    assume_709: bool = False):
+                    assume_709: bool = False, fit=None):
     """Convert input to raw v210 using ffmpeg, then byte-swap to big-endian.
 
     ffmpeg outputs v210 as little-endian 32-bit words.
@@ -718,8 +771,13 @@ def convert_to_v210(input_path: str, output_path: str,
     vf_parts = [_UNTAGGED_HD_AS_709] if assume_709 else []
     # interlaced: scale each field on its own, or resizing blends the two
     # moments in time together (2026-10-08).
-    scale = f'scale={width}:{height}' + (':interl=1' if interlaced else '')
-    if width and height:
+    # fit (decision 68.2): a picture that is not 16:9 is placed in the frame by
+    # `_fit_on_frame` instead of being stretched to width x height. The same
+    # filters go on the key below, so picture and key move together.
+    scale = _fit_filter(fit, interlaced) if fit else \
+        f'scale={width}:{height}' + (':interl=1' if interlaced else '')
+    sized = bool(fit) or bool(width and height)
+    if sized:
         vf_parts.append(scale)
     if vf_extra:
         vf_parts.append(vf_extra)
@@ -738,7 +796,7 @@ def convert_to_v210(input_path: str, output_path: str,
         # Scale the key exactly as the fill. Without this a keyed source that was
         # not already the output size gave a source-sized key under a scaled
         # fill, and EIF output crashed reading past its end (found 2026-10-08).
-        if width and height:
+        if sized:
             vf_key += f',{scale}'
         if vf_extra:
             vf_key += f',{vf_extra}'
@@ -749,7 +807,7 @@ def convert_to_v210(input_path: str, output_path: str,
         if result.returncode != 0 or not os.path.exists(alpha_path) or os.path.getsize(alpha_path) == 0:
             # Simpler fallback
             vf_key_fallback = 'alphaextract'
-            if width and height:
+            if sized:
                 # The first chain fails on a source with no colour label, landing
                 # here. Unscaled, ffmpeg's own conversion to v210 puts the key in
                 # legal range; an explicit resize skips that, and a hard edge
@@ -766,7 +824,7 @@ def convert_to_v210(input_path: str, output_path: str,
                        '-vf', vf_key_fallback,
                        '-f', 'rawvideo', '-vcodec', 'v210', alpha_path]
             _run_ffmpeg(cmd_key, check=True)
-            if width and height:
+            if sized:
                 _clamp_v210_key(alpha_path)
         _byteswap_v210(alpha_path)
         return alpha_path
@@ -1073,6 +1131,10 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         has_alpha = info['has_alpha'] and not ignore_alpha
         log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
         rescale = (w, h) != (1920, 1080)            # decision G
+        # Decision 68.2: a still that is not 16:9 is centred at its own size.
+        fit = _fit_on_frame(w, h, info.get('sar', 1.0), whole=True) if rescale else None
+        if fit:
+            log(f"  {w}×{h} is not 16:9: placed at {fit[0]}×{fit[1]}, centred in 1920×1080")
         # A grey or palette PNG is read as its TGA twin would be
         # (`_open_frame`): in 2.7.0 grey and palette stills failed to convert,
         # and a grey-with-alpha still's key edges sat a pixel out (2026-10-28).
@@ -1081,7 +1143,7 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             plain = os.path.join(tmp, 'still.png')
             if _png_frame_for_ffmpeg(input_path, plain):
                 read_path = plain
-        key_raw = convert_to_v210(read_path, fill_raw, extract_alpha=has_alpha,
+        key_raw = convert_to_v210(read_path, fill_raw, extract_alpha=has_alpha, fit=fit,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0)
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
@@ -1343,8 +1405,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         # Decision G (David, 2026-10-08): every SWS is 1920x1080, as every
         # standard MacHuna offers is. Full-HD sources are not touched.
         rescale = (w, h) != (1920, 1080)
+        # Decision 68.2: a clip that is not 16:9 on screen is fitted, not stretched.
+        fit = _fit_on_frame(w, h, info.get('sar', 1.0)) if rescale else None
+        if fit:
+            log(f"  {w}×{h} is not 16:9 on screen: fitted at {fit[0]}×{fit[1]}, centred in 1920×1080")
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
-                                  width=1920 if rescale else 0, height=1080 if rescale else 0,
+                                  width=1920 if rescale else 0, height=1080 if rescale else 0, fit=fit,
                                   interlaced=rescale and info.get('is_interlaced', False),
                                   assume_709=_assume_709_and_say(info, log))
         if rescale:
@@ -1628,8 +1694,15 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         # any interlace filter, one field at a time for interlaced frames.
         scale_vf = ''
         if (w, h) != (1920, 1080):
-            scale_vf = 'scale=1920:1080' + (':interl=1' if source_interlaced else '')
-            log(f"  Scaling {w}×{h} → 1920×1080")
+            # Decision 68.2: a sequence that is not 16:9 is centred at its own
+            # size (a graphic, as Kahuna Manager places it), not stretched.
+            fit = _fit_on_frame(w, h, whole=True)
+            if fit:
+                scale_vf = _fit_filter(fit, source_interlaced)
+                log(f"  {w}×{h} is not 16:9: placed at {fit[0]}×{fit[1]}, centred in 1920×1080")
+            else:
+                scale_vf = 'scale=1920:1080' + (':interl=1' if source_interlaced else '')
+                log(f"  Scaling {w}×{h} → 1920×1080")
         fill_vf = ','.join(f for f in (scale_vf, vf_tinterlace) if f)
         cmd = [ffmpeg, '-y'] + tga_input
         if fill_vf:
@@ -2266,8 +2339,14 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
         # frames written match the fps in the header (Fix 14), the same frames
         # for fill and key. They are picked by _pick_frames (decision H), not
         # ffmpeg's fps filter, which chose differently at 59.94/29.97.
+        # Decision 68.2: a clip that is not 16:9 on screen is fitted, not stretched.
+        fit = _fit_on_frame(info['width'], info['height'], info.get('sar', 1.0)) \
+            if (info['width'], info['height']) != (1920, 1080) else None
+        if fit:
+            log(f"  {info['width']}×{info['height']} is not 16:9 on screen: fitted at "
+                f"{fit[0]}×{fit[1]}, centred in 1920×1080")
         key_path  = convert_to_v210(input_path, fill_v210,
-                                    width=1920, height=1080,
+                                    width=1920, height=1080, fit=fit,
                                     extract_alpha=info['has_alpha'],
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
@@ -2397,6 +2476,26 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
             out_fh.write(clear * starts)
             def rgba_of(path):
                 img = _open_frame(path)   # a PNG reads exactly as its TGA twin
+                fit = _fit_on_frame(*img.size, whole=True) if img.size != (1920, 1080) else None
+                if fit:
+                    # Decision 68.2: not 16:9, so centred at its own size (shrunk
+                    # if bigger), on transparent if the frames have a key and on
+                    # black with no key if they do not; fields scaled apart.
+                    sw, sh, x, y = fit
+                    a = np.asarray(img.convert('RGBA'))
+                    if (sw, sh) != img.size:
+                        if source_interlaced:
+                            a2 = np.empty((sh, sw, 4), dtype=np.uint8)
+                            a2[0::2] = np.asarray(Image.fromarray(a[0::2], 'RGBA').resize((sw, sh // 2), Image.BILINEAR))
+                            a2[1::2] = np.asarray(Image.fromarray(a[1::2], 'RGBA').resize((sw, sh // 2), Image.BILINEAR))
+                            a = a2
+                        else:
+                            a = np.asarray(Image.fromarray(a, 'RGBA').resize((sw, sh), Image.BILINEAR))
+                    canvas = np.zeros((1080, 1920, 4), dtype=np.uint8)
+                    if not keyed:
+                        canvas[..., 3] = 255
+                    canvas[y:y + sh, x:x + sw] = a
+                    return canvas
                 if img.size != (1920, 1080):
                     if source_interlaced:
                         # Scale each field on its own, then weave them back, so the
@@ -4621,8 +4720,15 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     vf = [_UNTAGGED_HD_AS_709] if _assume_709_and_say(info, log) else []
     if (info.get('width'), info.get('height')) != (1920, 1080):
         fields = info.get('is_interlaced', False) and not interlaced
-        vf.append('scale=1920:1080' + (':interl=1' if fields else '') + ':flags=bitexact')
-        log(f"  Scaling {info.get('width')}×{info.get('height')} → 1920×1080")
+        # Decision 68.2: a clip that is not 16:9 on screen is fitted, not stretched.
+        fit = _fit_on_frame(info['width'], info['height'], info.get('sar', 1.0))
+        if fit:
+            vf.append(_fit_filter(fit, fields, clear=info.get('has_alpha', False), bitexact=True))
+            log(f"  {info['width']}×{info['height']} is not 16:9 on screen: fitted at "
+                f"{fit[0]}×{fit[1]}, centred in 1920×1080")
+        else:
+            vf.append('scale=1920:1080' + (':interl=1' if fields else '') + ':flags=bitexact')
+            log(f"  Scaling {info.get('width')}×{info.get('height')} → 1920×1080")
     else:
         vf.append(_SCALE_BITEXACT)
 

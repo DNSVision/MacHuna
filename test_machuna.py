@@ -6383,3 +6383,172 @@ class TestTgaRate(unittest.TestCase):
                 hdr, frames = self._eif(self._files(self.src), 25.0, source_rate=rate, interlaced_out=True)
                 self.assertEqual(hdr.frame_count, self.N)
                 self.assertTrue(all(np.array_equal(x, y) for x, y in zip(frames, before)))
+
+
+class TestFitOnFrame(unittest.TestCase):
+    """Where a picture that is not 16:9 sits in a 1920x1080 frame (decision
+    68.2): judged by its shape on screen (sample aspect included, so
+    anamorphic 16:9 still fills); a still or sequence at its own size when it
+    fits (whole=True), a clip fitted; centred, on even rows and columns."""
+
+    def test_sixteen_nine_fills_as_before(self):
+        for w, h, sar in ((1920, 1080, 1), (1280, 720, 1), (3840, 2160, 1),
+                          (1440, 1080, 4 / 3), (720, 576, 64 / 45), (1920, 1088, 1)):
+            for whole in (True, False):
+                with self.subTest(w=w, h=h, sar=sar, whole=whole):
+                    self.assertIsNone(m._fit_on_frame(w, h, sar, whole=whole))
+
+    def test_stills_and_sequences_centred_at_their_own_size(self):
+        self.assertEqual(m._fit_on_frame(608, 32, whole=True), (608, 32, 656, 524))
+        self.assertEqual(m._fit_on_frame(200, 200, whole=True), (200, 200, 860, 440))
+        self.assertEqual(m._fit_on_frame(607, 33, whole=True), (607, 33, 656, 522))   # odd: no resize
+
+    def test_too_big_is_shrunk_to_fit(self):
+        self.assertEqual(m._fit_on_frame(1080, 1920, whole=True), (608, 1080, 656, 0))
+        self.assertEqual(m._fit_on_frame(4000, 1000, whole=True), (1920, 480, 0, 300))
+
+    def test_clips_are_fitted(self):
+        self.assertEqual(m._fit_on_frame(720, 576, 16 / 15), (1440, 1080, 240, 0))
+        self.assertEqual(m._fit_on_frame(640, 480), (1440, 1080, 240, 0))
+        self.assertEqual(m._fit_on_frame(1080, 1920), (608, 1080, 656, 0))
+        self.assertEqual(m._fit_on_frame(608, 32), (1920, 102, 0, 488))
+
+    def test_always_inside_the_frame_on_even_rows(self):
+        for w in (1, 33, 200, 607, 1919, 1921, 5000):
+            for h in (1, 31, 200, 1079, 1081, 3000):
+                for whole in (True, False):
+                    fit = m._fit_on_frame(w, h, whole=whole)
+                    if fit is None:
+                        continue
+                    sw, sh, x, y = fit
+                    with self.subTest(w=w, h=h, whole=whole):
+                        self.assertTrue(0 < sw <= 1920 and 0 < sh <= 1080)
+                        self.assertTrue(x + sw <= 1920 and y + sh <= 1080)
+                        self.assertEqual((x % 2, y % 2), (0, 0))
+
+
+class TestFitRoutes(unittest.TestCase):
+    """Decision 68.2 on the files: a picture that is not 16:9 is placed in the
+    1920x1080 frame, not stretched, on every route that forces the frame; its
+    key moves with it; around a picture with a key is clear, around one
+    without is black with no key added; 16:9 (anamorphic too) still fills.
+    Measured by where the picture is in the decoded output."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='fit_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+
+        def card(w, h, alpha=True):
+            a = np.zeros((h, w, 4), np.uint8); a[..., :3] = 160; a[..., 3] = 255
+            return Image.fromarray(a, 'RGBA' if alpha else 'RGBA').convert('RGBA' if alpha else 'RGB')
+        cls.p = {}
+        for name, (w, h, alpha) in {'strip_key': (608, 32, True), 'square_plain': (200, 200, False)}.items():
+            cls.p[name] = os.path.join(cls.tmp, f'{name}.png'); card(w, h, alpha).save(cls.p[name])
+        for name, (w, h, alpha) in {'seqkey': (608, 32, True), 'seqplain': (200, 200, False)}.items():
+            d = os.path.join(cls.tmp, name); os.makedirs(d)
+            for n in range(2):
+                card(w, h, alpha).save(os.path.join(d, f'{name.upper()}_{n + 1:04d}.tga'))
+            cls.p[name] = sorted(os.path.join(d, f) for f in os.listdir(d))
+
+        def clip(name, w, h, sar='1', alpha=False):
+            f = os.path.join(cls.tmp, name + '.png'); card(w, h, True).save(f)
+            out = os.path.join(cls.tmp, name + '.mov')
+            subprocess.run([ffmpeg, '-v', 'error', '-y', '-loop', '1', '-framerate', '50', '-i', f, '-frames:v', '4',
+                            '-vf', f'setsar={sar}', '-c:v', 'prores_ks', '-profile:v', '4' if alpha else '3',
+                            '-pix_fmt', 'yuva444p10le' if alpha else 'yuv422p10le', out],
+                           check=True, stdin=subprocess.DEVNULL)
+            cls.p[name] = out
+        clip('vga', 640, 480); clip('sd43', 720, 576, '16/15'); clip('hdv', 1440, 1080, '4/3')
+        clip('stripclip_key', 608, 32, alpha=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _out(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    @staticmethod
+    def _box(mask):
+        ys, xs = np.nonzero(mask)
+        return (int(xs.min()), int(ys.min()), int(xs.max()) + 1 - int(xs.min()), int(ys.max()) + 1 - int(ys.min())) \
+            if len(xs) else None
+
+    def _sws(self, path):
+        h = m.SWSHeader(path); raw = open(path, 'rb').read(); ps = h.plane_size
+        fill = m._v210_plane_to_yuv(raw[h.data_offset:h.data_offset + ps], 1920, 1080, 1)[0][..., 0]
+        key = (m._v210_plane_to_yuv(raw[h.data_offset + h.frame_count * ps:h.data_offset + (h.frame_count + 1) * ps],
+                                    1920, 1080, 1)[0][..., 0] if h.has_key else None)
+        return fill, key
+
+    def _eif(self, path):
+        h = m.EIFHeader(path); u = m._EIF_UNIT_BYTES; raw = open(path, 'rb').read()[h.video_start:h.video_start + 3 * u]
+        return np.asarray(m._decode_eif_frame_rgba(raw[:u], raw[u:2 * u], raw[2 * u:]))
+
+    def test_still_with_key_is_centred_on_clear(self):
+        out = self._out()
+        m.convert_still(self.p['strip_key'], 1, out, video_standard='1080p50', log=lambda *a: None)
+        fill, key = self._sws(os.path.join(out, '1.SWS'))
+        self.assertEqual(self._box(key > 500), (656, 524, 608, 32), 'the key')
+        self.assertEqual(self._box(fill > 300), (656, 524, 608, 32), 'the picture')
+
+    def test_still_without_key_is_centred_on_black_with_no_key(self):
+        out = self._out()
+        m.convert_still(self.p['square_plain'], 1, out, video_standard='1080p50', log=lambda *a: None)
+        fill, key = self._sws(os.path.join(out, '1.SWS'))
+        self.assertIsNone(key, 'a picture without a key gets no key')
+        self.assertEqual(self._box(fill > 300), (860, 440, 200, 200))
+        self.assertLess(float(fill[:400].max()), 70, 'black around it')
+
+    def test_clips_are_fitted_and_anamorphic_still_fills(self):
+        for name, want in (('vga', (240, 0, 1440, 1080)), ('sd43', (240, 0, 1440, 1080)), ('hdv', (0, 0, 1920, 1080))):
+            with self.subTest(clip=name):
+                out = self._out()
+                m.convert_clip(self.p[name], 1, out, video_standard='1080p50', split_fat32=False, log=lambda *a: None)
+                fill, _ = self._sws(os.path.join(out, '1.SWS'))
+                box = self._box(fill > 300)
+                self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(box, want)), f'{name}: {box}, wanted {want}')
+
+    def test_sequence_with_key_is_centred_on_clear_in_sws_and_eif(self):
+        out = self._out()
+        m.convert_tga_sequence(self.p['seqkey'], 1, out, video_standard='1080p50', log=lambda *a: None, write_log=False)
+        fill, key = self._sws(os.path.join(out, '1.SWS'))
+        self.assertEqual(self._box(key > 500), (656, 524, 608, 32))
+        made = m.convert_tga_seq_to_eif(self.p['seqkey'], self._out(), 'K', 50.0, log=lambda *a: None, out_name='0001')
+        f = self._eif(made)
+        self.assertEqual(self._box(f[..., 3] > 128), (656, 524, 608, 32), 'EIF key')
+        self.assertEqual(int(f[:400, :, 3].max()), 0, 'EIF clear around it')
+
+    def test_sequence_without_key_in_eif_is_on_opaque_black(self):
+        made = m.convert_tga_seq_to_eif(self.p['seqplain'], self._out(), 'P', 50.0, log=lambda *a: None, out_name='0001')
+        f = self._eif(made)
+        self.assertEqual(self._box(f[..., :3].mean(-1) > 100), (860, 440, 200, 200))
+        self.assertEqual(int(f[..., 3].min()), 255, 'no key added: opaque everywhere')
+
+    def test_clip_to_eif_is_fitted(self):
+        made = m.convert_clip_to_eif(self.p['vga'], self._out(), log=lambda *a: None, out_name='0001')
+        box = self._box(self._eif(made)[..., :3].mean(-1) > 100)
+        self.assertTrue(all(abs(a - b) <= 2 for a, b in zip(box, (240, 0, 1440, 1080))), box)
+
+    def test_clip_to_tga_keyed_and_plain(self):
+        for name, target, keyed in (('stripclip_key', m.HULA_TARGET_KFRAME_TGA, True),
+                                    ('vga', m.HULA_TARGET_SONY_TGA, False)):
+            with self.subTest(clip=name, target=target):
+                out = self._out()
+                m._hula_convert_mov_to_tga(self.p[name], out, target, '1080p50', clip_name='ABCD', log=lambda *a: None)
+                tga = sorted(glob_tgas(out))[0]
+                a = np.asarray(Image.open(tga).convert('RGBA'))
+                self.assertEqual(a.shape[:2], (1080, 1920))
+                if keyed:
+                    box = self._box(a[..., 3] > 128)
+                    self.assertTrue(abs(box[2] - 1920) <= 2 and abs(box[3] - 102) <= 2, box)
+                    self.assertEqual(int(a[:300, :, 3].max()), 0, 'clear around a keyed clip')
+                else:
+                    box = self._box(a[..., :3].mean(-1) > 100)
+                    self.assertTrue(all(abs(p - q) <= 2 for p, q in zip(box, (240, 0, 1440, 1080))), box)
+                    self.assertEqual(int(a[..., 3].min()), 255, 'no key added to a clip without one')
+
+
+def glob_tgas(folder):
+    return [os.path.join(r, f) for r, _d, fs in os.walk(folder) for f in fs if f.lower().endswith('.tga')]
