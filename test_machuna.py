@@ -6251,3 +6251,113 @@ class TestPsF(unittest.TestCase):
                        check=True, stdin=subprocess.DEVNULL)
         with self.assertRaisesRegex(ValueError, 'does not do frame-rate standards'):
             m.convert_clip(clip24, 1, self._out(), video_standard='1080i50', split_fat32=False, log=lambda *a: None)
+
+
+class TestTgaRate(unittest.TestCase):
+    """The TGA rate (decision 67): how many TGAs make one second. 'field' (50)
+    and 'interlaced' (25i) are the old switch off and on, unchanged; 'frame'
+    (25p) is new: one TGA per frame for an interlaced desk (PsF) or a 25p one,
+    each TGA twice for a 50p one. K-Frame EIF now weaves 'field' for an
+    interlaced desk, as SWS always has (it played a 50p render at half speed).
+    Measured on the files against references made the proven way."""
+
+    N = 6
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='tgarate_')
+        cls.src = os.path.join(cls.tmp, 'src'); os.makedirs(cls.src)
+        cls.dup = os.path.join(cls.tmp, 'dup'); os.makedirs(cls.dup)
+        yy, xx = np.mgrid[0:1080, 0:1920]
+        for n in range(cls.N):
+            a = np.zeros((1080, 1920, 3), np.uint8)
+            a[...] = 30 + 30 * n                         # each frame its own grey
+            a[(yy // 8) % 2 == 1] += 5                   # fine detail a deinterlacer would soften
+            p = os.path.join(cls.src, f'R_{n + 1:04d}.tga')
+            Image.fromarray(a, 'RGB').save(p)
+            for r in range(2):                           # the "each frame twice" reference
+                shutil.copy(p, os.path.join(cls.dup, f'D_{2 * n + r + 1:04d}.tga'))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _files(self, d):
+        return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith('.tga'))
+
+    def _sws(self, files, std, **kw):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m.convert_tga_sequence(files, 1, out, video_standard=std, log=lambda *a: None, write_log=False, **kw)
+        p = os.path.join(out, '1.SWS'); h = m.SWSHeader(p); raw = open(p, 'rb').read()
+        return h, raw[h.data_offset:h.data_offset + h.frame_count * h.plane_size]
+
+    def test_field_and_interlaced_are_the_old_switch(self):
+        for std in ('1080i50', '1080p50', '1080p25'):
+            for rate, old in (('field', False), ('interlaced', True)):
+                with self.subTest(std=std, rate=rate):
+                    self.assertEqual(self._sws(self._files(self.src), std, source_rate=rate)[1],
+                                     self._sws(self._files(self.src), std, source_interlaced=old)[1])
+
+    def test_frame_rate_on_an_interlaced_desk_is_psf(self):
+        h, body = self._sws(self._files(self.src), '1080i50', source_rate='frame')
+        self.assertEqual(h.frame_count, self.N)
+        self.assertEqual(body, self._sws(self._files(self.src), '1080i50', source_interlaced=True)[1])
+
+    def test_frame_rate_on_a_50p_desk_shows_each_tga_twice(self):
+        h, body = self._sws(self._files(self.src), '1080p50', source_rate='frame')
+        self.assertEqual(h.frame_count, 2 * self.N)
+        # The reference: every TGA really there twice, converted the proven way.
+        self.assertEqual(body, self._sws(self._files(self.dup), '1080p50', source_interlaced=False)[1])
+
+    def test_frame_rate_on_a_25p_desk_is_one_each(self):
+        h, body = self._sws(self._files(self.src), '1080p25', source_rate='frame')
+        self.assertEqual(h.frame_count, self.N)
+        self.assertEqual(body, self._sws(self._files(self.src), '1080p25', source_interlaced=False)[1])
+
+    # K-Frame EIF
+
+    def _eif(self, files, fps, **kw):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        made = m.convert_tga_seq_to_eif(files, out, 'R', fps, log=lambda *a: None, out_name='0001', **kw)
+        hdr = m.EIFHeader(made)
+        raw = open(made, 'rb').read(); u = m._EIF_UNIT_BYTES
+        start = hdr.video_start
+        frames = [np.asarray(m._decode_eif_frame_rgba(raw[start + i * 3 * u:start + i * 3 * u + u],
+                                           raw[start + i * 3 * u + u:start + i * 3 * u + 2 * u],
+                                           raw[start + i * 3 * u + 2 * u:start + (i + 1) * 3 * u]))
+                  for i in range(hdr.frame_count)]
+        return hdr, frames
+
+    @staticmethod
+    def _grey(rows):
+        return int(np.median(np.asarray(rows)[..., 0]))
+
+    def test_eif_field_rate_weaves_for_an_interlaced_desk(self):
+        src_greys = [self._grey(np.asarray(Image.open(f))[0::16]) for f in self._files(self.src)]
+        hdr, frames = self._eif(self._files(self.src), 25.0, source_rate='field', interlaced_out=True)
+        self.assertEqual(hdr.frame_count, self.N // 2)
+        self.assertEqual(hdr.fps, 25.0)
+        for k, f in enumerate(frames):
+            # Top field (even lines) from TGA 2k, bottom field (odd lines) from 2k+1.
+            self.assertAlmostEqual(self._grey(f[0::16]), src_greys[2 * k], delta=2, msg=f'frame {k} top field')
+            self.assertAlmostEqual(self._grey(f[1::16]), src_greys[2 * k + 1], delta=2, msg=f'frame {k} bottom field')
+
+    def test_eif_field_rate_on_a_progressive_desk_is_as_before(self):
+        a = self._eif(self._files(self.src), 50.0, source_rate='field', interlaced_out=False)
+        b = self._eif(self._files(self.src), 50.0)
+        self.assertEqual(a[0].frame_count, self.N)
+        self.assertTrue(all(np.array_equal(x, y) for x, y in zip(a[1], b[1])))
+
+    def test_eif_frame_rate_on_a_50p_desk_shows_each_tga_twice(self):
+        hdr, frames = self._eif(self._files(self.src), 50.0, source_rate='frame', interlaced_out=False)
+        ref = self._eif(self._files(self.dup), 50.0)[1]
+        self.assertEqual(hdr.frame_count, 2 * self.N)
+        self.assertTrue(all(np.array_equal(x, y) for x, y in zip(frames, ref)))
+
+    def test_eif_interlaced_and_frame_rate_at_25_are_as_before(self):
+        before = self._eif(self._files(self.src), 25.0, source_interlaced=True)[1]
+        for rate in ('interlaced', 'frame'):
+            with self.subTest(rate=rate):
+                hdr, frames = self._eif(self._files(self.src), 25.0, source_rate=rate, interlaced_out=True)
+                self.assertEqual(hdr.frame_count, self.N)
+                self.assertTrue(all(np.array_equal(x, y) for x, y in zip(frames, before)))

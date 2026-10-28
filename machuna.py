@@ -1529,8 +1529,17 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          clip_name_override: str = None,
                          _audio_stereo24=None,
                          sound_file: str = None,
-                         clear_frames: str = None):
+                         clear_frames: str = None,
+                         source_rate: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
+
+    source_rate (decision 67, the TGA rate): how many TGAs make one second.
+    'field' (50 for a 50Hz desk): woven in pairs for an interlaced standard, one
+    per frame for a progressive one; the old source_interlaced=False.
+    'interlaced' (25i): each TGA holds two fields; source_interlaced=True.
+    'frame' (25p): each TGA is one whole picture: one per frame for an
+    interlaced standard (PsF) or a 25/29.97/30p one, each TGA twice for a
+    50/59.94/60p one. None: from source_interlaced, as before.
 
     sound_file: a sound to go with the sequence, as Kahuna Manager's Add
     Audio does (David, 2026-10-11). Kept at its own length (_write_sws_sound).
@@ -1548,12 +1557,22 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         _audio_stereo24 = _sound_file_stereo24(sound_file, log)
     info = get_video_info(tga_files[0])
     w, h = info['width'], info['height']
-    frame_count = len(tga_files)
     has_alpha = info['has_alpha'] and not ignore_alpha
 
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
+    if source_rate is None:
+        source_rate = 'interlaced' if source_interlaced else 'field'
+    source_interlaced = source_rate == 'interlaced'
+    whole_frames = source_rate == 'frame'
+    if whole_frames and video_standard not in _interlaced_standards \
+            and FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]] > 30.0:
+        # 25p TGAs for a 50p desk: each shown twice, exactly as if every TGA
+        # were there two times (the proven one-TGA-per-frame route).
+        tga_files = [f for f in sorted(tga_files) for _ in (0, 1)]
+        log(f"  25p TGAs for {video_standard}: each shown twice")
+    frame_count = len(tga_files)
     # p→i: field-weave progressive frames into interlaced output
-    do_p_to_i = video_standard in _interlaced_standards and not source_interlaced
+    do_p_to_i = video_standard in _interlaced_standards and source_rate == 'field'
     # i→p: source is interlaced (25/29.97/30fps) but target is progressive (50/59.94/60fps)
     #       deinterlace with yadif (send_field) — one interlaced frame yields two progressive fields
     do_i_to_p = source_interlaced and video_standard not in _interlaced_standards
@@ -1591,6 +1610,9 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
     elif source_interlaced and video_standard in _interlaced_standards:
         vf_tinterlace = None
         log(f"  Source frames already interlaced — passing through as {video_standard}")
+    elif whole_frames and video_standard in _interlaced_standards:
+        vf_tinterlace = None
+        log(f"  25p TGAs: each kept whole (PsF) as {video_standard}")
     else:
         vf_tinterlace = None
 
@@ -2312,10 +2334,20 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              source_interlaced: bool = False,
                              sound_file: str = None,
                              clear_frames: str = None,
-                             description: str = None) -> str:
+                             description: str = None,
+                             source_rate: str = None,
+                             interlaced_out: bool = False) -> str:
     """Convert a TGA sequence to K-Frame EIF format, with sound_file in an
     .eaf if given (2026-10-11), fitted to the picture as the K-Frame does.
     description: what the K-Frame shows; blank means clip_name, as before.
+
+    source_rate (decision 67, the TGA rate), with interlaced_out saying whether
+    the desk is interlaced: 'field' (50) is woven in pairs for an interlaced
+    desk, top field from the first TGA, as every other format does (until
+    v1.19.0 an EIF took one TGA per frame at 25, so a 50p render played at half
+    speed on a 50i K-Frame), and one per frame for a progressive one;
+    'interlaced' (25i) as source_interlaced=True; 'frame' (25p) one per frame,
+    or each TGA twice for a 50p desk. None: from source_interlaced, as before.
 
     An interlaced sequence is written the way a K-Frame stores 50i: the woven
     frames as they are, at 25fps. Desk session 2026-10-07: the desk's own
@@ -2324,6 +2356,9 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     to 50fps progressive, which disagreed with both and with the MOV route.)
     """
     stereo = _sound_file_stereo24(sound_file, log) if sound_file else None
+    if source_rate is None:
+        source_rate = 'interlaced' if source_interlaced else 'field'
+    source_interlaced = source_rate == 'interlaced'
     fps = 25.0 if abs(fps - 25.0) <= abs(fps - 50.0) else 50.0
     if source_interlaced and fps != 25.0:
         log("  Interlaced source: written at 25fps, the frame rate of 50i")
@@ -2331,7 +2366,18 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         fps = 25.0
     dest_path = os.path.join(dest_dir, (out_name or clip_name) + '.eif')
 
-    frame_count = len(tga_files)
+    # What each EIF frame is made of: one TGA, or a woven pair (top, bottom).
+    if source_rate == 'field' and interlaced_out and fps == 25.0 and len(tga_files) >= 2:
+        plan = [(tga_files[2 * k], tga_files[2 * k + 1]) for k in range(len(tga_files) // 2)]
+        log(f"  50 TGAs a second for an interlaced desk: woven in pairs (TFF), "
+            f"{len(tga_files)} TGAs → {len(plan)} frames")
+    elif source_rate == 'frame' and fps == 50.0:
+        plan = [(f,) for f in tga_files for _ in (0, 1)]
+        log("  25p TGAs for a 50p desk: each shown twice")
+    else:
+        plan = [(f,) for f in tga_files]
+
+    frame_count = len(plan)
     log(f"Converting TGA sequence to EIF: {frame_count} frame(s) @ {fps:.0f}fps"
         f"{' (interlaced, fields kept as they are)' if source_interlaced else ''}"
         f" → {os.path.basename(dest_path)}")
@@ -2349,9 +2395,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         with _open_eif_output(dest_path) as out_fh:
             out_fh.write(header)
             out_fh.write(clear * starts)
-            for i, path in enumerate(tga_files):
-                if cancel_event and cancel_event.is_set():
-                    raise _EifCancelled()
+            def rgba_of(path):
                 img = _open_frame(path)   # a PNG reads exactly as its TGA twin
                 if img.size != (1920, 1080):
                     if source_interlaced:
@@ -2365,7 +2409,15 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                         img = Image.fromarray(woven, 'RGBA')
                     else:
                         img = img.resize((1920, 1080), Image.BILINEAR)
-                rgba = np.array(img.convert('RGBA'))
+                return np.array(img.convert('RGBA'))
+
+            for i, frame in enumerate(plan):
+                if cancel_event and cancel_event.is_set():
+                    raise _EifCancelled()
+                rgba = rgba_of(frame[0])
+                if len(frame) == 2:
+                    # Woven (TFF): the bottom field's lines from the next TGA.
+                    rgba[1::2] = rgba_of(frame[1])[1::2]
                 u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
                 out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
