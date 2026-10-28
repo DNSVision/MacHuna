@@ -150,7 +150,7 @@ All notable changes to MacHuna are documented here.
 ### Added
 - `write_sound_wav(source, out_path)`: the source's whole sound as a 48 kHz stereo WAV. An SWS (a split folder too) gives its sound's own length, even where it runs past the picture, at 16-bit, which is all an SWS holds; an EIF its `.eaf` at 24-bit; a clip or sound file its first two channels (mono to both sides) at 24-bit, or 16 where that is all it holds. Written to a temporary name and moved into place, so a failure never leaves half a file. Returns `None`, writing nothing, when there is no sound.
 
-**Proof:** K-Watch's own split 961 gives a WAV equal to its source's sound; the user's NOTICIAS8_GEN.SWS gives the full 1:54 from a 10-second clip, exactly the top 16 bits of the WAV he gave Kahuna Manager.
+**Proof:** K-Watch's own split 961 gives a WAV equal to its source's sound; the user's Kahuna Manager SWS gives the full 1:54 from a 10-second clip, exactly the top 16 bits of the WAV he gave Kahuna Manager.
 
 ---
 
@@ -182,7 +182,7 @@ All notable changes to MacHuna are documented here.
 - `sound_file_info(path)`: length, channels and sample rate, for the interface.
 
 ### Changed
-- **An SWS keeps its sound's own length**, whatever the picture's, on every route, including a clip's own sound. That is what Kahuna Manager writes: the user's NOTICIAS8_GEN.SWS has 1:54 of sound on 0:10 of picture, and on the desk the picture holds while the sound plays on. It used to be cut or padded to the picture. The sound section is padded with silence to a whole 512 bytes, as K-Watch pads it, and the header holds the true count. **Proof:** MacHuna, given the user's 250 TGAs and WAV, writes the same sound as Kahuna Manager did: the same samples, padding, sample count and file size.
+- **An SWS keeps its sound's own length**, whatever the picture's, on every route, including a clip's own sound. That is what Kahuna Manager writes: the user's Kahuna Manager SWS has 1:54 of sound on 0:10 of picture, and on the desk the picture holds while the sound plays on. It used to be cut or padded to the picture. The sound section is padded with silence to a whole 512 bytes, as K-Watch pads it, and the header holds the true count. **Proof:** MacHuna, given the user's 250 TGAs and WAV, writes the same sound as Kahuna Manager did: the same samples, padding, sample count and file size.
 - An EIF's `.eaf` is still fitted to the picture, because the K-Frame does that; the log now says when a sound was cut or padded. A MOV keeps the sound's whole length.
 - Reading an SWS's sound stops at the header's count, so K-Watch's padding is not played or carried as sound.
 - Removed `extract_audio` and `_write_sws_pcm`, the old writers that fitted sound to the picture. Nothing else used them.

@@ -332,7 +332,7 @@ def _sws_audio_unpack(raw: bytes, header: bytes):
         a = block.view('<i2').reshape(-1, 16)
         return np.stack([a[:, 0], a[:, 2]], 1).astype(np.int16)
     # The header holds the true count; K-Watch pads the section with silence
-    # to a whole 512 bytes (NOTICIAS8, 2026-10-11), and so does MacHuna.
+    # to a whole 512 bytes (a user's Kahuna Manager SWS, 2026-10-11), and so does MacHuna.
     count = struct.unpack_from('>I', header, 0x1C0)[0] if len(header) >= 0x1C4 else 0
     if 0 < count < len(block):
         block = block[:count]
@@ -5189,13 +5189,13 @@ def _sws_stereo24(sws_path: str):
 
 def _sws_padded_samples(n: int) -> int:
     """K-Watch pads an SWS's sound section with silence to a whole 512 bytes
-    (16 samples); the header holds the true count (NOTICIAS8, 2026-10-11)."""
+    (16 samples); the header holds the true count (a user's Kahuna Manager SWS, 2026-10-11)."""
     return -(-n // 16) * 16
 
 
 def _write_sws_sound(pcm_path: str, stereo24) -> int:
     """Kahuna SWS sound at its OWN length, whatever the picture's, as Kahuna
-    Manager writes it: NOTICIAS8_GEN carries 1:54 of sound on 0:10 of
+    Manager writes it: a user's SWS carries 1:54 of sound on 0:10 of
     picture, and on the desk the picture holds while the sound plays on
     (David, 2026-10-11). 24-bit keeps its top 16 bits, as K-Watch does.
     Padded with silence to a whole 16 samples. Returns the true count, for

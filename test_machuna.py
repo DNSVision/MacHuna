@@ -4639,7 +4639,16 @@ class TestPortableAppLayer(unittest.TestCase):
         self.assertEqual(re.findall(r"\[\s*'open'", body), [])
 
 
-NOTICIAS8 = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/user-ref/2026-10-11-noticias8')
+# A user's own Kahuna Manager SWS and its two sources. Where they are is kept
+# beside them, in git-ignored testmedia, so this public repo never names them.
+SOUND_REF = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/user-ref/sound-length-ref.json')
+
+
+def _sound_ref():
+    try:
+        return {k: Path(v) for k, v in json.loads(SOUND_REF.read_text()).items() if k != 'note'}
+    except (OSError, ValueError):
+        return {}
 
 
 def _source_samples(path):
@@ -4671,7 +4680,7 @@ class TestSoundForAnyClip(unittest.TestCase):
     """A sound file added to any TGA sequence, clip, SWS or EIF (David,
     2026-10-11, from a user's Kahuna Manager request). Each output follows its
     desk: an SWS keeps the sound's own length, as Kahuna Manager does
-    (NOTICIAS8_GEN: 1:54 of sound on 0:10 of picture), padded with silence to
+    (the user's Kahuna Manager SWS: 1:54 of sound on 0:10 of picture), padded with silence to
     a whole 512 bytes as K-Watch pads it, the header holding the true count. An
     EIF's .eaf is fitted to the picture, as the K-Frame does. A MOV keeps the
     sound's own length."""
@@ -4890,23 +4899,23 @@ class TestSoundForAnyClip(unittest.TestCase):
                 self.assertTrue(np.array_equal(got[:, 0], self.LL))
 
 
-@unittest.skipUnless(_readable(NOTICIAS8 / 'NOTICIAS8_GEN.SWS'), "the user's NOTICIAS8 files are not on this machine")
+@unittest.skipUnless(_sound_ref() and _readable(_sound_ref()['sws']), "the user's Kahuna Manager files are not on this machine")
 class TestKahunaManagerSound(unittest.TestCase):
     """The user's own Kahuna Manager output (2026-10-11): 250 interlaced TGAs
-    and a 1:54 WAV became NOTICIAS8_GEN.SWS, which plays on his Kahuna. MacHuna
+    and a 1:54 WAV became an SWS that plays on his Kahuna. MacHuna
     given the same two inputs must write the same sound, the same sample count
     and a file of the same size."""
 
     def test_the_sound_is_rebuilt_exactly_from_the_tgas_and_the_wav(self):
         import numpy as np
-        src = NOTICIAS8 / 'source'
-        frames = sorted(str(p) for p in (src / 'GEN_NOTICIAS8_OUT').glob('*.tga'))
+        ref = _sound_ref()
+        frames = sorted(str(p) for p in ref['frames'].glob('*.tga'))
         self.assertEqual(len(frames), 250)
         d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
         ours = m.convert_tga_sequence(frames, 1, d, '1080i50', split_fat32=False, log=lambda *a: None,
                                       write_log=False, source_interlaced=True,
-                                      sound_file=str(src / 'GEN_NOTICIAS8_COM LOOP.wav'))
-        theirs = str(NOTICIAS8 / 'NOTICIAS8_GEN.SWS')
+                                      sound_file=str(ref['wav']))
+        theirs = str(ref['sws'])
         n_o, b_o, lr_o = _sws_sound(ours)
         n_t, b_t, lr_t = _sws_sound(theirs)
         self.assertEqual(n_o, n_t, 'sample count at 0x1C0')
