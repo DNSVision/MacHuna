@@ -148,15 +148,34 @@ class TestHeaderVariableFields(unittest.TestCase):
         stored = hdr[0x20:0x20 + 63]
         self.assertEqual(stored, b'A' * 63)
 
+    # The clip name a Kahuna lists starts at 0x0FC. Read there the way the desk
+    # reads it: up to the first null. K-Watch (952/953/951.SWS, 9.7 Release 5)
+    # and Kahuna Manager both write it at 0x0FC with 0x0FB left zero; MacHuna
+    # wrote it at 0x0FB until 2026-10-28, and a PC tester's Kahuna listed every
+    # name without its first letter ("Gen_E_Agora" as "en_E_Agora").
+    @staticmethod
+    def _desk_name(hdr):
+        return bytes(hdr[0xFC:0x108]).split(b'\0')[0]
+
     def test_clip_name_in_header(self):
         hdr = _make_header(clip_name='myclip')
-        stored = hdr[0xFB:0xFB + len(b'myclip')]
-        self.assertEqual(stored, b'myclip')
+        self.assertEqual(self._desk_name(hdr), b'myclip')
+
+    def test_clip_name_first_letter_kept(self):
+        hdr = _make_header(clip_name='Gen_E_Agora')
+        self.assertEqual(self._desk_name(hdr), b'Gen_E_Agora')
+        self.assertEqual(hdr[0xFB], 0, "0x0FB is zero in K-Watch's and Kahuna Manager's files")
 
     def test_clip_name_truncated_at_11_chars(self):
         hdr = _make_header(clip_name='ABCDEFGHIJKLMNO')
-        stored = hdr[0xFB:0xFB + 11]
-        self.assertEqual(stored, b'ABCDEFGHIJK')
+        self.assertEqual(self._desk_name(hdr), b'ABCDEFGHIJK')
+        self.assertEqual(hdr[0x107], 0, "an 11-character name keeps its null before 0x108")
+
+    def test_clip_name_leaves_its_neighbours(self):
+        hdr = _make_header(clip_name='ABCDEFGHIJKLMNO')
+        self.assertEqual(bytes(hdr[0x108:0x108 + len(m.SWS_COPYRIGHT)]), m.SWS_COPYRIGHT)
+        ver = bytes(hdr[0xEC:0xFB]).split(b'\0')[0]
+        self.assertEqual(ver, m.SWS_VERSION.split(b'\0')[0])
 
 
 # ── Video standard codes in header ────────────────────────────────────────────

@@ -435,9 +435,13 @@ def build_sws_header(source_filename: str,
     ver = SWS_VERSION
     hdr[0xEC:0xEC + len(ver)] = ver
 
-    # 0x0FB  Clip name = source filename stem
+    # 0x0FC  Clip name = source filename stem: what a Kahuna lists. 11 at
+    # most, so a null is left at 0x107 before the copyright. K-Watch and
+    # Kahuna Manager both write it here, with 0x0FB zero. MacHuna wrote it at
+    # 0x0FB until v1.19.0, and the desk listed every name without its first
+    # letter (a PC tester's Kahuna, 2026-10-28).
     cname = clip_name.encode('ascii', 'replace')[:11]
-    hdr[0xFB:0xFB + len(cname)] = cname
+    hdr[0xFC:0xFC + len(cname)] = cname
 
     # 0x108  Copyright string
     hdr[0x108:0x108 + len(SWS_COPYRIGHT)] = SWS_COPYRIGHT

@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased (v1.19.0)
+
+### Fixed
+- **A Kahuna listed every SWS clip name without its first letter.** `build_sws_header` wrote the name at 0x0FB; K-Watch (9.7 Release 5) and Kahuna Manager both write it at **0x0FC** with 0x0FB zero, and the desk reads from 0x0FC, so "Gen_E_Agora" was listed as "en_E_Agora" (a PC tester's Kahuna, 2026-10-28). Present in every SWS MacHuna has written. Now at 0x0FC, 11 characters at most, a null kept at 0x107: the field 0x0FB-0x107 is byte for byte that of two K-Watch files that play on a Kahuna and a Kahuna Manager file. Fail-first tests read the name the way the desk does. Parity kit: the 19 SWS cases differ in the name field and the (blanked) timestamps only, checked byte by byte across all 153 files; the other 25 cases are identical. **Still to confirm on a Kahuna.**
+
+---
+
 ## v1.18.0 — 2026-10-27
 
 **Your own description for an EIF.** Every output is unchanged unless a description is given: the parity kit gives 44 of 44 identical files on the Mac. MacHuna 2.7.0 pins it.
