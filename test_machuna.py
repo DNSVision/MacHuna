@@ -702,6 +702,28 @@ class TestBespokeRowIssues(unittest.TestCase):
         self.assertEqual(m.bespoke_row_issues([('a.mov', '8')], m.BESPOKE_MODE_SWS, self.dest),
                          [m.BESPOKE_ISSUE_EXISTS])
 
+    def test_a_replaceable_name_is_not_a_collision(self):
+        # Decision 68: a row converted again after a setting changed replaces
+        # the file IT made, this session, untouched - the app names exactly
+        # those. Anything else of a name in the destination still collides.
+        Path(self.dest, '7.SWS').write_bytes(b'x')
+        Path(self.dest, '9.SWS').write_bytes(b'x')
+        entries = [('a.mov', '7'), ('b.mov', '9')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest,
+                                              replaceable=['7.SWS']),
+                         [None, m.BESPOKE_ISSUE_EXISTS])
+        problems = m.validate_bespoke_ids(entries, m.BESPOKE_MODE_SWS, self.dest, replaceable=['7.SWS'])
+        self.assertEqual(len(problems), 1)
+        self.assertIn('9.SWS', problems[0])
+        self.assertNotIn('7.SWS', problems[0])
+
+    def test_replaceable_does_not_excuse_a_duplicate(self):
+        Path(self.dest, '7.SWS').write_bytes(b'x')
+        entries = [('a.mov', '7'), ('b.mov', '7')]
+        self.assertEqual(m.bespoke_row_issues(entries, m.BESPOKE_MODE_SWS, self.dest,
+                                              replaceable=['7.SWS']),
+                         [m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE])
+
     def test_duplicate_wins_over_collision_on_the_same_row(self):
         # Both are the same edit to fix, and "duplicate" is the more specific
         # thing to tell the user about.

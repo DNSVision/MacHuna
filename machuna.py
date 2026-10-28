@@ -5609,7 +5609,7 @@ BESPOKE_ISSUE_EXISTS    = 'exists'       # the destination already has it
 _BESPOKE_HINT_WIDTH = 22   # fits the longest mark, "already in destination"
 
 
-def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
+def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()) -> tuple:
     """Shared worker: returns (per-row issue codes, grouped problem messages).
 
     Codes are index-aligned with `entries`, None where the row is fine, so the
@@ -5664,6 +5664,10 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
             path = os.path.join(dest_dir, name)
             if not os.path.exists(path):
                 continue
+            if name in replaceable:
+                # Decision 68: the file this row made, this session, untouched
+                # (the app names exactly those); converting again replaces it.
+                continue
             if mode == BESPOKE_MODE_SWS and os.path.isdir(path):
                 # A split (>4GB) SWS is a folder called <N>.SWS, not a file.
                 kind = f"the split-file folder {name}"
@@ -5684,12 +5688,12 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str) -> tuple:
     return codes, problems
 
 
-def bespoke_row_issues(entries: list, mode: str, dest_dir: str) -> list:
+def bespoke_row_issues(entries: list, mode: str, dest_dir: str, replaceable=()) -> list:
     """Per-row problem code (or None), index-aligned with `entries`."""
-    return _analyse_bespoke_ids(entries, mode, dest_dir)[0]
+    return _analyse_bespoke_ids(entries, mode, dest_dir, replaceable)[0]
 
 
-def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
+def validate_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()) -> list:
     """Check a batch of bespoke IDs before conversion starts.
 
     entries   list of (label, raw_value) in selection order
@@ -5699,9 +5703,12 @@ def validate_bespoke_ids(entries: list, mode: str, dest_dir: str) -> list:
     Returns a list of problem descriptions. Empty means the batch is safe to
     run. Three checks, all blocking: every item needs a valid value, values
     must be unique within the batch, and none may collide with something
-    already in the destination. There is deliberately no overwrite path.
+    already in the destination. There is deliberately no overwrite path,
+    with one narrow exception (decision 68): `replaceable` names the files a
+    row made itself this session and that are untouched since, which the app
+    alone can know; converting that row again replaces its own file.
     """
-    return _analyse_bespoke_ids(entries, mode, dest_dir)[1]
+    return _analyse_bespoke_ids(entries, mode, dest_dir, replaceable)[1]
 
 
 # Input types that can be combined when items are added to an existing
