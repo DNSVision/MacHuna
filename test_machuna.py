@@ -6552,3 +6552,183 @@ class TestFitRoutes(unittest.TestCase):
 
 def glob_tgas(folder):
     return [os.path.join(r, f) for r, _d, fs in os.walk(folder) for f in fs if f.lower().endswith('.tga')]
+
+
+class TestSeparateKey(unittest.TestCase):
+    """Decision 68.3: a fill and a key that live apart are merged into one
+    keyed source, which the ordinary routes then convert. Measured on the
+    converted SWS against the same fill converted with no key: the fill's
+    picture must be byte for byte the same, and the key read by brightness
+    (black clear 64, white solid 940, grey between), on every frame."""
+
+    W, H, N = 320, 180, 4
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='sepkey_')
+        cls.ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        W, H, N = cls.W, cls.H, cls.N
+
+        def run(*args):
+            subprocess.run([cls.ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        src = f'testsrc2=s={W}x{H}:r=25:d={N / 25}'
+        cls.p = {}
+        cls.p['clip'] = os.path.join(cls.tmp, 'FILL.mov')
+        run('-f', 'lavfi', '-i', src, '-f', 'lavfi', '-i', f'sine=f=440:d={N / 25}:sample_rate=48000',
+            '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le', '-c:a', 'pcm_s24le',
+            '-shortest', cls.p['clip'])
+        cls.p['tagged'] = os.path.join(cls.tmp, 'TAGGED.mov')
+        run('-f', 'lavfi', '-i', src, '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le',
+            '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709',
+            '-color_trc', 'bt709', cls.p['tagged'])
+        cls.p['interlaced'] = os.path.join(cls.tmp, 'INTER.mov')
+        run('-f', 'lavfi', '-i', src, '-vf', 'setfield=tff', '-c:v', 'prores_ks', '-profile:v', '3',
+            '-flags', '+ildct+ilme', '-field_order', 'tt', '-pix_fmt', 'yuv422p10le', cls.p['interlaced'])
+        cls.p['hdv'] = os.path.join(cls.tmp, 'HDV.mov')
+        run('-f', 'lavfi', '-i', f'testsrc2=s=240x180:r=25:d={N / 25}', '-vf', 'setsar=4/3',
+            '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le', cls.p['hdv'])
+
+        # The key: black, white and mid grey in thirds, drawn exactly.
+        band = np.zeros((H, W, 3), np.uint8)
+        band[:, W // 3:2 * W // 3] = 255
+        band[:, 2 * W // 3:] = 128
+        cls.key_rgb = band
+        kd = os.path.join(cls.tmp, 'KEYSEQ'); os.makedirs(kd)
+        for n in range(N):
+            Image.fromarray(band, 'RGB').save(os.path.join(kd, f'K_{n + 1:04d}.tga'))
+        cls.p['keyseq'] = sorted(os.path.join(kd, f) for f in os.listdir(kd))
+        cls.p['keystill'] = os.path.join(cls.tmp, 'KEY.png')
+        Image.fromarray(band, 'RGB').save(cls.p['keystill'])
+        cls.p['keyclip'] = os.path.join(cls.tmp, 'KEY.mov')
+        run('-framerate', '25', '-i', os.path.join(kd, 'K_%04d.tga'), '-c:v', 'prores_ks',
+            '-profile:v', '3', '-pix_fmt', 'yuv422p10le', cls.p['keyclip'])
+        cls.p['key43'] = os.path.join(cls.tmp, 'KEY43.png')
+        Image.fromarray(band[:, :240], 'RGB').save(cls.p['key43'])
+
+        # A fill sequence: a moving picture with a key of its own that is
+        # fully CLEAR, so a separate key replacing it shows.
+        fd = os.path.join(cls.tmp, 'FILLSEQ'); os.makedirs(fd)
+        run('-f', 'lavfi', '-i', src, '-pix_fmt', 'rgb24', os.path.join(fd, 'raw_%04d.png'))
+        for n in range(N):
+            rgb = np.asarray(Image.open(os.path.join(fd, f'raw_{n + 1:04d}.png')).convert('RGB'))
+            rgba = np.dstack([rgb, np.zeros((H, W), np.uint8)])
+            Image.fromarray(rgba, 'RGBA').save(os.path.join(fd, f'LOGO_{n + 1:04d}.tga'))
+            os.remove(os.path.join(fd, f'raw_{n + 1:04d}.png'))
+        cls.p['seq'] = sorted(os.path.join(fd, f) for f in os.listdir(fd))
+        # The same pictures with no key at all, the reference.
+        pd = os.path.join(cls.tmp, 'PLAINSEQ'); os.makedirs(pd)
+        for f in cls.p['seq']:
+            Image.open(f).convert('RGB').save(os.path.join(pd, os.path.basename(f)))
+        cls.p['plainseq'] = sorted(os.path.join(pd, f) for f in os.listdir(pd))
+        # 16-bit PNG frames.
+        d16 = os.path.join(cls.tmp, 'DEEP'); os.makedirs(d16)
+        run('-f', 'lavfi', '-i', src, '-pix_fmt', 'rgb48be', os.path.join(d16, 'D_%04d.png'))
+        cls.p['deep'] = sorted(os.path.join(d16, f) for f in os.listdir(d16))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def _sws(self, folder):
+        path = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.SWS')][0]
+        h = m.HulaSWSHeader(path)
+        with m.open_sws(path) as fh:
+            fh.seek(h.data_offset)
+            fill = fh.read(h.plane_size * h.frame_count)
+            key = fh.read(h.plane_size * h.frame_count) if h.has_key else None
+        return h, fill, key
+
+    def _bands(self, h, key, frame):
+        """Key Y at the middle of the black, white and grey thirds."""
+        k = m._v210_plane_to_yuv(key[frame * h.plane_size:(frame + 1) * h.plane_size],
+                                 h.width, h.height, 1)[0][..., 0]
+        return [int(round(float(k[540, x]))) for x in (320, 960, 1600)]
+
+    def _check(self, kind, fill, files, key, key_files, convert, plain=None, plain_files=None,
+               white=(939, 941)):
+        a, b = self._dir(), self._dir()
+        convert(plain or fill, plain_files or files, a)
+        merged = m.merge_separate_key(kind, fill, files, key, key_files, self._dir(), log=lambda *x: None)
+        convert(merged['path'], merged['files'], b)
+        h1, f1, _ = self._sws(a)
+        h2, f2, k2 = self._sws(b)
+        self.assertEqual(h1.frame_count, h2.frame_count)
+        self.assertTrue(f1 == f2, 'the fill must come through byte for byte')
+        self.assertIsNotNone(k2, 'the keyed SWS must have a key plane')
+        for frame in (0, h2.frame_count - 1):
+            black, whiteval, grey = self._bands(h2, k2, frame)
+            self.assertEqual(black, 64, f'frame {frame}: black is clear')
+            self.assertTrue(white[0] <= whiteval <= white[1], f'frame {frame}: white is solid, got {whiteval}')
+            self.assertLessEqual(abs(grey - (64 + round(128 / 255 * 876))), 4, f'frame {frame}: grey between')
+        return merged
+
+    def _clip(self, p, f, d):
+        m.convert_clip(p, 1, d, video_standard='1080p50', log=lambda *x: None)
+
+    def _seq(self, p, f, d):
+        m.convert_tga_sequence(f, 1, d, '1080p50', True, False, lambda *x: None, write_log=False)
+
+    def test_clip_fill_with_each_kind_of_key(self):
+        for key, files in ((self.p['keyclip'], None), (self.p['keyseq'][0], self.p['keyseq']),
+                           (self.p['keystill'], None)):
+            with self.subTest(key=os.path.basename(key)):
+                self._check('clip', self.p['clip'], None, key, files, self._clip)
+
+    def test_one_frame_key_keys_every_frame(self):
+        # The merge stopped after the first frame before the key was looped.
+        self._check('clip', self.p['clip'], None, self.p['keyseq'][0], self.p['keyseq'][:1], self._clip)
+        self._check('sequence', self.p['seq'][0], self.p['seq'], self.p['keystill'], None, self._seq,
+                    plain=self.p['plainseq'][0], plain_files=self.p['plainseq'])
+
+    def test_fill_tagged_video_range_and_709(self):
+        # Tagged differently from the fill, the key was converted to match
+        # before merging, and black came out 119 in the SWS. White may read up
+        # to 943, as it does for any keyed ProRes 4444 tagged this way today.
+        self._check('clip', self.p['tagged'], None, self.p['keyclip'], None, self._clip, white=(939, 943))
+
+    def test_clip_keeps_sound_field_order_and_pixel_shape(self):
+        merged = self._check('clip', self.p['clip'], None, self.p['keyclip'], None, self._clip)
+        info = m.get_video_info(merged['path'])
+        self.assertTrue(info['has_audio'])
+        self.assertTrue(info['has_alpha'])
+        self.assertEqual(info['frame_count'], self.N)
+        merged = m.merge_separate_key('clip', self.p['interlaced'], None, self.p['keyclip'], None,
+                                      self._dir(), log=lambda *x: None)
+        self.assertTrue(m.get_video_info(merged['path'])['is_interlaced'])
+        merged = m.merge_separate_key('clip', self.p['hdv'], None, self.p['key43'], None,
+                                      self._dir(), log=lambda *x: None)
+        self.assertAlmostEqual(m.get_video_info(merged['path'])['sar'], 4 / 3, places=3)
+
+    def test_sequence_fill_replaces_its_own_key_and_keeps_names(self):
+        merged = self._check('sequence', self.p['seq'][0], self.p['seq'], self.p['keyseq'][0],
+                             self.p['keyseq'], self._seq,
+                             plain=self.p['plainseq'][0], plain_files=self.p['plainseq'])
+        self.assertEqual([os.path.basename(f) for f in merged['files']],
+                         [os.path.basename(f) for f in self.p['seq']])
+
+    def test_sixteen_bit_fill_stays_sixteen_bit(self):
+        merged = m.merge_separate_key('sequence', self.p['deep'][0], self.p['deep'],
+                                      self.p['keyclip'], None, self._dir(), log=lambda *x: None)
+        for src, out in zip(self.p['deep'], merged['files']):
+            got = subprocess.run([self.ffmpeg, '-v', 'error', '-i', out, '-f', 'rawvideo',
+                                  '-pix_fmt', 'rgba64le', '-'], capture_output=True, check=True).stdout
+            want = subprocess.run([self.ffmpeg, '-v', 'error', '-i', src, '-f', 'rawvideo',
+                                   '-pix_fmt', 'rgb48le', '-'], capture_output=True, check=True).stdout
+            g = np.frombuffer(got, np.uint16).reshape(self.H, self.W, 4)
+            w = np.frombuffer(want, np.uint16).reshape(self.H, self.W, 3)
+            self.assertTrue(np.array_equal(g[..., :3], w), 'all 16 bits of the fill kept')
+            self.assertEqual(int(g[90, 160 + 0, 3]), 65535)
+            self.assertEqual(int(g[90, 10, 3]), 0)
+
+    def test_refuses_a_key_that_does_not_fit(self):
+        with self.assertRaises(ValueError) as e:
+            m.merge_separate_key('sequence', self.p['seq'][0], self.p['seq'],
+                                 self.p['keyseq'][0], self.p['keyseq'][:3], self._dir())
+        self.assertIn(f'fill is {self.N} frames and the key is 3', str(e.exception))
+        with self.assertRaises(ValueError) as e:
+            m.merge_separate_key('clip', self.p['clip'], None, self.p['key43'], None, self._dir())
+        self.assertIn('320×180 and the key is 240×180', str(e.exception))

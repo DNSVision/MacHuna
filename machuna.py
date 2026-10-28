@@ -1581,6 +1581,204 @@ def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
             '-c:v', 'png' if ext == '.png' else 'targa', '-i', os.path.join(seq_dir, f'%06d{ext}')]
 
 
+# ---------------------------------------------------------------------------
+# A separate key (decision 68.3, 2026-10-28). A fill and a key that live apart
+# (a sequence and its _KEY folder, a clip and a matte) are merged into ONE
+# keyed source first, which every existing route already converts: the routes
+# themselves are untouched, so a row with no separate key converts exactly as
+# before. The fill's picture passes through bit for bit (measured: a 10-bit
+# 4:2:2 fill, every plane identical); the key is read by brightness, white
+# solid and black clear, and replaces any key the fill had of its own.
+# ---------------------------------------------------------------------------
+
+def separate_key_info(path: str, files: Optional[list] = None) -> dict:
+    """Frames and stored size of a fill or a key: a sequence (its `files`), a
+    still picture, or a clip. A still is one frame."""
+    if files:
+        with Image.open(files[0]) as img:
+            return {'frames': len(files), 'width': img.width, 'height': img.height}
+    if Path(path).suffix.lower() in _STILL_EXTS:
+        with Image.open(path) as img:
+            return {'frames': 1, 'width': img.width, 'height': img.height}
+    info = get_video_info(path)
+    return {'frames': info['frame_count'], 'width': info['width'], 'height': info['height']}
+
+
+def separate_key_problem(fill: dict, key: dict) -> Optional[str]:
+    """Why this key cannot go with this fill, in the user's words, or None.
+    The same size, and the same length or a one-frame key (used for every
+    frame); anything else is refused with both counts shown (David)."""
+    if (fill['width'], fill['height']) != (key['width'], key['height']):
+        return (f"The fill is {fill['width']}×{fill['height']} and the key is "
+                f"{key['width']}×{key['height']}. They need to be the same size.")
+    if key['frames'] != 1 and key['frames'] != fill['frames']:
+        return (f"The fill is {fill['frames']} frames and the key is {key['frames']}. "
+                f"They need to match, or the key must be one frame.")
+    return None
+
+
+def _first_video_stream(path: str) -> dict:
+    """ffprobe's first video stream of a file, as a dict."""
+    import json
+    out = subprocess.run([_get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
+                          '-show_streams', '-select_streams', 'v:0', path],
+                         capture_output=True, text=True, encoding='utf-8', check=True,
+                         stdin=subprocess.DEVNULL)
+    streams = json.loads(out.stdout).get('streams') or [{}]
+    return streams[0]
+
+
+# The lossless intermediate (FFV1) takes these with a key; a fill in any other
+# layout goes to 4:4:4 16-bit, which holds it without loss of precision.
+_FFV1_KEYED = {'yuva420p', 'yuva422p', 'yuva444p', 'yuva420p9le', 'yuva422p9le', 'yuva444p9le',
+               'yuva420p10le', 'yuva422p10le', 'yuva444p10le', 'yuva422p12le', 'yuva444p12le',
+               'yuva420p16le', 'yuva422p16le', 'yuva444p16le'}
+
+
+def _key_planes(fill_fmt: str, keyed_fmt: str) -> str:
+    """mergeplanes: the fill's three planes, then the key's first as the fourth."""
+    return ('mergeplanes=map0s=0:map0p=0:map1s=0:map1p=1:map2s=0:map2p=2:'
+            f'map3s=1:map3p=0:format={keyed_fmt}')
+
+
+def _key_to_rgb(depth16: bool) -> str:
+    """A key in planar RGB: its brightness (full range) in all three planes,
+    so plane 0 is the key whatever colour it was drawn in."""
+    return 'format=gray16le,format=gbrp16le' if depth16 else 'format=gray,format=gbrp'
+
+
+def _key_to_yuv(base_fmt: str) -> str:
+    """A key in the fill's own YUV layout, its Y stretched from video levels
+    to the full range an alpha plane uses (black 0, white the top)."""
+    bits = 16 if '16' in base_fmt else 12 if '12' in base_fmt else 10 if '10' in base_fmt \
+        else 9 if '9' in base_fmt else 8
+    lo, span, top = 16 << (bits - 8), 219 << (bits - 8), (1 << bits) - 1
+    return f"format={base_fmt},lutyuv=y='clip(floor((val-{lo})*{top}/{span}+0.5),0,{top})'"
+
+
+def _key_loop(key_path: str, key_files: Optional[list]) -> str:
+    """A one-frame key repeated for every frame of the fill: without it the
+    merge stopped after the first frame (measured). The fill's end ends it."""
+    one = (len(key_files) == 1 if key_files else
+           separate_key_info(key_path)['frames'] == 1)
+    return 'loop=loop=-1:size=1:start=0,' if one else ''
+
+
+def _key_input_args(key_path: str, key_files: Optional[list], tmp: str) -> list:
+    """ffmpeg input arguments for a key: a sequence, a still, or a clip.
+    TGA and PNG are read with the engine's own reader (`_tga_input_args`)."""
+    if key_files:
+        return _tga_input_args(key_files, os.path.join(tmp, 'key'))
+    if Path(key_path).suffix.lower() in ('.tga', '.png'):
+        return _tga_input_args([key_path], os.path.join(tmp, 'key'))
+    return ['-i', key_path]
+
+
+def merge_separate_key(kind: str, path: str, files: Optional[list],
+                       key_path: str, key_files: Optional[list], work_dir: str,
+                       log=print) -> dict:
+    """The fill with the key merged in, written into `work_dir`, for the
+    ordinary routes to convert. Returns {'path', 'files'} in the fill's terms:
+    a sequence comes back as frames of the same names (keyed TGAs, or 16-bit
+    PNGs for a 16-bit PNG fill), a still as one, a clip as a lossless keyed
+    clip of the same name keeping its rate, field order, colour tag, pixel
+    shape and sound. Refuses a key that does not fit (`separate_key_problem`):
+    checked again here, as the files may have changed since they were chosen."""
+    fill_info = separate_key_info(path, files)
+    problem = separate_key_problem(fill_info, separate_key_info(key_path, key_files))
+    if problem:
+        raise ValueError(problem)
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    tmp = os.path.join(work_dir, 'inputs')
+    os.makedirs(tmp, exist_ok=True)
+    key_args = _key_input_args(key_path, key_files, tmp)
+
+    if kind == 'clip':
+        s = _first_video_stream(path)
+        fmt = (s.get('pix_fmt') or '').replace('yuva', 'yuv')
+        keyed = fmt.replace('yuv', 'yuva', 1)
+        if fmt.startswith('yuv') and not fmt.startswith('yuvj') and keyed in _FFV1_KEYED:
+            base = fmt
+        elif any(t in fmt for t in ('rgb', 'bgr', 'gbr')):
+            deep = any(t in fmt for t in ('48', '64', '10', '12', '14', '16'))
+            base, keyed = ('gbrp16le', 'gbrap16le') if deep else ('gbrp', 'gbrap')
+        else:
+            base, keyed = 'yuv444p16le', 'yuva444p16le'
+        rgb = base.startswith('gbrp')
+        rate = s.get('r_frame_rate') or '25/1'
+        num, den = (rate.split('/') + ['1'])[:2]
+        sar = (s.get('sample_aspect_ratio') or '1:1').replace(':', '/')
+        if sar.startswith('0'):
+            sar = '1'
+        order = s.get('field_order', 'progressive')
+        setfield = (',setfield=tff' if order in ('tt', 'tb') else
+                    ',setfield=bff' if order in ('bb', 'bt') else '')
+        key_chain = _key_to_rgb(base == 'gbrp16le') if rgb else _key_to_yuv(base)
+        # The key tagged as the fill is (range, matrix, primaries, transfer):
+        # tagged differently, ffmpeg converts it to match before merging, and
+        # black came out 64, not 0 (a fill tagged tv and BT.709, 2026-10-28).
+        # Its values are already what we want.
+        tags = ':'.join(f'{opt}={s[field]}' for opt, field in (
+            ('range', 'color_range'), ('colorspace', 'color_space'),
+            ('color_primaries', 'color_primaries'), ('color_trc', 'color_transfer'))
+            if s.get(field) and s[field] not in ('unknown', 'reserved'))
+        graph = (f'[0:v]setpts=PTS-STARTPTS,format={base}[f];'
+                 f'[1:v]setsar={sar},{_key_loop(key_path, key_files)}setpts=N*{den}/({num}*TB),'
+                 f'{key_chain}{",setparams=" + tags if tags else ""}[k];'
+                 f'[f][k]{_key_planes(base, keyed)}{setfield}[v]')
+        out = os.path.join(work_dir, Path(path).stem + '.mov')
+        cmd = [ffmpeg, '-y', '-i', path] + key_args + [
+            '-filter_complex', graph, '-map', '[v]', '-map', '0:a?',
+            '-c:v', 'ffv1', '-level', '3',
+            '-pix_fmt', 'bgra' if keyed == 'gbrap' else keyed,
+            '-af', 'asetpts=PTS-STARTPTS', '-c:a', 'pcm_s24le']
+        if setfield:
+            cmd += ['-flags', '+ildct', '-field_order', 'tt' if 'tff' in setfield else 'bb']
+        for opt, field in (('-colorspace', 'color_space'), ('-color_primaries', 'color_primaries'),
+                           ('-color_trc', 'color_transfer'), ('-color_range', 'color_range')):
+            if s.get(field) and s[field] != 'unknown':
+                cmd += [opt, s[field]]
+        cmd += ['-movflags', '+write_colr', out]
+        _run_ffmpeg(cmd, check=True)
+        log(f"  Key: {os.path.basename(key_path) if key_path else 'sequence'} merged into "
+            f"{os.path.basename(path)} ({fill_info['frames']} frames)")
+        return {'path': out, 'files': None}
+
+    # A sequence or a still: frames of RGB, the key as their alpha.
+    frames = list(files) if files else [path]
+    first = frames[0]
+    deep = first.lower().endswith('.png') and any(
+        t in (_first_video_stream(first).get('pix_fmt') or '') for t in ('48', '64', '16'))
+    if first.lower().endswith(('.tga', '.png')):
+        fill_args = _tga_input_args(frames, os.path.join(tmp, 'fill'))
+    else:
+        fill_args = ['-i', first]
+    base, keyed = ('gbrp16le', 'gbrap16le') if deep else ('gbrp', 'gbrap')
+    graph = (f'[0:v]setsar=1,setpts=N/(25*TB),format={base}[f];'
+             f'[1:v]setsar=1,{_key_loop(key_path, key_files)}setpts=N/(25*TB),{_key_to_rgb(deep)}[k];'
+             f'[f][k]{_key_planes(base, keyed)}[v]')
+    # Written numbered into one folder, then renamed into another: renamed in
+    # place, a fill named like the numbers would overwrite frames not yet moved.
+    raw_dir, out_dir = os.path.join(work_dir, 'numbered'), os.path.join(work_dir, 'frames')
+    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    ext = '.png' if deep else '.tga'
+    cmd = [ffmpeg, '-y'] + fill_args + key_args + [
+        '-filter_complex', graph, '-map', '[v]', '-frames:v', str(len(frames)),
+        '-pix_fmt', 'rgba64be' if deep else 'bgra']
+    if not deep:
+        cmd += ['-c:v', 'targa', '-rle', '0']
+    cmd += ['-start_number', '0', os.path.join(raw_dir, f'%06d{ext}')]
+    _run_ffmpeg(cmd, check=True)
+    made = []
+    for n, src in enumerate(frames):
+        dst = os.path.join(out_dir, Path(src).stem + ext)
+        os.rename(os.path.join(raw_dir, f'{n:06d}{ext}'), dst)
+        made.append(dst)
+    log(f"  Key merged into {len(made)} frame(s) of {Path(first).stem}")
+    return {'path': made[0], 'files': made if files else None}
+
+
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          video_standard: str = '1080i50',
                          split_fat32: bool = True,
