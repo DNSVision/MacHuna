@@ -656,6 +656,13 @@ def get_video_info(input_path: str) -> dict:
             info['has_alpha'] = 'a' in pix_fmt or pix_fmt in (
                 'rgba', 'bgra', 'yuva420p', 'yuva422p', 'yuva444p'
             )
+            if input_path.lower().endswith('.png'):
+                # 'a' in pix_fmt calls "gray" and "pal8" keyed, so a plain
+                # greyscale or palette PNG was given a key, and a key could not
+                # be extracted from it (2026-10-28). The PNG's own header says:
+                # an alpha channel, or a palette or grey with transparency (tRNS).
+                with Image.open(input_path) as img:
+                    info['has_alpha'] = bool(img.has_transparency_data)
 
             # Colour matrix label, as written in the file ('unknown' if none)
             info['color_space'] = stream.get('color_space') or 'unknown'
@@ -1068,7 +1075,15 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         has_alpha = info['has_alpha'] and not ignore_alpha
         log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
         rescale = (w, h) != (1920, 1080)            # decision G
-        key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha,
+        # A grey, palette or 16-bit PNG is read as its TGA twin would be
+        # (`_open_frame`): in 2.7.0 grey and palette stills failed to convert
+        # and a 16-bit RGBA still came out in the wrong colours (2026-10-28).
+        read_path = input_path
+        if input_path.lower().endswith('.png'):
+            plain = os.path.join(tmp, 'still.png')
+            if _png_frame_for_ffmpeg(input_path, plain):
+                read_path = plain
+        key_raw = convert_to_v210(read_path, fill_raw, extract_alpha=has_alpha,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0)
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
@@ -1413,6 +1428,59 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
 _STILL_EXTS = {'.png', '.bmp', '.jpg', '.jpeg', '.tif', '.tiff', '.tga'}
 
 
+def _frame_has_key(path: str) -> bool:
+    """Whether a frame file carries transparency: an alpha channel, or (a PNG)
+    a palette, grey or colour made transparent by its header (tRNS)."""
+    with Image.open(path) as img:
+        return 'A' in img.getbands() or bool(img.has_transparency_data)
+
+
+def _png_plain(src: str) -> bool:
+    """True when a PNG frame is 8-bit RGBA, or 8-bit RGB with no transparency:
+    read exactly as it is by ffmpeg and by Pillow, as its TGA twin is."""
+    with open(src, 'rb') as f:
+        ihdr = f.read(26)
+    if len(ihdr) == 26 and ihdr[12:16] == b'IHDR' and ihdr[24] == 16:
+        return False
+    with Image.open(src) as img:
+        return img.mode == 'RGBA' or (img.mode == 'RGB' and not img.has_transparency_data)
+
+
+def _open_frame(path: str):
+    """A sequence frame as a Pillow image that reads exactly as its TGA twin.
+
+    A plain frame is opened as it is. Any other PNG (2026-10-28) is brought to
+    8-bit RGB, or RGBA when it carries transparency, because grey, palette and
+    16-bit PNGs are read differently from a TGA of the same picture:
+    - ffmpeg turns grey and palette into broadcast colour by another path
+      (grey off by up to 64 and palette by up to 960 in 10 bits) and cannot
+      take a key from a palette or a transparent colour at all;
+    - ffmpeg's 16-bit RGBA came out wrong through the SWS picture path (frames
+      of exact 16-bit values: samples off by up to the full 10-bit range).
+    16-bit is reduced to its top byte, which gives back every 8-bit value
+    (v * 257 >> 8 == v). Pillow does exactly that for 16-bit colour (checked
+    on random values) but clips 16-bit grey to white, so grey is done here."""
+    if not path.lower().endswith('.png') or _png_plain(path):
+        return Image.open(path)
+    with Image.open(path) as img:
+        keyed = 'A' in img.getbands() or bool(img.has_transparency_data)
+        if img.mode.startswith('I'):            # 16-bit grey
+            out = Image.fromarray((np.asarray(img).astype(np.uint32) >> 8).astype(np.uint8))
+        else:                                   # 16-bit colour, grey, palette, a transparent colour
+            out = img.convert('RGBA')
+        return out.convert('RGBA' if keyed else 'RGB')
+
+
+def _png_frame_for_ffmpeg(src: str, dst: str) -> bool:
+    """Write a PNG frame that is not plain (see `_open_frame`) as plain 8-bit
+    RGB or RGBA for ffmpeg, and say so. A rendered sequence of plain frames is
+    linked as it is, so it costs nothing extra."""
+    if _png_plain(src):
+        return False
+    _open_frame(src).save(dst, compress_level=1)
+    return True
+
+
 def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
     """ffmpeg input arguments for a list of TGA frames, IN THE ORDER GIVEN,
     read explicitly as TGA. A TGA has no signature, so letting ffmpeg probe
@@ -1427,8 +1495,13 @@ def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
     always succeeds."""
     seq_dir = os.path.join(tmp, 'seq')
     os.makedirs(seq_dir, exist_ok=True)
+    # A PNG sequence (2026-10-28) is read with the PNG decoder, forced the same
+    # way; a sequence is one kind, so the first frame says which.
+    ext = '.png' if tga_files and tga_files[0].lower().endswith('.png') else '.tga'
     for n, tga in enumerate(tga_files):
-        src, dst = os.path.abspath(tga), os.path.join(seq_dir, f'{n:06d}.tga')
+        src, dst = os.path.abspath(tga), os.path.join(seq_dir, f'{n:06d}{ext}')
+        if ext == '.png' and _png_frame_for_ffmpeg(src, dst):
+            continue
         try:
             os.symlink(src, dst)
         except OSError:
@@ -1437,7 +1510,7 @@ def _tga_input_args(tga_files: list, tmp: str, framerate: str = '25') -> list:
             except OSError:
                 shutil.copyfile(src, dst)
     return ['-f', 'image2', '-framerate', str(framerate), '-start_number', '0',
-            '-c:v', 'targa', '-i', os.path.join(seq_dir, '%06d.tga')]
+            '-c:v', 'png' if ext == '.png' else 'targa', '-i', os.path.join(seq_dir, f'%06d{ext}')]
 
 
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
@@ -2258,7 +2331,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
         log(_fitted_sound_note(stereo, frame_count, fps))
     # Decision 54: clear frames, and the sound one frame later with one at the start.
     starts, ends = _clear_counts(clear_frames)
-    keyed = bool(tga_files) and 'A' in Image.open(tga_files[0]).getbands()
+    keyed = bool(tga_files) and _frame_has_key(tga_files[0])
     clear = _clear_eif_frame(keyed) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
     header = _build_eif_header(_eif_description(description, clip_name),
@@ -2271,7 +2344,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
             for i, path in enumerate(tga_files):
                 if cancel_event and cancel_event.is_set():
                     raise _EifCancelled()
-                img = Image.open(path)
+                img = _open_frame(path)   # a PNG reads exactly as its TGA twin
                 if img.size != (1920, 1080):
                     if source_interlaced:
                         # Scale each field on its own, then weave them back, so the
@@ -3166,20 +3239,31 @@ class _GenericFrameCache:
         self.audio_pcm = None
 
 
+# Frame files a numbered sequence can be made of. Numbered PNGs join up
+# exactly as numbered TGAs do (David, 2026-10-28, from a PC tester's report);
+# a sequence is always ONE kind, so SEQ_001.png and SEQ_001.tga never mix.
+_SEQ_EXTS = ('.tga', '.png')
+
+
 def _tga_sequence_files(first_tga: str) -> list:
-    """Return sorted list of TGA paths sharing the same sequence base name as first_tga."""
+    """Return sorted list of frame paths sharing the same sequence base name and
+    kind (.tga or .png) as first_tga."""
     folder = os.path.dirname(os.path.abspath(first_tga))
+    ext = Path(first_tga).suffix.lower()
     m = _GENERIC_TGA_RE.match(Path(first_tga).stem)
     if m:
         base = m.group(1)
         result = []
         for f in os.listdir(folder):
-            if not f.lower().endswith('.tga'):
+            if not f.lower().endswith(ext):
                 continue
             fm = _GENERIC_TGA_RE.match(Path(f).stem)
             if fm and fm.group(1) == base:
                 result.append(os.path.join(folder, f))
         return sorted(result)
+    if ext != '.tga':
+        # An unnumbered PNG is a still, never "every PNG in the folder".
+        return [os.path.abspath(first_tga)]
     return sorted(
         os.path.join(folder, f)
         for f in os.listdir(folder)
@@ -3191,7 +3275,8 @@ def _find_tga_sequences(folder: str) -> list:
     """Scan folder and return list of (base_name, sorted_file_paths) for each TGA sequence found."""
     groups = {}
     for fname in os.listdir(folder):
-        if not fname.lower().endswith('.tga'):
+        ext = Path(fname).suffix.lower()
+        if ext not in _SEQ_EXTS:
             continue
         if not os.path.isfile(os.path.join(folder, fname)):
             continue
@@ -3199,9 +3284,10 @@ def _find_tga_sequences(folder: str) -> list:
         if m:
             base = m.group(1)
             seq_num = int(m.group(2))
-            groups.setdefault(base, []).append((seq_num, os.path.join(folder, fname)))
+            # Keyed by kind too: a PNG and a TGA sequence of one name stay apart.
+            groups.setdefault((base, ext), []).append((seq_num, os.path.join(folder, fname)))
     result = []
-    for base, entries in sorted(groups.items()):
+    for (base, _ext), entries in sorted(groups.items()):
         if len(entries) >= 2:
             result.append((base, [p for _, p in sorted(entries)]))
     return result

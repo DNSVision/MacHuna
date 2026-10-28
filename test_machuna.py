@@ -5910,3 +5910,219 @@ class TestNumbersOnlySequences(unittest.TestCase):
     def test_a_lone_numbered_still_is_not_a_sequence(self):
         d = self._folder(['0230.tga'])
         self.assertEqual(m._find_tga_sequences(d), [])
+
+
+import subprocess
+import numpy as np
+from PIL import Image
+
+
+class TestPngSequences(unittest.TestCase):
+    """Numbered PNGs are a sequence exactly as numbered TGAs are (David,
+    2026-10-28, from a PC tester who found five numbered PNGs came in as five
+    stills). The proof: a PNG sequence makes the SAME file as its TGA twin,
+    the same pixels written as TGA, on every route (TGA sequences are proven
+    on the desks). Each PNG kind is covered, because a PNG can be grey or
+    palette, with or without transparency, and the engine's old alpha rule
+    ('a' in pix_fmt) called "gray" and "pal8" keyed."""
+
+    KINDS = ('rgba', 'rgb', 'grey', 'grey_alpha', 'palette', 'palette_alpha', 'rgb_trns',
+             'grey16', 'rgba16')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tempfile.mkdtemp(prefix='pngseq_')
+        H, W = 1080, 1920
+        yy, xx = np.mgrid[0:H, 0:W]
+        cls.dirs = {}
+        for kind in cls.KINDS:
+            pdir = os.path.join(cls.root, kind, 'png')
+            tdir = os.path.join(cls.root, kind, 'tga')
+            os.makedirs(pdir); os.makedirs(tdir)
+            for n in range(3):
+                a = np.zeros((H, W, 4), np.uint8)
+                a[..., 0] = (xx * 255 // W).astype(np.uint8)
+                a[..., 1] = (yy * 255 // H).astype(np.uint8)
+                a[..., 2] = 40 + 60 * n
+                a[..., 3] = 0
+                a[300 + 50 * n:700, 400:1500, 3] = 255
+                a[700:760, 400:1500, 3] = 128
+                rgba = Image.fromarray(a, 'RGBA')
+                img = {'rgba': rgba,
+                       'rgb': rgba.convert('RGB'),
+                       'grey': rgba.convert('L'),
+                       'grey_alpha': rgba.convert('LA'),
+                       'palette': rgba.convert('RGB').quantize(colors=64),
+                       'palette_alpha': rgba.quantize(colors=64, method=Image.Quantize.FASTOCTREE),
+                       'rgb_trns': rgba.convert('RGB'),   # one colour made transparent
+                       'grey16': None, 'rgba16': None,    # written below from exact values
+                       }[kind]
+                p = os.path.join(pdir, f'SEQ_{n + 1:03d}.png')
+                if kind == 'rgb_trns':
+                    img.save(p, transparency=tuple(int(v) for v in a[0, 0, :3]))
+                elif kind == 'grey16':
+                    grey8 = np.asarray(rgba.convert('L')).astype(np.uint16)
+                    Image.fromarray(grey8 * 257).save(p)
+                elif kind == 'rgba16':
+                    # Exact 16-bit values (8-bit x 257). Letting ffmpeg convert
+                    # an 8-bit PNG up changes them (0 became 7).
+                    subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-y', '-f', 'rawvideo',
+                                    '-pix_fmt', 'rgba64le', '-s', f'{W}x{H}', '-i', '-', '-pix_fmt', 'rgba64be', p],
+                                   input=(a.astype(np.uint16) * 257).astype('<u2').tobytes(), check=True)
+                else:
+                    img.save(p)
+                if kind == 'grey16':
+                    twin = rgba.convert('L').convert('RGB')
+                elif kind == 'rgba16':
+                    twin = rgba
+                else:
+                    back = Image.open(p)
+                    twin = back.convert('RGBA') if back.has_transparency_data else back.convert('RGB')
+                twin.save(os.path.join(tdir, f'SEQ_{n + 1:03d}.tga'))
+            cls.dirs[kind] = (pdir, tdir)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, True)
+
+    def _files(self, d, ext):
+        return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(ext))
+
+    # Finding them
+
+    def test_numbered_pngs_are_one_sequence(self):
+        pdir, _ = self.dirs['rgba']
+        seqs = m._find_tga_sequences(pdir)
+        self.assertEqual([(b, len(f)) for b, f in seqs], [('SEQ', 3)])
+        self.assertTrue(all(f.endswith('.png') for f in seqs[0][1]))
+
+    def test_first_png_finds_its_sequence(self):
+        pdir, _ = self.dirs['rgba']
+        files = m._tga_sequence_files(os.path.join(pdir, 'SEQ_001.png'))
+        self.assertEqual([os.path.basename(f) for f in files], ['SEQ_001.png', 'SEQ_002.png', 'SEQ_003.png'])
+
+    def test_pngs_and_tgas_of_one_name_stay_apart(self):
+        d = tempfile.mkdtemp(prefix='mix_'); self.addCleanup(shutil.rmtree, d, True)
+        pdir, tdir = self.dirs['rgb']
+        for f in self._files(pdir, '.png') + self._files(tdir, '.tga'):
+            shutil.copy(f, d)
+        got = sorted((b, sorted({os.path.splitext(x)[1] for x in f}), len(f)) for b, f in m._find_tga_sequences(d))
+        self.assertEqual(got, [('SEQ', ['.png'], 3), ('SEQ', ['.tga'], 3)])
+        self.assertTrue(all(f.endswith('.tga') for f in m._tga_sequence_files(os.path.join(d, 'SEQ_001.tga'))))
+        self.assertTrue(all(f.endswith('.png') for f in m._tga_sequence_files(os.path.join(d, 'SEQ_001.png'))))
+
+    def test_a_lone_png_is_still_a_still(self):
+        d = tempfile.mkdtemp(prefix='lone_'); self.addCleanup(shutil.rmtree, d, True)
+        shutil.copy(self._files(self.dirs['rgba'][0], '.png')[0], d)
+        self.assertEqual(m._find_tga_sequences(d), [])
+        items, _t, _a, has_seq = m._scan_folder_unified(d)
+        self.assertEqual([i['type'] for i in items], ['still'])
+        self.assertFalse(has_seq)
+
+    def test_folder_scan_offers_the_sequence_not_its_frames(self):
+        items, _t, _a, has_seq = m._scan_folder_unified(self.dirs['rgba'][0])
+        self.assertEqual([(i['type'], len(i.get('files', []))) for i in items], [('tga_seq', 3)])
+        self.assertTrue(has_seq)
+
+    # Knowing whether there is a key
+
+    def test_key_is_seen_only_where_there_is_one(self):
+        want = {'rgba': True, 'rgb': False, 'grey': False, 'grey_alpha': True,
+                'palette': False, 'palette_alpha': True, 'rgb_trns': True,
+                'grey16': False, 'rgba16': True}
+        for kind, keyed in want.items():
+            with self.subTest(kind=kind):
+                first = self._files(self.dirs[kind][0], '.png')[0]
+                self.assertEqual(m.get_video_info(first)['has_alpha'], keyed)
+
+    # The same file as its TGA twin, on every route
+
+    @staticmethod
+    def _sws_body(path):
+        b = bytearray(open(path, 'rb').read())
+        for off, n in ((0x20, 0x40), (0x148, 0x40)):   # source filename; two timestamps
+            b[off:off + n] = bytes(n)
+        return bytes(b)
+
+    def test_sws_same_as_tga_twin(self):
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                outs = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    out = tempfile.mkdtemp(prefix='sws_'); self.addCleanup(shutil.rmtree, out, True)
+                    m.convert_tga_sequence(self._files(d, ext), 7, out, video_standard='1080p50',
+                                           log=lambda *a: None, write_log=False)
+                    outs.append(self._sws_body(os.path.join(out, '7.SWS')))
+                self.assertTrue(outs[0] == outs[1], f'{kind}: the PNG sequence made a different SWS')
+
+    def test_stills_same_as_tga_twin(self):
+        # One PNG on its own is a still (Kahuna SWS only), read by another
+        # route. In 2.7.0 grey, palette and palette-with-transparency stills
+        # failed to convert, and a 16-bit RGBA still came out in wrong colours.
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                outs = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    out = tempfile.mkdtemp(prefix='still_'); self.addCleanup(shutil.rmtree, out, True)
+                    m.convert_still(self._files(d, ext)[0], 9, out, video_standard='1080p50', log=lambda *a: None)
+                    outs.append(self._sws_body(os.path.join(out, '9.SWS')))
+                self.assertTrue(outs[0] == outs[1], f'{kind}: the PNG still made a different SWS')
+
+    def test_eif_same_as_tga_twin(self):
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                outs = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    out = tempfile.mkdtemp(prefix='eif_'); self.addCleanup(shutil.rmtree, out, True)
+                    made = m.convert_tga_seq_to_eif(self._files(d, ext), out, 'SEQ', 50.0,
+                                                    log=lambda *a: None, out_name='0001.eif')
+                    outs.append(open(made, 'rb').read())
+                self.assertTrue(outs[0] == outs[1], f'{kind}: the PNG sequence made a different EIF')
+
+    def test_eif_clear_frames_same_as_tga_twin(self):
+        # A clear frame is transparent when the frames have a key, black when
+        # not; a palette PNG's key was missed, so its clear frame was black.
+        for kind in ('palette_alpha', 'rgb_trns', 'grey_alpha', 'palette', 'rgba16', 'grey16'):
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                outs = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    out = tempfile.mkdtemp(prefix='eifc_'); self.addCleanup(shutil.rmtree, out, True)
+                    made = m.convert_tga_seq_to_eif(self._files(d, ext), out, 'SEQ', 50.0, log=lambda *a: None,
+                                                    out_name='0001.eif', clear_frames='both')
+                    outs.append(open(made, 'rb').read())
+                self.assertTrue(outs[0] == outs[1], f'{kind}: clear frames differ from the TGA twin')
+
+    def test_mov_same_pictures_as_tga_twin(self):
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                frames = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    out = tempfile.mkdtemp(prefix='mov_'); self.addCleanup(shutil.rmtree, out, True)
+                    made = m.convert_tga_seq_to_mov(self._files(d, ext), out, 'SEQ', 50.0, log=lambda *a: None)
+                    frames.append(subprocess.run([ffmpeg, '-v', 'error', '-i', made, '-f', 'rawvideo',
+                                                  '-pix_fmt', 'rgba64le', '-'],
+                                                 capture_output=True, stdin=subprocess.DEVNULL).stdout)
+                self.assertTrue(frames[0] and frames[0] == frames[1], f'{kind}: the PNG sequence made different MOV pictures')
+
+    def test_tga_outputs_read_the_same_pictures(self):
+        # K-Frame TGA, Sony TGA and TGA Sequence read their frames through
+        # _tga_input_args (in the bridge), so it must decode a PNG to exactly
+        # what it decodes the TGA twin to.
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        for kind in self.KINDS:
+            with self.subTest(kind=kind):
+                pdir, tdir = self.dirs[kind]
+                raw = []
+                for d, ext in ((pdir, '.png'), (tdir, '.tga')):
+                    tmp = tempfile.mkdtemp(prefix='in_'); self.addCleanup(shutil.rmtree, tmp, True)
+                    cmd = [ffmpeg, '-v', 'error'] + m._tga_input_args(self._files(d, ext), tmp) + \
+                          ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-']
+                    raw.append(subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL).stdout)
+                self.assertTrue(raw[0] and raw[0] == raw[1], f'{kind}: decoded differently')
+
