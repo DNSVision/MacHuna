@@ -4,7 +4,9 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased (v1.19.0)
+## v1.19.0 — 2026-10-28
+
+**From a PC tester's report, item by item, each tested by David on his Mac.** SWS clip names keep their first letter on a Kahuna; frames named only with numbers and numbered PNGs are sequences; 25p clips to an interlaced standard are kept frame for frame (PsF); the TGA rate (50 | 25i | 25p) for TGA sequences, with K-Frame EIF weaving a 50p render for an interlaced desk; a row converted again replaces its own untouched output; several PNG stills that failed now convert. Parity kit: the 25 non-SWS cases identical, the 19 SWS cases differing in the clip name only (by design). MacHuna 2.8.0 pins it.
 
 ### Fixed
 - **A Kahuna listed every SWS clip name without its first letter.** `build_sws_header` wrote the name at 0x0FB; K-Watch (9.7 Release 5) and Kahuna Manager both write it at **0x0FC** with 0x0FB zero, and the desk reads from 0x0FC, so "Gen_E_Agora" was listed as "en_E_Agora" (a PC tester's Kahuna, 2026-10-28). Present in every SWS MacHuna has written. Now at 0x0FC, 11 characters at most, a null kept at 0x107: the field 0x0FB-0x107 is byte for byte that of two K-Watch files that play on a Kahuna and a Kahuna Manager file. Fail-first tests read the name the way the desk does. Parity kit: the 19 SWS cases differ in the name field and the (blanked) timestamps only, checked byte by byte across all 153 files; the other 25 cases are identical. **Still to confirm on a Kahuna.**
