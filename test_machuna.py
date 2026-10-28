@@ -6758,3 +6758,122 @@ class TestSeparateKey(unittest.TestCase):
         with self.assertRaises(ValueError) as e:
             m.merge_separate_key('clip', self.p['clip'], None, self.p['key43'], None, self._dir())
         self.assertIn('320×180 and the key is 240×180', str(e.exception))
+
+
+class TestStripOwnKey(unittest.TestCase):
+    """Decision 68.3, Remove Key: a fill's own key taken away before
+    converting, so the ordinary routes see a file that never had one.
+    Measured on the converted SWS against the same keyed source converted with
+    Ignore key: the picture byte for byte the same, and no key plane."""
+
+    W, H, N = 320, 180, 4
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='stripkey_')
+        cls.ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        W, H, N = cls.W, cls.H, cls.N
+
+        def run(*args):
+            subprocess.run([cls.ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        src = f'testsrc2=s={W}x{H}:r=25:d={N / 25}'
+        # ProRes 4444 with a key that is clear on the left half.
+        keyed = f"{src},format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,{W // 2}),0,4095)'"
+        cls.p = {}
+        cls.p['clip'] = os.path.join(cls.tmp, 'WIPE.mov')
+        run('-f', 'lavfi', '-i', keyed, '-f', 'lavfi', '-i', f'sine=f=440:d={N / 25}:sample_rate=48000',
+            '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le', '-c:a', 'pcm_s24le',
+            '-shortest', cls.p['clip'])
+        cls.p['interlaced'] = os.path.join(cls.tmp, 'WIPE_I.mov')
+        run('-f', 'lavfi', '-i', keyed, '-vf', 'setfield=tff', '-c:v', 'prores_ks', '-profile:v', '4',
+            '-flags', '+ildct+ilme', '-field_order', 'tt', '-pix_fmt', 'yuva444p10le', cls.p['interlaced'])
+        # A TGA sequence and a still with a key of their own (clear on the left).
+        fd = os.path.join(cls.tmp, 'LOGO'); os.makedirs(fd)
+        run('-f', 'lavfi', '-i', src, '-pix_fmt', 'rgb24', os.path.join(fd, 'raw_%04d.png'))
+        alpha = np.zeros((H, W), np.uint8)
+        alpha[:, W // 2:] = 255
+        for n in range(N):
+            rgb = np.asarray(Image.open(os.path.join(fd, f'raw_{n + 1:04d}.png')).convert('RGB'))
+            Image.fromarray(np.dstack([rgb, alpha]), 'RGBA').save(os.path.join(fd, f'LOGO_{n + 1:04d}.tga'))
+            os.remove(os.path.join(fd, f'raw_{n + 1:04d}.png'))
+        cls.p['seq'] = sorted(os.path.join(fd, f) for f in os.listdir(fd))
+        cls.p['still'] = os.path.join(cls.tmp, 'BUG.png')
+        Image.open(cls.p['seq'][0]).save(cls.p['still'])
+        # 16-bit PNG frames with a key.
+        d16 = os.path.join(cls.tmp, 'DEEP'); os.makedirs(d16)
+        run('-f', 'lavfi', '-i', f"{src},format=rgba64be,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,{W // 2}),0,65535)'",
+            '-pix_fmt', 'rgba64be', os.path.join(d16, 'D_%04d.png'))
+        cls.p['deep'] = sorted(os.path.join(d16, f) for f in os.listdir(d16))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def _sws(self, folder):
+        path = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.SWS')][0]
+        h = m.HulaSWSHeader(path)
+        with m.open_sws(path) as fh:
+            fh.seek(h.data_offset)
+            fill = fh.read(h.plane_size * h.frame_count)
+        return h, fill
+
+    def _same_as_ignore_key(self, kind, path, files, convert):
+        """Removed, then converted, equals Ignore key on the keyed source."""
+        a, b = self._dir(), self._dir()
+        convert(path, files, a, True)
+        stripped = m.strip_own_key(kind, path, files, self._dir(), log=lambda *x: None)
+        convert(stripped['path'], stripped['files'], b, False)
+        h1, f1 = self._sws(a)
+        h2, f2 = self._sws(b)
+        self.assertFalse(h2.has_key, 'no key plane once the key is removed')
+        self.assertEqual(h1.frame_count, h2.frame_count)
+        self.assertTrue(f1 == f2, 'the picture must be what Ignore key gives, byte for byte')
+        return stripped
+
+    def _clip(self, p, f, d, ignore):
+        m.convert_clip(p, 1, d, video_standard='1080p50', log=lambda *x: None, ignore_alpha=ignore)
+
+    def _seq(self, p, f, d, ignore):
+        m.convert_tga_sequence(f, 1, d, '1080p50', True, False, lambda *x: None,
+                               ignore_alpha=ignore, write_log=False)
+
+    def test_clip_loses_its_key_and_keeps_the_rest(self):
+        stripped = self._same_as_ignore_key('clip', self.p['clip'], None, self._clip)
+        info = m.get_video_info(stripped['path'])
+        self.assertFalse(info['has_alpha'])
+        self.assertTrue(info['has_audio'])
+        self.assertEqual(info['frame_count'], self.N)
+        self.assertAlmostEqual(info['fps'], 25.0)
+        stripped = m.strip_own_key('clip', self.p['interlaced'], None, self._dir(), log=lambda *x: None)
+        self.assertTrue(m.get_video_info(stripped['path'])['is_interlaced'])
+
+    def test_sequence_loses_its_key_and_keeps_names(self):
+        stripped = self._same_as_ignore_key('sequence', self.p['seq'][0], self.p['seq'], self._seq)
+        self.assertEqual([os.path.basename(f) for f in stripped['files']],
+                         [os.path.basename(f) for f in self.p['seq']])
+        for f in stripped['files']:
+            self.assertFalse(m._frame_has_key(f))
+
+    def test_still_loses_its_key(self):
+        stripped = m.strip_own_key('still', self.p['still'], None, self._dir(), log=lambda *x: None)
+        self.assertIsNone(stripped['files'])
+        self.assertFalse(m._frame_has_key(stripped['path']))
+        got = np.asarray(Image.open(stripped['path']).convert('RGB'))
+        want = np.asarray(Image.open(self.p['still']).convert('RGB'))
+        self.assertTrue(np.array_equal(got, want), 'the colour is untouched')
+
+    def test_sixteen_bit_frames_stay_sixteen_bit(self):
+        stripped = m.strip_own_key('sequence', self.p['deep'][0], self.p['deep'], self._dir(),
+                                   log=lambda *x: None)
+        for src, out in zip(self.p['deep'], stripped['files']):
+            self.assertTrue(out.endswith('.png'))
+            self.assertFalse(m._frame_has_key(out))
+            got = subprocess.run([self.ffmpeg, '-v', 'error', '-i', out, '-f', 'rawvideo',
+                                  '-pix_fmt', 'rgb48le', '-'], capture_output=True, check=True).stdout
+            want = subprocess.run([self.ffmpeg, '-v', 'error', '-i', src, '-f', 'rawvideo',
+                                   '-pix_fmt', 'rgb48le', '-'], capture_output=True, check=True).stdout
+            self.assertTrue(got == want, 'all 16 bits of the colour kept')

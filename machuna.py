@@ -1782,6 +1782,83 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
     return {'path': made[0], 'files': made if files else None}
 
 
+def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
+                  log=print) -> dict:
+    """The fill with its own key taken away, written into `work_dir`, for the
+    ordinary routes to convert as a file that never had one (decision 68.3,
+    Remove Key). The counterpart of `merge_separate_key`, and returns the same
+    {'path', 'files'}: a sequence as frames of the same names (TGAs, or 16-bit
+    PNGs for a 16-bit PNG fill), a still as one, a clip as a lossless clip of
+    the same name keeping its rate, frame count, field order, colour tag,
+    pixel shape and sound. The colour is untouched; only the key goes."""
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    if kind == 'clip':
+        s = _first_video_stream(path)
+        fmt = s.get('pix_fmt') or ''
+        if fmt.startswith('yuva') and fmt.replace('yuva', 'yuv', 1) in (
+                'yuv420p', 'yuv422p', 'yuv444p', 'yuv420p9le', 'yuv422p9le', 'yuv444p9le',
+                'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'yuv422p12le', 'yuv444p12le',
+                'yuv420p16le', 'yuv422p16le', 'yuv444p16le'):
+            base = fmt.replace('yuva', 'yuv', 1)
+        elif any(t in fmt for t in ('rgb', 'bgr', 'gbr', 'argb', 'abgr')):
+            deep = any(t in fmt for t in ('48', '64', '10', '12', '14', '16'))
+            base = 'gbrp16le' if deep else 'bgr0'
+        else:
+            base = 'yuv444p16le'
+        sar = (s.get('sample_aspect_ratio') or '1:1').replace(':', '/')
+        if sar.startswith('0'):
+            sar = '1'
+        order = s.get('field_order', 'progressive')
+        setfield = (',setfield=tff' if order in ('tt', 'tb') else
+                    ',setfield=bff' if order in ('bb', 'bt') else '')
+        out = os.path.join(work_dir, Path(path).stem + '.mov')
+        cmd = [ffmpeg, '-y', '-i', path,
+               '-vf', f'setsar={sar},setpts=PTS-STARTPTS,format={base}{setfield}',
+               '-map', '0:v:0', '-map', '0:a?',
+               '-c:v', 'ffv1', '-level', '3', '-pix_fmt', base,
+               '-af', 'asetpts=PTS-STARTPTS', '-c:a', 'pcm_s24le']
+        if setfield:
+            cmd += ['-flags', '+ildct', '-field_order', 'tt' if 'tff' in setfield else 'bb']
+        for opt, field in (('-colorspace', 'color_space'), ('-color_primaries', 'color_primaries'),
+                           ('-color_trc', 'color_transfer'), ('-color_range', 'color_range')):
+            if s.get(field) and s[field] != 'unknown':
+                cmd += [opt, s[field]]
+        cmd += ['-movflags', '+write_colr', out]
+        _run_ffmpeg(cmd, check=True)
+        log(f"  Key removed from {os.path.basename(path)}")
+        return {'path': out, 'files': None}
+
+    # A sequence or a still: the same frames in RGB, without their alpha.
+    frames = list(files) if files else [path]
+    first = frames[0]
+    deep = first.lower().endswith('.png') and any(
+        t in (_first_video_stream(first).get('pix_fmt') or '') for t in ('48', '64', '16'))
+    tmp = os.path.join(work_dir, 'inputs')
+    os.makedirs(tmp, exist_ok=True)
+    if first.lower().endswith(('.tga', '.png')):
+        fill_args = _tga_input_args(frames, os.path.join(tmp, 'fill'))
+    else:
+        fill_args = ['-i', first]
+    raw_dir, out_dir = os.path.join(work_dir, 'numbered'), os.path.join(work_dir, 'frames')
+    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    ext = '.png' if deep else '.tga'
+    cmd = [ffmpeg, '-y'] + fill_args + [
+        '-vf', f'setsar=1,setpts=N/(25*TB),format={"gbrp16le" if deep else "gbrp"}',
+        '-frames:v', str(len(frames)), '-pix_fmt', 'rgb48be' if deep else 'bgr24']
+    if not deep:
+        cmd += ['-c:v', 'targa', '-rle', '0']
+    cmd += ['-start_number', '0', os.path.join(raw_dir, f'%06d{ext}')]
+    _run_ffmpeg(cmd, check=True)
+    made = []
+    for n, src in enumerate(frames):
+        dst = os.path.join(out_dir, Path(src).stem + ext)
+        os.rename(os.path.join(raw_dir, f'{n:06d}{ext}'), dst)
+        made.append(dst)
+    log(f"  Key removed from {len(made)} frame(s) of {Path(first).stem}")
+    return {'path': made[0], 'files': made if files else None}
+
+
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          video_standard: str = '1080i50',
                          split_fat32: bool = True,
