@@ -1859,6 +1859,92 @@ def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
     return {'path': made[0], 'files': made if files else None}
 
 
+def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
+             key_path: Optional[str] = None, key_files: Optional[list] = None,
+             log=print) -> dict:
+    """The key a row will use, saved on its own as grey pictures (white
+    solid, black clear): the form `merge_separate_key` reads a key in, so a
+    saved key can be changed elsewhere and brought back (decision 68.3, Save
+    Key As). The key is the fill's own, or `key_path` when one was chosen for
+    the row (merged first, so it is the key exactly as it will be used).
+
+    A sequence is written as the folder `out`, its frames named `base`_ and
+    the fill's own frame numbers (TGAs, or 16-bit PNGs for 16-bit PNG
+    frames); a still as the file `out` (TGA for a TGA, else PNG); a clip as a
+    ProRes 422 HQ matte at `out`, keeping rate, frame count, field order and
+    pixel shape. Returns {'path', 'frames'}. Nothing is ever written over."""
+    if os.path.lexists(out):
+        raise ValueError(f"{os.path.basename(out)} is already there.")
+    work = tempfile.mkdtemp(prefix='machuna-key-')
+    try:
+        if key_path:
+            merged = merge_separate_key(kind, path, files, key_path, key_files, work, log=log)
+            path, files = merged['path'], merged['files']
+        ffmpeg = _get_ffmpeg_path('ffmpeg')
+        if kind == 'clip':
+            if not get_video_info(path)['has_alpha']:
+                raise ValueError(f"{os.path.basename(path)} has no key to save.")
+            s = _first_video_stream(path)
+            sar = (s.get('sample_aspect_ratio') or '1:1').replace(':', '/')
+            if sar.startswith('0'):
+                sar = '1'
+            order = s.get('field_order', 'progressive')
+            setfield = (',setfield=tff' if order in ('tt', 'tb') else
+                        ',setfield=bff' if order in ('bb', 'bt') else '')
+            # The key's full range to video levels, black 64 and white 940,
+            # as a matte is read back (`_key_to_yuv`). Carried across at full
+            # range and mapped here: ffmpeg's own conversion of a 10- or 16-bit
+            # grey gave white 943 (measured), and through 8-bit grey it was 940
+            # but lost the key's precision.
+            cmd = [ffmpeg, '-y', '-i', path,
+                   '-vf', f'setsar={sar},setpts=PTS-STARTPTS,alphaextract,format=gray10le,'
+                          f'setparams=range=pc,scale=in_range=pc:out_range=pc,format=yuv422p10le,'
+                          f"lutyuv=y='floor(val*876/1023+64.5)':u=512:v=512,setparams=range=tv{setfield}",
+                   '-map', '0:v:0', '-an', '-c:v', 'prores_ks', '-profile:v', '3',
+                   '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709',
+                   '-color_trc', 'bt709']
+            if setfield:
+                cmd += ['-flags', '+ildct+ilme', '-field_order', 'tt' if 'tff' in setfield else 'bb']
+            cmd += [out]
+            _run_ffmpeg(cmd, check=True)
+            frames = get_video_info(out)['frame_count']
+            log(f"  Key saved: {os.path.basename(out)} ({frames} frames)")
+            return {'path': out, 'frames': frames}
+
+        frames = list(files) if files else [path]
+        if not _frame_has_key(frames[0]):
+            raise ValueError(f"{os.path.basename(frames[0])} has no key to save.")
+        deep = frames[0].lower().endswith('.png') and any(
+            t in (_first_video_stream(frames[0]).get('pix_fmt') or '') for t in ('48', '64', '16'))
+        if files:
+            os.makedirs(out)
+            targets = []
+            for n, src in enumerate(frames):
+                digits = re.search(r'(\d+)$', Path(src).stem)
+                number = digits.group(1) if digits else f'{n + 1:04d}'
+                targets.append(os.path.join(out, f"{base}_{number}{'.png' if deep else '.tga'}"))
+        else:
+            targets = [out]
+        for src, dst in zip(frames, targets):
+            if deep:
+                _run_ffmpeg([ffmpeg, '-y', '-i', src, '-vf', 'alphaextract,format=gray16be,format=rgb48be',
+                             '-pix_fmt', 'rgb48be', dst], check=True)
+            else:
+                with _open_frame(src) as img:
+                    a = img.convert('RGBA').getchannel('A')
+                    Image.merge('RGB', (a, a, a)).save(dst)
+        log(f"  Key saved: {os.path.basename(out)} ({len(targets)} frame(s))")
+        return {'path': out, 'frames': len(targets)}
+    except Exception:
+        if os.path.isdir(out):
+            shutil.rmtree(out, ignore_errors=True)
+        elif os.path.isfile(out):
+            os.remove(out)
+        raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          video_standard: str = '1080i50',
                          split_fat32: bool = True,

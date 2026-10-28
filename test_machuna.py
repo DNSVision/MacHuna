@@ -6779,7 +6779,9 @@ class TestStripOwnKey(unittest.TestCase):
                            stdin=subprocess.DEVNULL)
         src = f'testsrc2=s={W}x{H}:r=25:d={N / 25}'
         # ProRes 4444 with a key that is clear on the left half.
-        keyed = f"{src},format=yuva444p12le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,{W // 2}),0,4095)'"
+        # Drawn at 8 bits: at 12, geq caps the key at 255 of 4095 (measured),
+        # so the "solid" half was 6% solid.
+        keyed = f"{src},format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,{W // 2}),0,255)'"
         cls.p = {}
         cls.p['clip'] = os.path.join(cls.tmp, 'WIPE.mov')
         run('-f', 'lavfi', '-i', keyed, '-f', 'lavfi', '-i', f'sine=f=440:d={N / 25}:sample_rate=48000',
@@ -6877,3 +6879,123 @@ class TestStripOwnKey(unittest.TestCase):
             want = subprocess.run([self.ffmpeg, '-v', 'error', '-i', src, '-f', 'rawvideo',
                                    '-pix_fmt', 'rgb48le', '-'], capture_output=True, check=True).stdout
             self.assertTrue(got == want, 'all 16 bits of the colour kept')
+
+
+class TestSaveKey(unittest.TestCase):
+    """Decision 68.3, Save Key As: the key a row will use, on its own as grey
+    pictures (white solid, black clear) in the form a separate key is read
+    in, so it can go out and come back. Measured against the fill's own
+    alpha, and by bringing the saved key back with `merge_separate_key`."""
+
+    W, H, N = TestStripOwnKey.W, TestStripOwnKey.H, TestStripOwnKey.N
+
+    @classmethod
+    def setUpClass(cls):
+        TestStripOwnKey.setUpClass.__func__(cls)
+        # A separate key: black left third, white middle, grey right.
+        band = np.zeros((cls.H, cls.W, 3), np.uint8)
+        band[:, cls.W // 3:2 * cls.W // 3] = 255
+        band[:, 2 * cls.W // 3:] = 128
+        cls.band = band[..., 0]
+        kd = os.path.join(cls.tmp, 'MATTE'); os.makedirs(kd)
+        for n in range(cls.N):
+            Image.fromarray(band, 'RGB').save(os.path.join(kd, f'M_{n + 1:04d}.tga'))
+        cls.p['keyseq'] = sorted(os.path.join(kd, f) for f in os.listdir(kd))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def _alpha(self, path):
+        raw = subprocess.run([self.ffmpeg, '-v', 'error', '-i', path, '-vf', 'alphaextract,format=gray',
+                              '-f', 'rawvideo', '-'], capture_output=True, check=True).stdout
+        return np.frombuffer(raw, np.uint8).reshape(-1, self.H, self.W).astype(int)
+
+    def test_sequence_key_saved_exactly_with_numbered_names(self):
+        out = os.path.join(self._dir(), 'LOGO_KEY')
+        r = m.save_key('sequence', self.p['seq'][0], self.p['seq'], out, 'LOGO_KEY', log=lambda *x: None)
+        self.assertEqual(r['frames'], self.N)
+        names = sorted(os.listdir(out))
+        self.assertEqual(names, [f'LOGO_KEY_{n + 1:04d}.tga' for n in range(self.N)])
+        for src, name in zip(self.p['seq'], names):
+            grey = np.asarray(Image.open(os.path.join(out, name)).convert('RGB'))
+            want = np.asarray(Image.open(src).getchannel('A'))
+            for c in range(3):
+                self.assertTrue(np.array_equal(grey[..., c], want), 'grey is the key, exactly')
+        # And back: the fill without its key, given the saved one, has its key again.
+        bare = m.strip_own_key('sequence', self.p['seq'][0], self.p['seq'], self._dir(), log=lambda *x: None)
+        saved = sorted(os.path.join(out, n) for n in names)
+        back = m.merge_separate_key('sequence', bare['path'], bare['files'], saved[0], saved, self._dir(),
+                                    log=lambda *x: None)
+        for src, f in zip(self.p['seq'], back['files']):
+            self.assertTrue(np.array_equal(np.asarray(Image.open(f).getchannel('A')),
+                                           np.asarray(Image.open(src).getchannel('A'))))
+
+    def test_still_key_saved(self):
+        out = os.path.join(self._dir(), 'BUG_KEY.png')
+        m.save_key('still', self.p['still'], None, out, 'BUG_KEY', log=lambda *x: None)
+        grey = np.asarray(Image.open(out).convert('L'))
+        self.assertTrue(np.array_equal(grey, np.asarray(Image.open(self.p['still']).getchannel('A'))))
+
+    def test_clip_key_saved_as_a_matte_and_comes_back(self):
+        d = self._dir()
+        out = os.path.join(d, 'WIPE_KEY.mov')
+        r = m.save_key('clip', self.p['clip'], None, out, 'WIPE_KEY', log=lambda *x: None)
+        info = m.get_video_info(out)
+        self.assertEqual(r['frames'], self.N)
+        self.assertEqual(info['frame_count'], self.N)
+        self.assertAlmostEqual(info['fps'], 25.0)
+        self.assertFalse(info['has_audio'])
+        # A matte at video levels: clear is 64, solid 940, the colour neutral.
+        raw = subprocess.run([self.ffmpeg, '-v', 'error', '-i', out, '-frames:v', '1', '-f', 'rawvideo',
+                              '-pix_fmt', 'yuv422p10le', '-'], capture_output=True, check=True).stdout
+        planes = np.frombuffer(raw, np.uint16)
+        y = planes[:self.W * self.H].reshape(self.H, self.W)
+        self.assertEqual(int(np.median(y[:, :self.W // 2 - 8])), 64)
+        self.assertEqual(int(np.median(y[:, self.W // 2 + 8:])), 940)
+        self.assertEqual(int(np.median(planes[self.W * self.H:])), 512)
+        bare = m.strip_own_key('clip', self.p['clip'], None, self._dir(), log=lambda *x: None)
+        back = m.merge_separate_key('clip', bare['path'], None, out, None, self._dir(), log=lambda *x: None)
+        diff = np.abs(self._alpha(back['path']) - self._alpha(self.p['clip']))
+        self.assertLessEqual(int(diff.max()), 2, 'within ProRes rounding of the clip\'s own key')
+        out_i = os.path.join(d, 'WIPE_I_KEY.mov')
+        m.save_key('clip', self.p['interlaced'], None, out_i, 'WIPE_I_KEY', log=lambda *x: None)
+        self.assertTrue(m.get_video_info(out_i)['is_interlaced'])
+
+    def test_an_added_key_is_saved_as_it_will_be_used(self):
+        out = os.path.join(self._dir(), 'LOGO_KEY')
+        m.save_key('sequence', self.p['seq'][0], self.p['seq'], out, 'LOGO_KEY',
+                   key_path=self.p['keyseq'][0], key_files=self.p['keyseq'], log=lambda *x: None)
+        for name in sorted(os.listdir(out)):
+            grey = np.asarray(Image.open(os.path.join(out, name)).convert('L'))
+            self.assertTrue(np.array_equal(grey, self.band), 'the added key, not the fill\'s own')
+
+    def test_sixteen_bit_key_stays_sixteen_bit(self):
+        out = os.path.join(self._dir(), 'D_KEY')
+        m.save_key('sequence', self.p['deep'][0], self.p['deep'], out, 'D_KEY', log=lambda *x: None)
+        for src, name in zip(self.p['deep'], sorted(os.listdir(out))):
+            self.assertTrue(name.endswith('.png'))
+            got = subprocess.run([self.ffmpeg, '-v', 'error', '-i', os.path.join(out, name), '-f', 'rawvideo',
+                                  '-pix_fmt', 'rgb48le', '-'], capture_output=True, check=True).stdout
+            want = subprocess.run([self.ffmpeg, '-v', 'error', '-i', src, '-vf', 'alphaextract',
+                                   '-f', 'rawvideo', '-pix_fmt', 'gray16le', '-'], capture_output=True,
+                                  check=True).stdout
+            g = np.frombuffer(got, np.uint16).reshape(self.H, self.W, 3)
+            self.assertTrue(np.array_equal(g[..., 0], np.frombuffer(want, np.uint16).reshape(self.H, self.W)))
+
+    def test_never_writes_over_and_refuses_a_keyless_fill(self):
+        d = self._dir()
+        taken = os.path.join(d, 'TAKEN.png')
+        open(taken, 'wb').write(b'mine')
+        with self.assertRaises(ValueError):
+            m.save_key('still', self.p['still'], None, taken, 'TAKEN', log=lambda *x: None)
+        self.assertEqual(open(taken, 'rb').read(), b'mine')
+        bare = m.strip_own_key('sequence', self.p['seq'][0], self.p['seq'], self._dir(), log=lambda *x: None)
+        out = os.path.join(d, 'NONE_KEY')
+        with self.assertRaises(ValueError) as e:
+            m.save_key('sequence', bare['path'], bare['files'], out, 'NONE_KEY', log=lambda *x: None)
+        self.assertIn('has no key to save', str(e.exception))
+        self.assertFalse(os.path.exists(out), 'nothing left behind')
