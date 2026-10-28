@@ -137,7 +137,7 @@ minutes may cost; the M5 to come back with details and cost then.
 **NEXT MAC RELEASE (engine v1.19.0), BEING BUILT ITEM BY ITEM, David testing each (Swift decisions 67, 68, 68.1; from a PC tester's 0.2.0 report, 2026-10-28).** Release 1 list and progress:
 1. DONE (engine 62d4db0, Swift a0c1ce0): **SWS clip name at 0x0FC**, not 0x0FB (a Kahuna dropped the first letter). Matched byte for byte to K-Watch 951/952 and a Kahuna Manager file; parity: 19 SWS cases differ in the name and blanked timestamps only. Still to confirm on a Kahuna (the tester can). David's test files read back right.
 1a. DONE (Swift 1b52655), found by David testing 1: **Number sequentially never renumbers a Done row** and never gives its number away (`Item.sequentialNumbers`); a row says Done, with its file chip, only while `isFinished` (else Queued, the new name in grey). In 2.5.5 to 2.7.0.
-2. Folders of numbers-only files (`_GENERIC_TGA_RE` takes the first digit as the base: 000-229.tga became sequences "0", "1", "2").
+2. DONE (engine 3fe7873, Swift see log): **numbers-only frames are one sequence, named after their folder** (`_GENERIC_TGA_RE` base may be empty; `_sequence_name`). Also fixes 4-digit folders splitting at frame 1000 (MacHuna's own TGA outputs read back, desk exports). The bridge uses `_sequence_name` in both scan paths.
 3. Numbered PNGs join into sequences exactly as TGAs (input only; no PNG output).
 4. 25p/30p clips to interlaced as PsF on every interlaced output (`_p_to_i_field_map` refusal), EIF's route checked separately.
 5. **TGA rate** `50 | 25i | 25p` in place of "TGA source interlaced" (numbers follow the standard); 25p on a progressive desk is new (each TGA twice); measure every output format.
