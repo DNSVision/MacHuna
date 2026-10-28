@@ -6037,6 +6037,26 @@ class TestPngSequences(unittest.TestCase):
 
     # The same file as its TGA twin, on every route
 
+    # 16-bit RGBA goes to ffmpeg with its precision, as in 2.7.0, so it is
+    # held to its 8-bit twin within that precision (measured: 5 of 1023)
+    # rather than byte for byte. Every other kind must be identical.
+    PRECISE = ('rgba16',)
+
+    @staticmethod
+    def _sws_decoded(path):
+        h = m.SWSHeader(path); raw = open(path, 'rb').read(); ps = h.plane_size
+        planes = []
+        for i in range((len(raw) - h.data_offset) // ps):
+            yuv = m._v210_plane_to_yuv(raw[h.data_offset + i * ps:h.data_offset + (i + 1) * ps], 1920, 1080, 1)[0]
+            planes.append([np.asarray(c, dtype=int) for c in yuv])
+        return planes
+
+    def _sws_close(self, a, b, kind):
+        pa, pb = self._sws_decoded(a), self._sws_decoded(b)
+        self.assertEqual(len(pa), len(pb), f'{kind}: a key plane is missing or extra')
+        worst = max(int(np.abs(x - y).max()) for p, q in zip(pa, pb) for x, y in zip(p, q))
+        self.assertLessEqual(worst, 5, f'{kind}: {worst} of 1023 from its 8-bit twin')
+
     @staticmethod
     def _sws_body(path):
         b = bytearray(open(path, 'rb').read())
@@ -6053,13 +6073,17 @@ class TestPngSequences(unittest.TestCase):
                     out = tempfile.mkdtemp(prefix='sws_'); self.addCleanup(shutil.rmtree, out, True)
                     m.convert_tga_sequence(self._files(d, ext), 7, out, video_standard='1080p50',
                                            log=lambda *a: None, write_log=False)
-                    outs.append(self._sws_body(os.path.join(out, '7.SWS')))
-                self.assertTrue(outs[0] == outs[1], f'{kind}: the PNG sequence made a different SWS')
+                    outs.append(os.path.join(out, '7.SWS'))
+                if kind in self.PRECISE:
+                    self._sws_close(outs[0], outs[1], kind)
+                else:
+                    self.assertTrue(self._sws_body(outs[0]) == self._sws_body(outs[1]),
+                                    f'{kind}: the PNG sequence made a different SWS')
 
     def test_stills_same_as_tga_twin(self):
         # One PNG on its own is a still (Kahuna SWS only), read by another
-        # route. In 2.7.0 grey, palette and palette-with-transparency stills
-        # failed to convert, and a 16-bit RGBA still came out in wrong colours.
+        # route. In 2.7.0 grey, palette, palette-with-transparency and 16-bit
+        # grey stills failed to convert, and a grey-with-alpha still's key was wrong.
         for kind in self.KINDS:
             with self.subTest(kind=kind):
                 pdir, tdir = self.dirs[kind]
@@ -6067,8 +6091,12 @@ class TestPngSequences(unittest.TestCase):
                 for d, ext in ((pdir, '.png'), (tdir, '.tga')):
                     out = tempfile.mkdtemp(prefix='still_'); self.addCleanup(shutil.rmtree, out, True)
                     m.convert_still(self._files(d, ext)[0], 9, out, video_standard='1080p50', log=lambda *a: None)
-                    outs.append(self._sws_body(os.path.join(out, '9.SWS')))
-                self.assertTrue(outs[0] == outs[1], f'{kind}: the PNG still made a different SWS')
+                    outs.append(os.path.join(out, '9.SWS'))
+                if kind in self.PRECISE:
+                    self._sws_close(outs[0], outs[1], kind)
+                else:
+                    self.assertTrue(self._sws_body(outs[0]) == self._sws_body(outs[1]),
+                                    f'{kind}: the PNG still made a different SWS')
 
     def test_eif_same_as_tga_twin(self):
         for kind in self.KINDS:
@@ -6108,7 +6136,15 @@ class TestPngSequences(unittest.TestCase):
                     frames.append(subprocess.run([ffmpeg, '-v', 'error', '-i', made, '-f', 'rawvideo',
                                                   '-pix_fmt', 'rgba64le', '-'],
                                                  capture_output=True, stdin=subprocess.DEVNULL).stdout)
-                self.assertTrue(frames[0] and frames[0] == frames[1], f'{kind}: the PNG sequence made different MOV pictures')
+                self.assertTrue(frames[0] and len(frames[0]) == len(frames[1]), f'{kind}: no MOV, or a different size')
+                if kind in self.PRECISE:
+                    worst = int(np.abs(np.frombuffer(frames[0], '<u2').astype(int)
+                                       - np.frombuffer(frames[1], '<u2').astype(int)).max())
+                    # ProRes 4444 is 12-bit, so a 16-bit source keeps more of its
+                    # precision than in SWS (measured 489 of 65535): two 8-bit steps.
+                    self.assertLessEqual(worst, 2 * 257, f'{kind}: {worst} of 65535 from its 8-bit twin')
+                else:
+                    self.assertTrue(frames[0] == frames[1], f'{kind}: the PNG sequence made different MOV pictures')
 
     def test_tga_outputs_read_the_same_pictures(self):
         # K-Frame TGA, Sony TGA and TGA Sequence read their frames through
@@ -6124,5 +6160,11 @@ class TestPngSequences(unittest.TestCase):
                     cmd = [ffmpeg, '-v', 'error'] + m._tga_input_args(self._files(d, ext), tmp) + \
                           ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-']
                     raw.append(subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL).stdout)
-                self.assertTrue(raw[0] and raw[0] == raw[1], f'{kind}: decoded differently')
+                self.assertTrue(raw[0] and len(raw[0]) == len(raw[1]), f'{kind}: not decoded')
+                if kind in self.PRECISE:
+                    worst = int(np.abs(np.frombuffer(raw[0], np.uint8).astype(int)
+                                       - np.frombuffer(raw[1], np.uint8).astype(int)).max())
+                    self.assertLessEqual(worst, 1, f'{kind}: {worst} of 255 from its 8-bit twin')
+                else:
+                    self.assertTrue(raw[0] == raw[1], f'{kind}: decoded differently')
 

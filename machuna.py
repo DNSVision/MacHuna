@@ -1075,9 +1075,9 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         has_alpha = info['has_alpha'] and not ignore_alpha
         log(f"  Size: {w}x{h}, has_alpha={info['has_alpha']}{' (ignored)' if ignore_alpha and info['has_alpha'] else ''}")
         rescale = (w, h) != (1920, 1080)            # decision G
-        # A grey, palette or 16-bit PNG is read as its TGA twin would be
-        # (`_open_frame`): in 2.7.0 grey and palette stills failed to convert
-        # and a 16-bit RGBA still came out in the wrong colours (2026-10-28).
+        # A grey or palette PNG is read as its TGA twin would be
+        # (`_open_frame`): in 2.7.0 grey and palette stills failed to convert,
+        # and a grey-with-alpha still's key came out wrong (2026-10-28).
         read_path = input_path
         if input_path.lower().endswith('.png'):
             plain = os.path.join(tmp, 'still.png')
@@ -1436,37 +1436,33 @@ def _frame_has_key(path: str) -> bool:
 
 
 def _png_plain(src: str) -> bool:
-    """True when a PNG frame is 8-bit RGBA, or 8-bit RGB with no transparency:
-    read exactly as it is by ffmpeg and by Pillow, as its TGA twin is."""
-    with open(src, 'rb') as f:
-        ihdr = f.read(26)
-    if len(ihdr) == 26 and ihdr[12:16] == b'IHDR' and ihdr[24] == 16:
-        return False
+    """True when a PNG frame is RGBA, or RGB with no transparency, at 8 or 16
+    bits: ffmpeg reads it exactly as 2.7.0 did (16-bit keeps its precision,
+    within 5 of 1023 of an 8-bit TGA of the same picture), and Pillow keeps the
+    top byte of 16-bit colour, as a TGA twin would hold it."""
     with Image.open(src) as img:
         return img.mode == 'RGBA' or (img.mode == 'RGB' and not img.has_transparency_data)
 
 
 def _open_frame(path: str):
-    """A sequence frame as a Pillow image that reads exactly as its TGA twin.
+    """A sequence frame or still as a Pillow image that reads as its TGA twin.
 
-    A plain frame is opened as it is. Any other PNG (2026-10-28) is brought to
-    8-bit RGB, or RGBA when it carries transparency, because grey, palette and
-    16-bit PNGs are read differently from a TGA of the same picture:
-    - ffmpeg turns grey and palette into broadcast colour by another path
-      (grey off by up to 64 and palette by up to 960 in 10 bits) and cannot
-      take a key from a palette or a transparent colour at all;
-    - ffmpeg's 16-bit RGBA came out wrong through the SWS picture path (frames
-      of exact 16-bit values: samples off by up to the full 10-bit range).
-    16-bit is reduced to its top byte, which gives back every 8-bit value
-    (v * 257 >> 8 == v). Pillow does exactly that for 16-bit colour (checked
-    on random values) but clips 16-bit grey to white, so grey is done here."""
+    A plain frame (`_png_plain`) is opened as it is. Any other PNG (2026-10-28)
+    is brought to 8-bit RGB, or RGBA when it carries transparency. Measured
+    against TGA twins with the engine's own SWS decoder, as stills in 2.7.0:
+    grey, palette, palette-with-transparency and 16-bit grey PNGs failed to
+    convert (a key was looked for in "gray" and "pal8"; ffmpeg cannot take a
+    key from a palette), and a grey-with-alpha PNG's KEY came out wrong by up
+    to 876 of 1023, silently. Read this way, each matches its twin exactly.
+    16-bit grey is reduced to its top byte here (v * 257 >> 8 == v), because
+    Pillow's own conversion clips it to white."""
     if not path.lower().endswith('.png') or _png_plain(path):
         return Image.open(path)
     with Image.open(path) as img:
         keyed = 'A' in img.getbands() or bool(img.has_transparency_data)
         if img.mode.startswith('I'):            # 16-bit grey
             out = Image.fromarray((np.asarray(img).astype(np.uint32) >> 8).astype(np.uint8))
-        else:                                   # 16-bit colour, grey, palette, a transparent colour
+        else:                                   # grey, grey+alpha, palette, a transparent colour
             out = img.convert('RGBA')
         return out.convert('RGBA' if keyed else 'RGB')
 
