@@ -6083,7 +6083,7 @@ class TestPngSequences(unittest.TestCase):
     def test_stills_same_as_tga_twin(self):
         # One PNG on its own is a still (Kahuna SWS only), read by another
         # route. In 2.7.0 grey, palette, palette-with-transparency and 16-bit
-        # grey stills failed to convert, and a grey-with-alpha still's key was wrong.
+        # grey stills failed to convert, and a grey-with-alpha still's key edges sat a pixel out.
         for kind in self.KINDS:
             with self.subTest(kind=kind):
                 pdir, tdir = self.dirs[kind]

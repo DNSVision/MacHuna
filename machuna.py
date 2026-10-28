@@ -1077,7 +1077,7 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
         rescale = (w, h) != (1920, 1080)            # decision G
         # A grey or palette PNG is read as its TGA twin would be
         # (`_open_frame`): in 2.7.0 grey and palette stills failed to convert,
-        # and a grey-with-alpha still's key came out wrong (2026-10-28).
+        # and a grey-with-alpha still's key edges sat a pixel out (2026-10-28).
         read_path = input_path
         if input_path.lower().endswith('.png'):
             plain = os.path.join(tmp, 'still.png')
@@ -1452,8 +1452,9 @@ def _open_frame(path: str):
     against TGA twins with the engine's own SWS decoder, as stills in 2.7.0:
     grey, palette, palette-with-transparency and 16-bit grey PNGs failed to
     convert (a key was looked for in "gray" and "pal8"; ffmpeg cannot take a
-    key from a palette), and a grey-with-alpha PNG's KEY came out wrong by up
-    to 876 of 1023, silently. Read this way, each matches its twin exactly.
+    key from a palette), and a grey-with-alpha PNG's key sat one pixel out at
+    its left and right edges (920 pixels of 2 million in the test picture: not
+    visible in the player). Read this way, each matches its twin exactly.
     16-bit grey is reduced to its top byte here (v * 257 >> 8 == v), because
     Pillow's own conversion clips it to white."""
     if not path.lower().endswith('.png') or _png_plain(path):
