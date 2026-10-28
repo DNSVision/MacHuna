@@ -6678,6 +6678,23 @@ class TestSeparateKey(unittest.TestCase):
             with self.subTest(key=os.path.basename(key)):
                 self._check('clip', self.p['clip'], None, key, files, self._clip)
 
+    def test_clip_with_no_pixel_shape_recorded(self):
+        # A clip made from frames often records no pixel shape (SAR 0:1).
+        # The key was given 1:1, and ffmpeg refused to merge the two: every
+        # such clip failed with exit status 234 (David, 2026-10-28).
+        frames = os.path.join(self.tmp, 'NOSAR')
+        os.makedirs(frames, exist_ok=True)
+        for n in range(self.N):
+            Image.fromarray(np.full((self.H, self.W, 3), 90 + n * 20, np.uint8), 'RGB').save(
+                os.path.join(frames, f'F_{n + 1:04d}.tga'))
+        clip = os.path.join(self.tmp, 'NOSAR.mov')
+        subprocess.run([self.ffmpeg, '-v', 'error', '-y', '-framerate', '25', '-i',
+                        os.path.join(frames, 'F_%04d.tga'), '-c:v', 'prores_ks', '-profile:v', '3',
+                        '-pix_fmt', 'yuv422p10le', clip], check=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(m._first_video_stream(clip).get('sample_aspect_ratio', '0:1'), '0:1',
+                         'the fixture must record no pixel shape')
+        self._check('clip', clip, None, self.p['keyclip'], None, self._clip)
+
     def test_one_frame_key_keys_every_frame(self):
         # The merge stopped after the first frame before the key was looped.
         self._check('clip', self.p['clip'], None, self.p['keyseq'][0], self.p['keyseq'][:1], self._clip)

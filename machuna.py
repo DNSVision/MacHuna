@@ -1722,7 +1722,10 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
             ('range', 'color_range'), ('colorspace', 'color_space'),
             ('color_primaries', 'color_primaries'), ('color_trc', 'color_transfer'))
             if s.get(field) and s[field] not in ('unknown', 'reserved'))
-        graph = (f'[0:v]setpts=PTS-STARTPTS,format={base}[f];'
+        # The same pixel shape stated on both: a clip that records none (0:1)
+        # left the fill unset and the key 1:1, and ffmpeg refused to merge
+        # them (exit 234, 2026-10-28). Unset is square, so 1:1 is what it is.
+        graph = (f'[0:v]setsar={sar},setpts=PTS-STARTPTS,format={base}[f];'
                  f'[1:v]setsar={sar},{_key_loop(key_path, key_files)}setpts=N*{den}/({num}*TB),'
                  f'{key_chain}{",setparams=" + tags if tags else ""}[k];'
                  f'[f][k]{_key_planes(base, keyed)}{setfield}[v]')
