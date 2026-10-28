@@ -150,11 +150,13 @@ def _p_to_i_field_map(source_fps: float, video_standard: str,
     field-order toggle.
 
     A same-rate progressive source (25p→1080i50, 30p→1080i60) would be halved by the
-    weave and play at 2× speed, so it is blocked rather than silently mangled.
-    (Carrying same-rate progressive as PsF is deliberately not implemented yet —
-    parked pending a live-Kahuna test.) Any other rate needs frame-rate standards
-    conversion, which MacHuna does not do, so it is blocked too. This guarantees the
-    p→i path never silently produces a wrong-speed clip.
+    weave and play at 2× speed. Instead each frame is kept whole, both fields from
+    the same picture: PsF, the usual way 25p travels on a 50i system. The answer is
+    '' (no filter): the frame count and the pictures are the source's own. It was
+    refused until v1.19.0 (a PC tester could not read the refusal, 2026-10-28;
+    decision 67). Field order makes no difference to a PsF frame. Any other rate
+    needs frame-rate standards conversion, which MacHuna does not do, so it is
+    blocked. This guarantees the p→i path never silently produces a wrong-speed clip.
     """
     frame_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]  # 25 / 29.97 / 30
     field_fps = frame_fps * 2                                        # 50 / 59.94 / 60
@@ -164,11 +166,7 @@ def _p_to_i_field_map(source_fps: float, video_standard: str,
         return ('tinterlace=mode=interleave_bottom' if field_order == 'BFF'
                 else 'tinterlace=mode=interleave_top')
     if abs(source_fps - frame_fps) <= TOL:
-        raise ValueError(
-            f"source is {source_fps:.2f}fps, the same frame rate as {video_standard} "
-            f"({frame_fps:.2f}fps). Field-weaving would double the playback speed. "
-            f"Same-rate progressive→interlaced (PsF) is not supported yet — convert the "
-            f"source to {field_fps:.0f}p first, or choose a progressive standard.")
+        return ''   # PsF: each progressive frame is one interlaced frame, as it is
     raise ValueError(
         f"source is {source_fps:.2f}fps, which is incompatible with {video_standard} "
         f"({field_fps:.0f} fields/sec). MacHuna does not do frame-rate standards "
@@ -1268,14 +1266,21 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         vf_tinterlace      = _p_to_i_field_map(fps, video_standard)
         output_fps         = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
         output_frame_count = frame_count // 2
-        if frame_count < 2:
-            # One frame cannot make a pair; weaving gave an SWS with no frames
-            # (Fable black-box pass, 2026-10-08). Keep it as it is, as EIF to
-            # SWS does.
-            vf_tinterlace, output_frame_count = '', 1
-            log("  A single frame - kept as it is (nothing to weave)")
-        log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
-        note = _family_note(fps / 2, output_fps)
+        if vf_tinterlace == '':
+            # PsF (decision 67): a frame-rate source keeps every frame whole.
+            output_frame_count = frame_count
+            log(f"  Progressive at the frame rate of {video_standard}: each frame kept whole "
+                f"(PsF), {frame_count} frames @ {output_fps:.2f}fps")
+            note = _family_note(fps, output_fps)
+        else:
+            if frame_count < 2:
+                # One frame cannot make a pair; weaving gave an SWS with no frames
+                # (Fable black-box pass, 2026-10-08). Keep it as it is, as EIF to
+                # SWS does.
+                vf_tinterlace, output_frame_count = '', 1
+                log("  A single frame - kept as it is (nothing to weave)")
+            log(f"  Transcoding progressive→interlaced (TFF): {frame_count} frames @ {fps:.2f}fps → {output_frame_count} frames @ {output_fps:.2f}fps")
+            note = _family_note(fps / 2, output_fps)
         if note:
             log(note)
     elif do_i_to_p:
@@ -1828,14 +1833,20 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         route = 'deinterlace'
         log(f"  {stem}: {src.standard} → {video_standard} (interlaced→progressive via yadif)")
     elif out_interlaced:
-        # Weave only if the source runs at the field rate; a same-rate or
-        # cross-rate source is refused, not doubled.
-        _p_to_i_field_map(src.fps, video_standard)
-        if _family_note(src.fps / 2, out_fps):
-            log(_family_note(src.fps / 2, out_fps))
-        route = 'weave' if n >= 2 else 'passthrough'
-        log(f"  {stem}: {src.standard} → {video_standard} (progressive→interlaced TFF)"
-            if n >= 2 else f"  {stem}: a single frame - kept as it is (nothing to weave)")
+        # Weave only if the source runs at the field rate; at the frame rate
+        # each frame is kept whole (PsF, decision 67); any other rate is
+        # refused, not doubled.
+        if _p_to_i_field_map(src.fps, video_standard) == '':
+            route = 'passthrough'
+            if _family_note(src.fps, out_fps):
+                log(_family_note(src.fps, out_fps))
+            log(f"  {stem}: {src.standard} → {video_standard} (each frame kept whole: PsF)")
+        else:
+            if _family_note(src.fps / 2, out_fps):
+                log(_family_note(src.fps / 2, out_fps))
+            route = 'weave' if n >= 2 else 'passthrough'
+            log(f"  {stem}: {src.standard} → {video_standard} (progressive→interlaced TFF)"
+                if n >= 2 else f"  {stem}: a single frame - kept as it is (nothing to weave)")
     elif not same_rate:
         route = 'pick'
     else:

@@ -318,8 +318,9 @@ class TestAudioFields(unittest.TestCase):
 
 class TestPToIFieldMap(unittest.TestCase):
     """_p_to_i_field_map decides how a progressive source maps onto an interlaced
-    standard: weave only at the field (double) rate; block same-rate and cross-rate
-    so a p→i conversion never silently doubles the playback speed."""
+    standard: weave at the field (double) rate; keep each frame whole (PsF) at the
+    frame rate; block any other rate, so a p→i conversion never silently changes
+    the playback speed."""
 
     WEAVE = 'tinterlace=mode=interleave_top'
 
@@ -330,11 +331,14 @@ class TestPToIFieldMap(unittest.TestCase):
             self.assertEqual(m._p_to_i_field_map(fps, std), self.WEAVE,
                              f'{fps} → {std} should weave')
 
-    def test_same_rate_blocks(self):
-        # Source at the interlaced FRAME rate — weaving would halve it / double speed.
+    def test_same_rate_is_psf(self):
+        # Source at the interlaced FRAME rate: weaving pairs would halve it and
+        # double the speed, so each frame is kept whole instead, both fields
+        # from one picture (PsF). Blocked until engine v1.19.0 (decision 67).
         for fps, std in [(25.0, '1080i50'), (29.97, '1080i5994'), (30.0, '1080i60')]:
-            with self.assertRaises(ValueError, msg=f'{fps} → {std} must block'):
-                m._p_to_i_field_map(fps, std)
+            for fo in ('TFF', 'BFF'):
+                self.assertEqual(m._p_to_i_field_map(fps, std, field_order=fo), '',
+                                 f'{fps} → {std} ({fo}) should be kept frame for frame')
 
     def test_cross_rate_blocks(self):
         # Rates that are neither the frame nor the field rate need standards
@@ -363,22 +367,21 @@ class TestPToIFieldMap(unittest.TestCase):
                          'tinterlace=mode=interleave_bottom')
 
     def test_field_order_does_not_defeat_the_rate_guard(self):
-        # Choosing BFF must not turn a blocked same-rate/cross-rate source into an
-        # allowed one — the speed guard is independent of which field leads.
+        # Choosing BFF must not turn a blocked cross-rate source into an allowed
+        # one — the speed guard is independent of which field leads.
         for fo in ('TFF', 'BFF'):
-            with self.assertRaises(ValueError, msg=f'25→1080i50 must block ({fo})'):
-                m._p_to_i_field_map(25.0, '1080i50', field_order=fo)
             with self.assertRaises(ValueError, msg=f'24→1080i50 must block ({fo})'):
                 m._p_to_i_field_map(24.0, '1080i50', field_order=fo)
 
-    def test_same_rate_message_names_the_speed_problem(self):
-        # The blocking error must be actionable, not a bare exception.
+    def test_cross_rate_message_says_what_to_do(self):
+        # The one refusal left (another rate; the same-rate one became PsF in
+        # v1.19.0) must be actionable, not a bare exception.
         try:
-            m._p_to_i_field_map(25.0, '1080i50')
+            m._p_to_i_field_map(24.0, '1080i50')
             self.fail('expected ValueError')
         except ValueError as e:
             self.assertIn('1080i50', str(e))
-            self.assertIn('speed', str(e).lower())
+            self.assertIn('convert the source to 50p', str(e))
 
 
 class TestIToPFilter(unittest.TestCase):
@@ -6168,3 +6171,83 @@ class TestPngSequences(unittest.TestCase):
                 else:
                     self.assertTrue(raw[0] == raw[1], f'{kind}: decoded differently')
 
+
+
+class TestPsF(unittest.TestCase):
+    """A progressive source at an interlaced standard's FRAME rate (25p to
+    1080i50) is kept frame for frame, both fields of each frame from the same
+    picture (PsF), at the right speed and length. It was refused with an error
+    a PC tester could not read (2026-10-28; decision 67). Measured on the files:
+    frame count, standard, both fields equal, order kept, sound length kept."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='psf_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        cls.clip = os.path.join(cls.tmp, 'GREYS25.mov')
+        # 10 frames at 25p, frame N a flat grey of 30 + 20N, and 0.4 s of sound.
+        subprocess.run([ffmpeg, '-v', 'error', '-y',
+                        '-f', 'lavfi', '-i', "color=c=black:s=1920x1080:r=25,format=gray,geq=lum='30+20*N'",
+                        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
+                        '-frames:v', '10', '-t', '0.4', '-c:v', 'prores_ks', '-pix_fmt', 'yuv422p10le',
+                        '-c:a', 'pcm_s24le', cls.clip], check=True, stdin=subprocess.DEVNULL)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def _out(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        return d
+
+    @staticmethod
+    def _frames(path):
+        h = m.SWSHeader(path); raw = open(path, 'rb').read(); ps = h.plane_size
+        return h, [m._v210_plane_to_yuv(raw[h.data_offset + i * ps:h.data_offset + (i + 1) * ps],
+                                        1920, 1080, 1)[0][..., 0] for i in range(h.frame_count)]
+
+    def _check_psf(self, path, what):
+        h, frames = self._frames(path)
+        self.assertEqual(h.frame_count, 10, f'{what}: {h.frame_count} frames, wanted 10 (25p kept frame for frame)')
+        self.assertEqual(h.standard, '1080i/50')
+        self.assertEqual(h.fps, 25.0)
+        means = []
+        for n, y in enumerate(frames):
+            # Both fields from one picture: the top field's lines equal the bottom's.
+            self.assertTrue(np.array_equal(y[0::2], y[1::2]), f'{what}: frame {n} has two different fields')
+            means.append(float(y.mean()))
+        self.assertEqual(means, sorted(means), f'{what}: frames out of order')
+        self.assertEqual(len(set(round(v) for v in means)), 10, f'{what}: frames repeated or merged')
+        return h
+
+    def test_clip_25p_to_1080i50_sws(self):
+        out = self._out()
+        m.convert_clip(self.clip, 1, out, video_standard='1080i50', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        h = self._check_psf(os.path.join(out, '1.SWS'), 'clip to SWS')
+        self.assertTrue(h.has_audio)
+        samples = struct.unpack_from('>I', open(os.path.join(out, '1.SWS'), 'rb').read(512), 0x1C0)[0]
+        self.assertEqual(samples, 19200, 'the 0.4 s of sound is kept whole')
+
+    def test_sws_1080p25_to_1080i50(self):
+        src = self._out()
+        m.convert_clip(self.clip, 1, src, video_standard='1080p25', include_audio=True,
+                       split_fat32=False, log=lambda *a: None)
+        out = self._out()
+        made = m.convert_sws_to_sws(os.path.join(src, '1.SWS'), 2, out, '1080i50',
+                                    split_fat32=False, log=lambda *a: None)
+        self._check_psf(made, 'SWS to SWS')
+        a = open(os.path.join(src, '1.SWS'), 'rb').read(); b = open(made, 'rb').read()
+        ha, hb = m.SWSHeader(os.path.join(src, '1.SWS')), m.SWSHeader(made)
+        self.assertEqual(a[ha.data_offset:ha.data_offset + 10 * ha.plane_size],
+                         b[hb.data_offset:hb.data_offset + 10 * hb.plane_size],
+                         'SWS to SWS: the pictures are not passed through unchanged')
+
+    def test_still_refuses_other_rates(self):
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        clip24 = os.path.join(self.tmp, 'C24.mov')
+        subprocess.run([ffmpeg, '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=gray:s=1920x1080:r=24',
+                        '-frames:v', '4', '-c:v', 'prores_ks', '-pix_fmt', 'yuv422p10le', clip24],
+                       check=True, stdin=subprocess.DEVNULL)
+        with self.assertRaisesRegex(ValueError, 'does not do frame-rate standards'):
+            m.convert_clip(clip24, 1, self._out(), video_standard='1080i50', split_fat32=False, log=lambda *a: None)
