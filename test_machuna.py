@@ -6881,6 +6881,58 @@ class TestStripOwnKey(unittest.TestCase):
             self.assertTrue(got == want, 'all 16 bits of the colour kept')
 
 
+class TestKeyKeepsAnyColourLabel(unittest.TestCase):
+    """Decision 68.3: a clip labelled with the RGB matrix still takes a
+    separate key and has its own key removed. ffmpeg reads that label as
+    "gbr" and its encoder will only parse "rgb", so copying the label across
+    failed with exit status 234 (a user's 50p ProRes 4444 wipe, 2026-10-29).
+    The matrix label is kept on the way through, and the length."""
+
+    W, H, N = 160, 90, 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='keytags_')
+        W, H, N = cls.W, cls.H, cls.N
+        cls.clip = os.path.join(cls.tmp, 'RGB_MATRIX.mov')
+        subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                        f"testsrc2=s={W}x{H}:r=50,trim=end_frame={N},format=yuva444p,"
+                        f"geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(X,{W // 2}),0,255)',"
+                        f"setparams=range=tv:colorspace=gbr:color_primaries=bt709:color_trc=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le',
+                        '-movflags', '+write_colr', cls.clip],
+                       check=True, stdin=subprocess.DEVNULL)
+        cls.key = os.path.join(cls.tmp, 'CIRCLE.png')
+        Image.fromarray(np.full((H, W), 255, np.uint8), 'L').convert('RGB').save(cls.key)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def _labels(self, path):
+        return m._first_video_stream(path).get('color_space')
+
+    def test_the_clip_reads_as_gbr(self):
+        self.assertEqual(self._labels(self.clip), 'gbr')
+        self.assertEqual(m.get_video_info(self.clip)['frame_count'], self.N)
+
+    def test_a_separate_key_merges_and_the_label_is_kept(self):
+        merged = m.merge_separate_key('clip', self.clip, None, self.key, None, self._dir(),
+                                      log=lambda *x: None)
+        info = m.get_video_info(merged['path'])
+        self.assertTrue(info['has_alpha'])
+        self.assertEqual(info['frame_count'], self.N)
+        self.assertEqual(self._labels(merged['path']), self._labels(self.clip))
+
+    def test_its_own_key_is_removed_and_the_label_is_kept(self):
+        bare = m.strip_own_key('clip', self.clip, None, self._dir(), log=lambda *x: None)
+        self.assertFalse(m.get_video_info(bare['path'])['has_alpha'])
+        self.assertEqual(self._labels(bare['path']), self._labels(self.clip))
+
+
 class TestSaveKey(unittest.TestCase):
     """Decision 68.3, Save Key As: the key a row will use, on its own as grey
     pictures (white solid, black clear) in the form a separate key is read

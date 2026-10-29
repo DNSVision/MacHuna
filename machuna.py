@@ -1617,6 +1617,20 @@ def separate_key_problem(fill: dict, key: dict) -> Optional[str]:
     return None
 
 
+def _colour_label_args(s: dict) -> list:
+    """A clip's colour labels as encoder options, so a copy is labelled as
+    its source. ffmpeg reads the RGB matrix as "gbr" but its encoder only
+    parses "rgb": copied as read, a ProRes 4444 labelled that way stopped
+    the key merge with exit status 234 (a user's wipe, 2026-10-29)."""
+    args = []
+    for opt, field in (('-colorspace', 'color_space'), ('-color_primaries', 'color_primaries'),
+                       ('-color_trc', 'color_transfer'), ('-color_range', 'color_range')):
+        value = s.get(field)
+        if value and value not in ('unknown', 'reserved'):
+            args += [opt, 'rgb' if (field, value) == ('color_space', 'gbr') else value]
+    return args
+
+
 def _first_video_stream(path: str) -> dict:
     """ffprobe's first video stream of a file, as a dict."""
     import json
@@ -1722,11 +1736,15 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
             ('range', 'color_range'), ('colorspace', 'color_space'),
             ('color_primaries', 'color_primaries'), ('color_trc', 'color_transfer'))
             if s.get(field) and s[field] not in ('unknown', 'reserved'))
+        # The key's frame times counted in the fill's own frames (settb): a
+        # still read at 25 fps put on a 50p fill had its times rounded to
+        # 1/25 s, and the merge made one frame more than the fill (85 became
+        # 86, a user's wipe, 2026-10-29).
         # The same pixel shape stated on both: a clip that records none (0:1)
         # left the fill unset and the key 1:1, and ffmpeg refused to merge
         # them (exit 234, 2026-10-28). Unset is square, so 1:1 is what it is.
         graph = (f'[0:v]setsar={sar},setpts=PTS-STARTPTS,format={base}[f];'
-                 f'[1:v]setsar={sar},{_key_loop(key_path, key_files)}setpts=N*{den}/({num}*TB),'
+                 f'[1:v]setsar={sar},{_key_loop(key_path, key_files)}settb={den}/{num},setpts=N*{den}/({num}*TB),'
                  f'{key_chain}{",setparams=" + tags if tags else ""}[k];'
                  f'[f][k]{_key_planes(base, keyed)}{setfield}[v]')
         out = os.path.join(work_dir, Path(path).stem + '.mov')
@@ -1737,11 +1755,7 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
             '-af', 'asetpts=PTS-STARTPTS', '-c:a', 'pcm_s24le']
         if setfield:
             cmd += ['-flags', '+ildct', '-field_order', 'tt' if 'tff' in setfield else 'bb']
-        for opt, field in (('-colorspace', 'color_space'), ('-color_primaries', 'color_primaries'),
-                           ('-color_trc', 'color_transfer'), ('-color_range', 'color_range')):
-            if s.get(field) and s[field] != 'unknown':
-                cmd += [opt, s[field]]
-        cmd += ['-movflags', '+write_colr', out]
+        cmd += _colour_label_args(s) + ['-movflags', '+write_colr', out]
         _run_ffmpeg(cmd, check=True)
         log(f"  Key: {os.path.basename(key_path) if key_path else 'sequence'} merged into "
             f"{os.path.basename(path)} ({fill_info['frames']} frames)")
@@ -1758,7 +1772,7 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
         fill_args = ['-i', first]
     base, keyed = ('gbrp16le', 'gbrap16le') if deep else ('gbrp', 'gbrap')
     graph = (f'[0:v]setsar=1,setpts=N/(25*TB),format={base}[f];'
-             f'[1:v]setsar=1,{_key_loop(key_path, key_files)}setpts=N/(25*TB),{_key_to_rgb(deep)}[k];'
+             f'[1:v]setsar=1,{_key_loop(key_path, key_files)}settb=1/25,setpts=N/(25*TB),{_key_to_rgb(deep)}[k];'
              f'[f][k]{_key_planes(base, keyed)}[v]')
     # Written numbered into one folder, then renamed into another: renamed in
     # place, a fill named like the numbers would overwrite frames not yet moved.
@@ -1819,11 +1833,7 @@ def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
                '-af', 'asetpts=PTS-STARTPTS', '-c:a', 'pcm_s24le']
         if setfield:
             cmd += ['-flags', '+ildct', '-field_order', 'tt' if 'tff' in setfield else 'bb']
-        for opt, field in (('-colorspace', 'color_space'), ('-color_primaries', 'color_primaries'),
-                           ('-color_trc', 'color_transfer'), ('-color_range', 'color_range')):
-            if s.get(field) and s[field] != 'unknown':
-                cmd += [opt, s[field]]
-        cmd += ['-movflags', '+write_colr', out]
+        cmd += _colour_label_args(s) + ['-movflags', '+write_colr', out]
         _run_ffmpeg(cmd, check=True)
         log(f"  Key removed from {os.path.basename(path)}")
         return {'path': out, 'files': None}
