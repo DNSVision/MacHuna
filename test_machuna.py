@@ -7099,6 +7099,98 @@ class TestDeskFileKey(unittest.TestCase):
                                  self.p['keyseq'][:2], self._dir(), log=lambda *a: None)
 
 
+class TestKeyFromAKeyedFile(unittest.TestCase):
+    """A keyed file chosen as a key gives its own key, not its brightness
+    (David, 2026-10-29: a MOV with alpha "looks like garbage" as a key). A
+    32-bit matte whose alpha is solid everywhere is still read by brightness.
+    The key in thirds: clear, solid, half (alpha 0, 255, 128), under a busy
+    colour picture, so brightness would give nothing like it."""
+
+    N = 3
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='keyalpha_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        N = cls.N
+        quiet = lambda *a: None
+
+        def run(*args):
+            subprocess.run([ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        src = f'testsrc2=s=1920x1080:r=50,trim=end_frame={N}'
+        cls.p = {}
+        cls.p['fillclip'] = os.path.join(cls.tmp, 'FILL.mov')
+        run('-f', 'lavfi', '-i', src, '-c:v', 'prores_ks', '-profile:v', '3',
+            '-pix_fmt', 'yuv422p10le', cls.p['fillclip'])
+        d = os.path.join(cls.tmp, 'sws'); os.makedirs(d)
+        cls.p['sws'] = m.convert_clip(cls.p['fillclip'], 1, d, video_standard='1080p50', log=quiet)
+        thirds = "if(lt(X,640),0,if(lt(X,1280),255,128))"
+        cls.p['keyclip'] = os.path.join(cls.tmp, 'OTHER.mov')
+        run('-f', 'lavfi', '-i', f"testsrc=s=1920x1080:r=50,trim=end_frame={N},format=yuva444p,"
+            f"geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='{thirds}'",
+            '-c:v', 'prores_ks', '-profile:v', '4', '-pix_fmt', 'yuva444p10le', cls.p['keyclip'])
+        a = np.zeros((1080, 1920), np.uint8)
+        a[:, 640:1280] = 255
+        a[:, 1280:] = 128
+        busy = np.dstack([np.tile(np.arange(1920, dtype=np.uint8), (1080, 1)),
+                          np.full((1080, 1920), 200, np.uint8),
+                          np.tile(np.arange(1080, dtype=np.uint8)[:, None], (1, 1920))])
+        kd = os.path.join(cls.tmp, 'KEYED'); os.makedirs(kd)
+        md = os.path.join(cls.tmp, 'MATTE32'); os.makedirs(md)
+        for n in range(N):
+            Image.fromarray(np.dstack([busy, a]), 'RGBA').save(os.path.join(kd, f'K_{n + 1:04d}.tga'))
+            Image.fromarray(np.dstack([a, a, a, np.full_like(a, 255)]), 'RGBA').save(
+                os.path.join(md, f'M_{n + 1:04d}.tga'))
+        cls.p['keyseq'] = sorted(os.path.join(kd, f) for f in os.listdir(kd))
+        cls.p['matte32'] = sorted(os.path.join(md, f) for f in os.listdir(md))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def test_which_keys_use_their_alpha(self):
+        self.assertTrue(m.separate_key_uses_alpha(self.p['keyclip']))
+        self.assertTrue(m.separate_key_uses_alpha(self.p['keyseq'][0], self.p['keyseq']))
+        self.assertFalse(m.separate_key_uses_alpha(self.p['matte32'][0], self.p['matte32']))
+        self.assertFalse(m.separate_key_uses_alpha(self.p['fillclip']))
+
+    def test_an_sws_takes_the_key_of_a_keyed_file(self):
+        for key, files in ((self.p['keyclip'], None), (self.p['keyseq'][0], self.p['keyseq']),
+                           (self.p['matte32'][0], self.p['matte32'])):
+            with self.subTest(key=os.path.basename(key)):
+                out = m.merge_separate_key('sws', self.p['sws'], None, key, files, self._dir(),
+                                           log=lambda *a: None)['path']
+                h = m.SWSHeader(out)
+                with m.open_sws(out) as f:
+                    for i in range(h.frame_count):
+                        f.seek(h.data_offset + h.plane_size * (h.frame_count + i))
+                        y = m._v210_plane_to_yuv(f.read(h.plane_size), 1920, 1080, 1)[0][..., 0]
+                        got = [int(y[540, x]) for x in (320, 960, 1600)]
+                        self.assertEqual(got[:2], [64, 940], f'frame {i}')
+                        self.assertLessEqual(abs(got[2] - 504), 1, f'frame {i}: {got[2]}')
+
+    def test_a_clip_takes_the_key_of_a_keyed_clip(self):
+        merged = m.merge_separate_key('clip', self.p['fillclip'], None, self.p['keyclip'], None,
+                                      self._dir(), log=lambda *a: None)['path']
+        # The fill is labelled tv only; the matte made from the key's alpha
+        # is labelled tv and BT.709 throughout: ffmpeg converted the key to
+        # match, and squeezed it to 64..943 of 1023 (2026-10-29).
+        self.assertIn(m._first_video_stream(self.p['fillclip']).get('color_space'), (None, 'unknown'))
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', merged,
+                              '-f', 'rawvideo', '-pix_fmt', 'yuva444p16le', '-'],
+                             capture_output=True).stdout
+        frames = np.frombuffer(raw, '<u2').reshape(-1, 4, 1080, 1920)[:, 3]
+        self.assertEqual(len(frames), self.N)
+        for f in frames:                      # the fill is 10-bit: its alpha too
+            got = [int(f[540, x]) >> 6 for x in (320, 960, 1600)]
+            self.assertEqual(got[:2], [0, 1023])
+            self.assertLessEqual(abs(got[2] - 514), 1, got[2])
+
+
 class TestKeyKeepsAnyColourLabel(unittest.TestCase):
     """Decision 68.3: a clip labelled with the RGB matrix still takes a
     separate key and has its own key removed. ffmpeg reads that label as

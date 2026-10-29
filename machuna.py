@@ -1692,6 +1692,51 @@ def _key_input_args(key_path: str, key_files: Optional[list], tmp: str) -> list:
     return ['-i', key_path]
 
 
+def separate_key_uses_alpha(key_path: str, key_files: Optional[list] = None) -> bool:
+    """Whether a chosen key's own alpha is the key, rather than its
+    brightness: it has an alpha with clear areas on its first, middle or last
+    frame (David, 2026-10-29: a keyed MOV chosen as a key "looks like garbage";
+    taking its key is what was meant). A matte exported as 32 bits with a
+    solid alpha is still read by its brightness."""
+    if key_files or Path(key_path).suffix.lower() in _STILL_EXTS:
+        frames = list(key_files) if key_files else [key_path]
+        for f in {frames[0], frames[len(frames) // 2], frames[-1]}:
+            if _frame_has_key(f):
+                with _open_frame(f) as img:
+                    if img.convert('RGBA').getchannel('A').getextrema()[0] < 255:
+                        return True
+        return False
+    info = get_video_info(key_path)
+    if not info['has_alpha']:
+        return False
+    n = max(1, info['frame_count'])
+    pick = '+'.join(f'eq(n\\,{i})' for i in sorted({0, n // 2, n - 1}))
+    raw = subprocess.run([_get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', key_path,
+                          '-vf', f'select={pick},alphaextract,format=gray', '-fps_mode', 'passthrough',
+                          '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+                         capture_output=True, stdin=subprocess.DEVNULL).stdout
+    return bool(raw) and min(raw) < 255
+
+
+def _key_from_alpha(key_path: str, key_files: Optional[list], work_dir: str):
+    """The key to read by brightness: the chosen one, or, when its own alpha is
+    the key (`separate_key_uses_alpha`), that alpha as a grey matte written
+    into `work_dir` exactly (frames as `save_key` writes them; a clip lossless,
+    FFV1 at video levels). Returns (key_path, key_files)."""
+    if not separate_key_uses_alpha(key_path, key_files):
+        return key_path, key_files
+    kind = ('sequence' if key_files else
+            'still' if Path(key_path).suffix.lower() in _STILL_EXTS else 'clip')
+    base = Path(os.path.dirname(key_path) if key_files else key_path).stem + '_ALPHA'
+    out = os.path.join(work_dir, base + ('.mkv' if kind == 'clip' else
+                                         '' if kind == 'sequence' else
+                                         '.tga' if key_path.lower().endswith('.tga') else '.png'))
+    save_key(kind, key_path, key_files, out, base, log=lambda *a: None, _lossless=True)
+    if kind == 'sequence':
+        return None, sorted(os.path.join(out, f) for f in os.listdir(out))
+    return out, None
+
+
 # A key for an SWS or an EIF (decision 68.3, part 2). The working copy keeps
 # the fill byte for byte and its sound; only the key changes. An SWS holds its
 # key as v210 planes after the fill, an EIF in bits 29:20 of every pixel word.
@@ -1878,6 +1923,8 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
     clip of the same name keeping its rate, field order, colour tag, pixel
     shape and sound. Refuses a key that does not fit (`separate_key_problem`):
     checked again here, as the files may have changed since they were chosen."""
+    key_path, key_files = _key_from_alpha(key_path, key_files, work_dir)
+    key_path = key_path or key_files[0]
     fill_info = (_desk_frames_info(kind, path) if kind in _DESK_KINDS
                  else separate_key_info(path, files))
     problem = separate_key_problem(fill_info, separate_key_info(key_path, key_files))
@@ -1923,10 +1970,13 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
         # tagged differently, ffmpeg converts it to match before merging, and
         # black came out 64, not 0 (a fill tagged tv and BT.709, 2026-10-28).
         # Its values are already what we want.
-        tags = ':'.join(f'{opt}={s[field]}' for opt, field in (
+        # All four, "unknown" where the fill has none: a fill with no range
+        # label and a key labelled tv (Save Key's mattes are) had the key
+        # squeezed again, 119 to 872 in the SWS (2026-10-29).
+        tags = ':'.join(f'{opt}={s[field] if s.get(field) not in (None, "", "reserved") else "unknown"}'
+                        for opt, field in (
             ('range', 'color_range'), ('colorspace', 'color_space'),
-            ('color_primaries', 'color_primaries'), ('color_trc', 'color_transfer'))
-            if s.get(field) and s[field] not in ('unknown', 'reserved'))
+            ('color_primaries', 'color_primaries'), ('color_trc', 'color_transfer')))
         # The key's frame times counted in the fill's own frames (settb): a
         # still read at 25 fps put on a 50p fill had its times rounded to
         # 1/25 s, and the merge made one frame more than the fill (85 became
@@ -2068,7 +2118,7 @@ def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
 
 def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
              key_path: Optional[str] = None, key_files: Optional[list] = None,
-             log=print) -> dict:
+             log=print, _lossless: bool = False) -> dict:
     """The key a row will use, saved on its own as grey pictures (white
     solid, black clear): the form `merge_separate_key` reads a key in, so a
     saved key can be changed elsewhere and brought back (decision 68.3, Save
@@ -2098,25 +2148,9 @@ def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
             if sar.startswith('0'):
                 sar = '1'
             order = s.get('field_order', 'progressive')
-            setfield = (',setfield=tff' if order in ('tt', 'tb') else
-                        ',setfield=bff' if order in ('bb', 'bt') else '')
-            # The key's full range to video levels, black 64 and white 940,
-            # as a matte is read back (`_key_to_yuv`). Carried across at full
-            # range and mapped here: ffmpeg's own conversion of a 10- or 16-bit
-            # grey gave white 943 (measured), and through 8-bit grey it was 940
-            # but lost the key's precision.
-            cmd = [ffmpeg, '-y', '-i', path,
-                   '-vf', f'setsar={sar},setpts=PTS-STARTPTS,alphaextract,format=gray10le,'
-                          f'setparams=range=pc,scale=in_range=pc:out_range=pc,format=yuv422p10le,'
-                          f"lutyuv=y='floor(val*876/1023+64.5)':u=512:v=512,setparams=range=tv{setfield}",
-                   '-map', '0:v:0', '-an', '-c:v', 'prores_ks', '-profile:v', '3',
-                   '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709',
-                   '-color_trc', 'bt709']
-            if setfield:
-                cmd += ['-flags', '+ildct+ilme', '-field_order', 'tt' if 'tff' in setfield else 'bb']
-            cmd += [out]
-            _run_ffmpeg(cmd, check=True)
-            frames = get_video_info(out)['frame_count']
+            field = 'tff' if order in ('tt', 'tb') else 'bff' if order in ('bb', 'bt') else ''
+            frames = _write_matte(_clip_alpha_y10(path), s['width'], s['height'],
+                                  s.get('r_frame_rate') or '25/1', out, field, sar, _lossless)
             log(f"  Key saved: {os.path.basename(out)} ({frames} frames)")
             return {'path': out, 'frames': frames}
 
@@ -2154,37 +2188,54 @@ def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _save_desk_key(kind: str, path: str, out: str, ffmpeg: str, log=print) -> dict:
-    """An SWS's or EIF's key as a ProRes 422 HQ matte at `out`: its key values
-    written as Y unchanged (they are already 64 to 940), the colour at 512, at
-    the file's rate and, for an interlaced SWS, top field first."""
-    if kind == 'sws':
-        h = SWSHeader(path)
-        if not h.has_key:
-            raise ValueError(f"{os.path.basename(path)} has no key to save.")
-        width, height, n, fps = h.width, h.height, h.frame_count, h.fps
-        interlaced = 'i' in h.standard
-        keys = _sws_key_y10(path)
-    else:
-        h = EIFHeader(path)
-        width, height, n, fps, interlaced = 1920, 1080, h.frame_count, h.fps, False
-        keys = _eif_key_y10(path)
-    cmd = [ffmpeg, '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'yuv422p10le',
-           '-s', f'{width}x{height}', '-framerate', _fps_expr(fps), '-i', '-',
-           '-vf', 'setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709'
-                  + (',setfield=tff' if interlaced else ''),
-           '-an', '-c:v', 'prores_ks', '-profile:v', '3',
+def _clip_alpha_y10(path: str):
+    """A clip's own key, frame by frame, as Y (64 to 940): its alpha read at
+    16 bits (exact from 8- and 12-bit alpha, measured 2026-10-29) and mapped
+    here. ffmpeg's own grey-to-video conversion put a mid grey 2 of 876 high."""
+    s = _first_video_stream(path)
+    w, h = int(s['width']), int(s['height'])
+    proc = subprocess.Popen([_get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', path, '-map', '0:v:0',
+                             '-vf', 'alphaextract', '-f', 'rawvideo', '-pix_fmt', 'gray16le', '-'],
+                            stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            _check_stop()
+            buf = proc.stdout.read(w * h * 2)
+            if len(buf) < w * h * 2:
+                break
+            a = np.frombuffer(buf, '<u2').reshape(h, w).astype(np.uint32)
+            yield (64 + (a * 876 + 32767) // 65535).astype(np.uint16)
+    finally:
+        proc.kill()
+        proc.wait()
+        proc.stdout.close()
+
+
+def _write_matte(keys, width: int, height: int, rate: str, out: str, field: str = '',
+                 sar: str = '1', lossless: bool = False) -> int:
+    """A key as a matte clip at `out`: each frame's Y (64 to 940) written as it
+    is, the colour at 512, at `rate`, top or bottom field first when `field`
+    says so. ProRes 422 HQ for Save Key As; lossless FFV1 for a working copy.
+    Returns the frames written."""
+    cmd = [_get_ffmpeg_path('ffmpeg'), '-v', 'error', '-y', '-f', 'rawvideo',
+           '-pix_fmt', 'yuv422p10le', '-s', f'{width}x{height}', '-framerate', rate, '-i', '-',
+           '-vf', f'setsar={sar},setparams=range=tv:colorspace=bt709:color_primaries=bt709:'
+                  f'color_trc=bt709' + (f',setfield={field}' if field else ''),
+           '-an'] + (['-c:v', 'ffv1', '-level', '3'] if lossless else
+                     ['-c:v', 'prores_ks', '-profile:v', '3']) + [
            '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709',
            '-color_trc', 'bt709']
-    if interlaced:
-        cmd += ['-flags', '+ildct+ilme', '-field_order', 'tt']
+    if field:
+        cmd += ['-flags', '+ildct+ilme', '-field_order', 'tt' if field == 'tff' else 'bb']
     cmd += [out]
     chroma = np.full((height, (width + 1) // 2), 512, '<u2').tobytes() * 2
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE)
+    n = 0
     try:
         for y in keys:
             proc.stdin.write(y.astype('<u2').tobytes() + chroma)
+            n += 1
         proc.stdin.close()
         err = proc.stderr.read()
         if proc.wait() != 0:
@@ -2194,6 +2245,26 @@ def _save_desk_key(kind: str, path: str, out: str, ffmpeg: str, log=print) -> di
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+    if n == 0:
+        raise ValueError(f"{os.path.basename(out)}: no frames to save.")
+    return n
+
+
+def _save_desk_key(kind: str, path: str, out: str, ffmpeg: str, log=print) -> dict:
+    """An SWS's or EIF's key as a ProRes 422 HQ matte at `out`: its key values
+    written as Y unchanged (they are already 64 to 940), at the file's rate
+    and, for an interlaced SWS, top field first."""
+    if kind == 'sws':
+        h = SWSHeader(path)
+        if not h.has_key:
+            raise ValueError(f"{os.path.basename(path)} has no key to save.")
+        width, height, fps, field = h.width, h.height, h.fps, 'tff' if 'i' in h.standard else ''
+        keys = _sws_key_y10(path)
+    else:
+        h = EIFHeader(path)
+        width, height, fps, field = 1920, 1080, h.fps, ''
+        keys = _eif_key_y10(path)
+    n = _write_matte(keys, width, height, _fps_expr(fps), out, field)
     log(f"  Key saved: {os.path.basename(out)} ({n} frames)")
     return {'path': out, 'frames': n}
 
