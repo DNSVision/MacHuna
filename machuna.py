@@ -1600,6 +1600,10 @@ def separate_key_info(path: str, files: Optional[list] = None) -> dict:
     if Path(path).suffix.lower() in _STILL_EXTS:
         with Image.open(path) as img:
             return {'frames': 1, 'width': img.width, 'height': img.height}
+    if Path(path).suffix.lower() == '.eif':
+        return _desk_frames_info('eif', path)
+    if Path(path).suffix.lower() == '.sws' or resolve_split(path):
+        return _desk_frames_info('sws', path)
     info = get_video_info(path)
     return {'frames': info['frame_count'], 'width': info['width'], 'height': info['height']}
 
@@ -1688,6 +1692,182 @@ def _key_input_args(key_path: str, key_files: Optional[list], tmp: str) -> list:
     return ['-i', key_path]
 
 
+# A key for an SWS or an EIF (decision 68.3, part 2). The working copy keeps
+# the fill byte for byte and its sound; only the key changes. An SWS holds its
+# key as v210 planes after the fill, an EIF in bits 29:20 of every pixel word.
+# The ordinary routes then convert the copy as any keyed SWS or EIF.
+
+_DESK_KINDS = ('sws', 'eif')
+
+
+def _desk_frames_info(kind: str, path: str) -> dict:
+    """Frames and size of an SWS or EIF, from its header."""
+    if kind == 'eif':
+        return {'frames': EIFHeader(path).frame_count, 'width': 1920, 'height': 1080}
+    h = SWSHeader(path)
+    return {'frames': h.frame_count, 'width': h.width, 'height': h.height}
+
+
+def _key_y10(key_path: str, key_files: Optional[list], n: int, width: int, height: int):
+    """The key's brightness as an SWS or EIF holds a key, black 64 to white
+    940: one (height, width) array a frame for `n` frames, a one-frame key
+    repeated. Mapped here, because ffmpeg's own conversion gave white 937 for
+    a grey PNG and 940 for an RGB one (measured 2026-10-29). Grey has
+    R = G = B; a coloured key counts by its BT.709 luma."""
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    one = _key_loop(key_path, key_files) != ''
+    tmp = tempfile.mkdtemp(prefix='machuna-keyy-')
+    proc = None
+    try:
+        # Read at the key's own depth and scaled here: ffmpeg widening 8 bits
+        # to 16 made white 65283, not 65535, and a 10-bit clip's 940 came back
+        # 937 through RGB (measured 2026-10-29). A video-levels clip gives its
+        # own luma (exact as 16 bits: Y10 << 6); a picture or an RGB clip its
+        # brightness, a picture's grey being full range.
+        first = key_files[0] if key_files else key_path
+        s = _first_video_stream(first)
+        fmt = s.get('pix_fmt') or ''
+        picture = bool(key_files) or Path(key_path).suffix.lower() in _STILL_EXTS
+        luma_direct = (not picture and fmt.startswith('yuv') and not fmt.startswith('yuvj')
+                       and s.get('color_range') != 'pc')
+        deep = luma_direct or any(t in fmt for t in ('48', '64', '10', '12', '14', '16'))
+        top, dtype = (65535, '<u2') if deep else (255, 'u1')
+        out_fmt = 'yuv444p16le' if luma_direct else ('rgb48le' if deep else 'rgb24')
+        cmd = ([ffmpeg, '-v', 'error'] + _key_input_args(key_path, key_files, tmp) +
+               ['-map', '0:v:0', '-frames:v', '1' if one else str(n)] +
+               (['-vf', 'scale=in_range=pc:out_range=pc'] if picture else []) +
+               ['-sws_flags', 'accurate_rnd+full_chroma_int',
+                '-f', 'rawvideo', '-pix_fmt', out_fmt, '-'])
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        size, y = width * height * 3 * (2 if deep else 1), None
+        for i in range(n):
+            if y is None or not one:
+                _check_stop()
+                buf = proc.stdout.read(size)
+                if len(buf) != size:
+                    raise ValueError(f"The key ended before frame {i + 1}.")
+                if luma_direct:
+                    luma = np.frombuffer(buf, '<u2')[:width * height].reshape(height, width)
+                    y10 = (luma.astype(np.uint32) + 32) >> 6
+                else:
+                    rgb = np.frombuffer(buf, dtype).reshape(height, width, 3).astype(np.uint32)
+                    lum = (rgb[..., 0] * 2126 + rgb[..., 1] * 7152 + rgb[..., 2] * 722 + 5000) // 10000
+                    y10 = 64 + (lum * 876 + top // 2) // top
+                y = np.clip(y10, 64, 940).astype(np.uint16)
+            yield y
+    finally:
+        if proc is not None:
+            proc.kill()
+            proc.wait()
+            proc.stdout.close()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _y10_to_v210_be(y, width: int, height: int) -> bytes:
+    """One key plane as an SWS holds it: big-endian v210, the key as Y, the
+    colour at 512, each line padded to 128 bytes (`_v210_plane_size`)."""
+    padded = ((width + 47) // 48) * 48
+    Y = np.full((height, padded), 64, np.uint32)
+    Y[:, :width] = y
+    Y = Y.reshape(height, padded // 6, 6)
+    C = np.full(Y.shape[:2], 512, np.uint32)
+    w = np.stack([C | (Y[..., 0] << 10) | (C << 20),
+                  Y[..., 1] | (C << 10) | (Y[..., 2] << 20),
+                  C | (Y[..., 3] << 10) | (C << 20),
+                  Y[..., 4] | (C << 10) | (Y[..., 5] << 20)], axis=2)
+    return w.reshape(height, -1).astype('<u4').byteswap().tobytes()
+
+
+def _sws_key_y10(path: str):
+    """An SWS's own key, frame by frame, as Y (64 to 940)."""
+    h = SWSHeader(path)
+    n, ps = h.frame_count, h.plane_size
+    with open_sws(path) as f:
+        for i in range(n):
+            _check_stop()
+            f.seek(h.data_offset + ps * (n + i))
+            raw = f.read(ps)
+            if len(raw) != ps:
+                raise ValueError(f"{os.path.basename(path)} is shorter than its header says")
+            yield np.rint(_v210_plane_to_yuv(raw, h.width, h.height, 1)[0][..., 0]).astype(np.uint16)
+
+
+def _eif_key_y10(path: str):
+    """An EIF's own key, frame by frame (bits 29:20 of every word)."""
+    h = EIFHeader(path)
+    with open(path, 'rb') as f:
+        f.seek(h.video_start)
+        for _ in range(h.frame_count):
+            _check_stop()
+            words = np.frombuffer(f.read(3 * _EIF_UNIT_BYTES), '<u4').reshape(1080, 1920)
+            yield ((words >> 20) & 0x3FF).astype(np.uint16)
+
+
+def _sws_with_key(path: str, keys, work_dir: str, log=print) -> str:
+    """A copy of the SWS at `path` in `work_dir`, same name, with `keys` (Y
+    arrays, one a frame) as its key planes, or with no key when `keys` is
+    None. Fill planes and sound are copied byte for byte; the header is the
+    source's, its key and sound fields set for the new layout as
+    `build_sws_header` sets them, and its planes starting at 512."""
+    h = SWSHeader(path)
+    n, ps = h.frame_count, h.plane_size
+    if n == 0 or ps != _v210_plane_size(h.width, h.height):
+        raise ValueError(f"{os.path.basename(path)}: its planes cannot be read safely "
+                         f"(plane size {ps:,} for {h.width}×{h.height}).")
+    stem = Path(h.parts[0]).parent.stem if h.parts else Path(path).stem
+    with open_sws(path) as f:
+        hdr = bytearray(f.read(SWS_HEADER_SIZE))
+    tmp = os.path.join(work_dir, 'planes')
+    os.makedirs(tmp, exist_ok=True)
+    fill = os.path.join(tmp, 'fill.v210')
+    _copy_range(path, h.data_offset, ps * n, fill)
+    key = None
+    if keys is not None:
+        key = os.path.join(tmp, 'key.v210')
+        with open(key, 'wb') as out:
+            for y in keys:
+                out.write(_y10_to_v210_be(y, h.width, h.height))
+    audio = None
+    if h.has_audio:
+        audio = os.path.join(tmp, 'audio.raw')
+        _copy_range(path, h.audio_offset, h.total_size - h.audio_offset, audio)
+    audio_offset = SWS_HEADER_SIZE + ps * n * (2 if key else 1)
+    total = audio_offset + (os.path.getsize(audio) if audio else 0)
+    struct.pack_into('>I', hdr, OFF_DATA_START, SWS_HEADER_SIZE)
+    struct.pack_into('>I', hdr, OFF_PLAY_CNT, n if key else 0)
+    struct.pack_into('>I', hdr, 0x1B4, (ps * n + SWS_HEADER_SIZE) // 32 if key else 0)
+    struct.pack_into('>I', hdr, 0x1CC, total & 0xFFFFFFFF)
+    struct.pack_into('>I', hdr, OFF_AUD_OFF, audio_offset // 32 if audio else 0)
+    out = os.path.join(work_dir, stem + '.SWS')
+    write_sws(out, fill, key, bytes(hdr), split_fat32=_volume_is_fat(work_dir),
+              frame_count=n, audio_raw=audio, log=lambda *a: None)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def _eif_with_key(path: str, keys, work_dir: str, log=print) -> str:
+    """A copy of the EIF at `path` in `work_dir`, same name, with `keys` as
+    its key, or solid (940, as Ignore key writes) when `keys` is None. Only
+    bits 29:20 of each word change; its .eaf sound is copied beside it."""
+    h = EIFHeader(path)
+    out = os.path.join(work_dir, Path(path).name)
+    mask = np.uint32(~(0x3FF << 20) & 0xFFFFFFFF)
+    with open(path, 'rb') as f, open(out, 'wb') as o:
+        o.write(f.read(h.video_start))
+        for _ in range(h.frame_count):
+            _check_stop()
+            words = np.frombuffer(f.read(3 * _EIF_UNIT_BYTES), '<u4').reshape(1080, 1920)
+            k = (next(keys).astype(np.uint32) if keys is not None
+                 else np.uint32(940))
+            o.write(((words & mask) | (k << 20)).astype('<u4').tobytes())
+        shutil.copyfileobj(f, o, 16 * 1024 * 1024)
+    eaf = eaf_path_for(path)
+    if os.path.exists(eaf):
+        shutil.copyfile(eaf, eaf_path_for(out))
+    return out
+
+
 def merge_separate_key(kind: str, path: str, files: Optional[list],
                        key_path: str, key_files: Optional[list], work_dir: str,
                        log=print) -> dict:
@@ -1698,10 +1878,21 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
     clip of the same name keeping its rate, field order, colour tag, pixel
     shape and sound. Refuses a key that does not fit (`separate_key_problem`):
     checked again here, as the files may have changed since they were chosen."""
-    fill_info = separate_key_info(path, files)
+    fill_info = (_desk_frames_info(kind, path) if kind in _DESK_KINDS
+                 else separate_key_info(path, files))
     problem = separate_key_problem(fill_info, separate_key_info(key_path, key_files))
     if problem:
         raise ValueError(problem)
+    if kind in _DESK_KINDS:
+        keys = _key_y10(key_path, key_files, fill_info['frames'],
+                        fill_info['width'], fill_info['height'])
+        try:
+            out = (_eif_with_key if kind == 'eif' else _sws_with_key)(path, keys, work_dir, log)
+        finally:
+            keys.close()
+        log(f"  Key: {os.path.basename(key_path)} put into {os.path.basename(path)} "
+            f"({fill_info['frames']} frames)")
+        return {'path': out, 'files': None}
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     tmp = os.path.join(work_dir, 'inputs')
     os.makedirs(tmp, exist_ok=True)
@@ -1804,7 +1995,13 @@ def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
     {'path', 'files'}: a sequence as frames of the same names (TGAs, or 16-bit
     PNGs for a 16-bit PNG fill), a still as one, a clip as a lossless clip of
     the same name keeping its rate, frame count, field order, colour tag,
-    pixel shape and sound. The colour is untouched; only the key goes."""
+    pixel shape and sound. The colour is untouched; only the key goes. An SWS
+    comes back with no key plane, an EIF solid (key 940, as Ignore key writes
+    one): the fill and sound byte for byte either way."""
+    if kind in _DESK_KINDS:
+        out = (_eif_with_key if kind == 'eif' else _sws_with_key)(path, None, work_dir, log)
+        log(f"  Key removed from {os.path.basename(path)}")
+        return {'path': out, 'files': None}
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     if kind == 'clip':
         s = _first_video_stream(path)
@@ -1891,6 +2088,8 @@ def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
             merged = merge_separate_key(kind, path, files, key_path, key_files, work, log=log)
             path, files = merged['path'], merged['files']
         ffmpeg = _get_ffmpeg_path('ffmpeg')
+        if kind in _DESK_KINDS:
+            return _save_desk_key(kind, path, out, ffmpeg, log)
         if kind == 'clip':
             if not get_video_info(path)['has_alpha']:
                 raise ValueError(f"{os.path.basename(path)} has no key to save.")
@@ -1953,6 +2152,50 @@ def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
         raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _save_desk_key(kind: str, path: str, out: str, ffmpeg: str, log=print) -> dict:
+    """An SWS's or EIF's key as a ProRes 422 HQ matte at `out`: its key values
+    written as Y unchanged (they are already 64 to 940), the colour at 512, at
+    the file's rate and, for an interlaced SWS, top field first."""
+    if kind == 'sws':
+        h = SWSHeader(path)
+        if not h.has_key:
+            raise ValueError(f"{os.path.basename(path)} has no key to save.")
+        width, height, n, fps = h.width, h.height, h.frame_count, h.fps
+        interlaced = 'i' in h.standard
+        keys = _sws_key_y10(path)
+    else:
+        h = EIFHeader(path)
+        width, height, n, fps, interlaced = 1920, 1080, h.frame_count, h.fps, False
+        keys = _eif_key_y10(path)
+    cmd = [ffmpeg, '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'yuv422p10le',
+           '-s', f'{width}x{height}', '-framerate', _fps_expr(fps), '-i', '-',
+           '-vf', 'setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709'
+                  + (',setfield=tff' if interlaced else ''),
+           '-an', '-c:v', 'prores_ks', '-profile:v', '3',
+           '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709',
+           '-color_trc', 'bt709']
+    if interlaced:
+        cmd += ['-flags', '+ildct+ilme', '-field_order', 'tt']
+    cmd += [out]
+    chroma = np.full((height, (width + 1) // 2), 512, '<u2').tobytes() * 2
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE)
+    try:
+        for y in keys:
+            proc.stdin.write(y.astype('<u2').tobytes() + chroma)
+        proc.stdin.close()
+        err = proc.stderr.read()
+        if proc.wait() != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, None, err)
+    finally:
+        keys.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    log(f"  Key saved: {os.path.basename(out)} ({n} frames)")
+    return {'path': out, 'frames': n}
 
 
 def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,

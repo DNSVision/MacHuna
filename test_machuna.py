@@ -6881,6 +6881,224 @@ class TestStripOwnKey(unittest.TestCase):
             self.assertTrue(got == want, 'all 16 bits of the colour kept')
 
 
+class TestDeskFileKey(unittest.TestCase):
+    """Decision 68.3, part 2: a separate key for an SWS or EIF row, its own key
+    removed, and its key saved. The working copy must keep the fill and the
+    sound byte for byte and change only the key, read back exactly: black
+    64, white 940, mid grey 504, on every frame. Then the ordinary routes
+    convert it as any keyed SWS or EIF."""
+
+    N = 4
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='deskkey_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        N = cls.N
+        quiet = lambda *a: None
+
+        def run(*args):
+            subprocess.run([ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        src = f'testsrc2=s=320x180:r=50,trim=end_frame={N}'
+        cls.p = {}
+        plain = os.path.join(cls.tmp, 'FILL.mov')
+        run('-f', 'lavfi', '-i', src, '-f', 'lavfi', '-i', f'sine=f=440:d={N / 50}:sample_rate=48000',
+            '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le', '-c:a', 'pcm_s24le',
+            '-shortest', plain)
+        keyed = os.path.join(cls.tmp, 'WIPE.mov')
+        run('-f', 'lavfi', '-i', f"{src},format=yuva444p,geq=lum='lum(X,Y)':cb='cb(X,Y)':"
+            f"cr='cr(X,Y)':a='if(lt(X,160),0,255)'", '-f', 'lavfi', '-i',
+            f'sine=f=440:d={N / 50}:sample_rate=48000', '-c:v', 'prores_ks', '-profile:v', '4',
+            '-pix_fmt', 'yuva444p10le', '-c:a', 'pcm_s24le', '-shortest', keyed)
+        for name, clip in (('plain', plain), ('keyed', keyed)):
+            d = os.path.join(cls.tmp, name); os.makedirs(d)
+            cls.p[name] = m.convert_clip(clip, 1, d, video_standard='1080p50', log=quiet)
+        d = os.path.join(cls.tmp, 'eif'); os.makedirs(d)
+        cls.p['eif'] = m.convert_clip_to_eif(keyed, d, log=quiet, out_name='WIPE')
+        cls.n = m.SWSHeader(cls.p['plain']).frame_count
+        # The key: black, white and mid grey in thirds, 1920x1080.
+        band = np.zeros((1080, 1920), np.uint8)
+        band[:, 640:1280] = 255
+        band[:, 1280:] = 128
+        cls.p['still'] = os.path.join(cls.tmp, 'KEY.png')
+        Image.fromarray(band, 'L').save(cls.p['still'])      # grey: ffmpeg made white 937
+        kd = os.path.join(cls.tmp, 'KEYSEQ'); os.makedirs(kd)
+        for n in range(max(cls.n, m.EIFHeader(cls.p['eif']).frame_count)):
+            Image.fromarray(np.dstack([band] * 3), 'RGB').save(os.path.join(kd, f'K_{n + 1:04d}.tga'))
+        cls.p['keyseq'] = sorted(os.path.join(kd, f) for f in os.listdir(kd))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _dir(self):
+        return tempfile.mkdtemp(dir=self.tmp)
+
+    def _sws_parts(self, path):
+        h = m.SWSHeader(path)
+        n, ps = h.frame_count, h.plane_size
+        with m.open_sws(path) as f:
+            f.seek(h.data_offset)
+            fill = f.read(ps * n)
+            key = f.read(ps * n) if h.has_key else None
+            sound = None
+            if h.has_audio:
+                f.seek(h.audio_offset)
+                sound = f.read()
+        return h, fill, key, sound
+
+    @staticmethod
+    def _thirds(y):
+        return [int(y[540, x]) for x in (320, 960, 1600)]
+
+    def test_a_key_put_into_a_keyless_sws(self):
+        for key, files in ((self.p['still'], None), (self.p['keyseq'][0], self.p['keyseq'][:self.n])):
+            with self.subTest(key=os.path.basename(key)):
+                out = m.merge_separate_key('sws', self.p['plain'], None, key, files, self._dir(),
+                                           log=lambda *a: None)['path']
+                self.assertEqual(os.path.basename(out), '1.SWS')
+                h0, fill0, key0, sound0 = self._sws_parts(self.p['plain'])
+                h1, fill1, key1, sound1 = self._sws_parts(out)
+                self.assertIsNone(key0)
+                self.assertTrue(h1.has_key)
+                self.assertEqual(h1.frame_count, h0.frame_count)
+                self.assertTrue(fill1 == fill0, 'the fill must be byte for byte the same')
+                self.assertIsNotNone(sound0)
+                self.assertTrue(sound1 == sound0, 'the sound must be byte for byte the same')
+                for f in range(h1.frame_count):
+                    y = m._v210_plane_to_yuv(key1[f * h1.plane_size:(f + 1) * h1.plane_size],
+                                             1920, 1080, 1)[0][..., 0]
+                    self.assertEqual(self._thirds(y), [64, 940, 504], f'frame {f}')
+
+    def test_the_keyed_sws_converts_on_the_ordinary_route(self):
+        merged = m.merge_separate_key('sws', self.p['plain'], None, self.p['still'], None,
+                                      self._dir(), log=lambda *a: None)['path']
+        d = self._dir()
+        m.convert_sws_to_sws(merged, 7, d, '1080p50', log=lambda *a: None)
+        h, fill, key, _ = self._sws_parts(os.path.join(d, '7.SWS'))
+        self.assertTrue(h.has_key)
+        y = m._v210_plane_to_yuv(key[:h.plane_size], 1920, 1080, 1)[0][..., 0]
+        self.assertEqual(self._thirds(y), [64, 940, 504])
+        self.assertTrue(fill == self._sws_parts(self.p['plain'])[1])
+
+    def test_a_split_sws_takes_a_key(self):
+        """A split SWS (a folder of 2 GB parts on a stick) is read as one."""
+        h, fill, _, sound = self._sws_parts(self.p['plain'])
+        d = self._dir()
+        with m.open_sws(self.p['plain']) as f:
+            header = f.read(m.SWS_HEADER_SIZE)
+        raw = {}
+        for name, data in (('fill', fill), ('sound', sound)):
+            raw[name] = os.path.join(d, name)
+            Path(raw[name]).write_bytes(data)
+        split = os.path.join(d, '1.SWS')
+        old = m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK
+        m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = 8 * 1024 * 1024, 16 * 1024 * 1024
+        try:
+            m.write_sws(split, raw['fill'], None, header, True, frame_count=h.frame_count,
+                        audio_raw=raw['sound'], log=lambda *a: None)
+        finally:
+            m.FAT32_LIMIT, m.SWS_SPLIT_CHUNK = old
+        self.assertGreater(len(m.split_parts(split)), 1)
+        out = m.merge_separate_key('sws', split, None, self.p['still'], None, self._dir(),
+                                   log=lambda *a: None)['path']
+        self.assertEqual(os.path.basename(out), '1.SWS')
+        h1, fill1, key1, sound1 = self._sws_parts(out)
+        self.assertTrue(fill1 == fill and sound1 == sound)
+        y = m._v210_plane_to_yuv(key1[:h1.plane_size], 1920, 1080, 1)[0][..., 0]
+        self.assertEqual(self._thirds(y), [64, 940, 504])
+
+    def test_an_sws_loses_its_own_key(self):
+        out = m.strip_own_key('sws', self.p['keyed'], None, self._dir(), log=lambda *a: None)['path']
+        h0, fill0, key0, sound0 = self._sws_parts(self.p['keyed'])
+        h1, fill1, key1, sound1 = self._sws_parts(out)
+        self.assertIsNotNone(key0)
+        self.assertFalse(h1.has_key)
+        self.assertIsNone(key1)
+        self.assertTrue(fill1 == fill0)
+        self.assertTrue(sound1 == sound0)
+        self.assertEqual(os.path.getsize(out), h1.audio_offset + len(sound1))
+
+    def _eif_words(self, path):
+        h = m.EIFHeader(path)
+        with open(path, 'rb') as f:
+            head = f.read(h.video_start)
+            words = np.frombuffer(f.read(3 * m._EIF_UNIT_BYTES * h.frame_count), '<u4')
+            tail = f.read()
+        return h, head, words.reshape(h.frame_count, 1080, 1920), tail
+
+    def test_a_key_put_into_an_eif(self):
+        n = m.EIFHeader(self.p['eif']).frame_count
+        out = m.merge_separate_key('eif', self.p['eif'], None, self.p['keyseq'][0],
+                                   self.p['keyseq'][:n], self._dir(), log=lambda *a: None)['path']
+        h0, head0, w0, tail0 = self._eif_words(self.p['eif'])
+        h1, head1, w1, tail1 = self._eif_words(out)
+        self.assertTrue(head1 == head0 and tail1 == tail0)
+        self.assertTrue(np.array_equal(w1 & 0xC00FFFFF, w0 & 0xC00FFFFF),
+                        'the picture bits must be untouched')
+        for f in range(n):
+            self.assertEqual(self._thirds((w1[f] >> 20) & 0x3FF), [64, 940, 504], f'frame {f}')
+        eaf = m.eaf_path_for(self.p['eif'])
+        self.assertTrue(os.path.exists(eaf))
+        with open(eaf, 'rb') as a, open(m.eaf_path_for(out), 'rb') as b:
+            self.assertTrue(a.read() == b.read(), 'the .eaf comes too')
+
+    def test_an_eif_loses_its_own_key(self):
+        out = m.strip_own_key('eif', self.p['eif'], None, self._dir(), log=lambda *a: None)['path']
+        _, _, w0, _ = self._eif_words(self.p['eif'])
+        _, _, w1, _ = self._eif_words(out)
+        self.assertTrue(np.any(((w0 >> 20) & 0x3FF) < 940), 'the source has clear areas')
+        self.assertTrue(np.all(((w1 >> 20) & 0x3FF) == 940))
+        self.assertTrue(np.array_equal(w1 & 0xC00FFFFF, w0 & 0xC00FFFFF))
+
+    def _matte_y(self, path, frame=0):
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', path, '-vf',
+                              f'select=eq(n\\,{frame})', '-frames:v', '1', '-f', 'rawvideo',
+                              '-pix_fmt', 'yuv422p10le', '-'], capture_output=True).stdout
+        return np.frombuffer(raw[:1920 * 1080 * 2], '<u2').reshape(1080, 1920)
+
+    def test_save_key_from_an_sws_and_an_eif(self):
+        cases = (('sws', self.p['keyed'], None, None),
+                 ('sws', self.p['plain'], self.p['still'], None),
+                 ('eif', self.p['eif'], None, None))
+        for kind, path, key, files in cases:
+            with self.subTest(kind=kind, key=key):
+                out = os.path.join(self._dir(), 'K_KEY.mov')
+                saved = m.save_key(kind, path, None, out, 'K_KEY', key_path=key, key_files=files,
+                                   log=lambda *a: None)
+                frames = (m.SWSHeader(path).frame_count if kind == 'sws'
+                          else m.EIFHeader(path).frame_count)
+                self.assertEqual(saved['frames'], frames)
+                self.assertEqual(m.get_video_info(out)['frame_count'], frames)
+                y = self._matte_y(out, frames - 1)
+                if key:
+                    self.assertEqual(self._thirds(y), [64, 940, 504])
+                else:
+                    self.assertLessEqual(abs(int(y[540, 40]) - 64), 1, 'clear on the left')
+                    self.assertLessEqual(abs(int(y[540, 1800]) - 940), 1, 'solid on the right')
+
+    def test_a_saved_key_comes_back_into_a_keyless_sws(self):
+        out = os.path.join(self._dir(), 'K_KEY.mov')
+        m.save_key('sws', self.p['keyed'], None, out, 'K_KEY', log=lambda *a: None)
+        back = m.merge_separate_key('sws', self.p['plain'], None, out, None, self._dir(),
+                                    log=lambda *a: None)['path']
+        h, _, k_back, _ = self._sws_parts(back)
+        _, _, k_own, _ = self._sws_parts(self.p['keyed'])
+        for f in range(h.frame_count):
+            a = m._v210_plane_to_yuv(k_back[f * h.plane_size:(f + 1) * h.plane_size], 1920, 1080, 1)[0][..., 0]
+            b = m._v210_plane_to_yuv(k_own[f * h.plane_size:(f + 1) * h.plane_size], 1920, 1080, 1)[0][..., 0]
+            self.assertEqual(float(np.abs(a - b).max()), 0, f'frame {f}')
+
+    def test_refusals(self):
+        with self.assertRaisesRegex(ValueError, 'has no key to save'):
+            m.save_key('sws', self.p['plain'], None, os.path.join(self._dir(), 'X.mov'), 'X',
+                       log=lambda *a: None)
+        with self.assertRaisesRegex(ValueError, r'and the key is 2'):
+            m.merge_separate_key('sws', self.p['plain'], None, self.p['keyseq'][0],
+                                 self.p['keyseq'][:2], self._dir(), log=lambda *a: None)
+
+
 class TestKeyKeepsAnyColourLabel(unittest.TestCase):
     """Decision 68.3: a clip labelled with the RGB matrix still takes a
     separate key and has its own key removed. ffmpeg reads that label as
