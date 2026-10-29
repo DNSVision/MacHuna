@@ -155,7 +155,7 @@ MacHuna reads the contents of the folder you open and determines the input type 
 
 The file list shows one entry per item to be converted:
 
-- **TGA sequences** are collapsed to a single line: `TNTS201  (30 frames)` — you do not need to select individual frames
+- **TGA sequences** are collapsed to a single line: `WIPE201  (30 frames)` — you do not need to select individual frames
 - **Video files** appear by filename
 - **Stills** appear by filename
 - **EIF files** appear by filename
@@ -179,8 +179,8 @@ Once files are selected, MacHuna shows **one row per item**, and that row tells 
 
 ```
   BAY-PSG-50HD.mov        [ 200 ]   → 200.SWS            ✕
-  EPL-ARS-50HD.mov        [ 201 ]   → 201.SWS            ✕
-  TNTS201  (30 frames)    [ 202 ]   → 202.SWS            ✕
+  PROMO_50HD.mov        [ 201 ]   → 201.SWS            ✕
+  WIPE201  (30 frames)    [ 202 ]   → 202.SWS            ✕
 ```
 
 This replaced the old **Start number** and **Start slot** boxes in v1.8.0. Before that, batch numbering was invisible: you set a starting number, pressed Convert, and found out what each file had been called by reading the log afterwards. Now you can see it, and change it, before anything is written.
@@ -220,8 +220,8 @@ There is no overwrite option. Every offending row is marked in red with the reas
 
 ```
   BAY-PSG-50HD.mov        [ 200 ]   ✓ done              ✕
-  EPL-ARS-50HD.mov        [ 201 ]   ✓ done              ✕
-  TNTS201  (30 frames)    [ 202 ]   ✗ no video stream   ✕
+  PROMO_50HD.mov        [ 201 ]   ✓ done              ✕
+  WIPE201  (30 frames)    [ 202 ]   ✗ no video stream   ✕
 ```
 
 **Convert only ever runs rows without a status**, so nothing is converted twice. You can add more files to a finished batch and press Convert again: only the new ones run, and if you are numbering sequentially they carry on from the highest number in the list rather than starting again.
@@ -454,8 +454,8 @@ TGA sequences are multi-frame clips stored as individually numbered still images
 MacHuna accepts any numbered TGA naming convention — K-Watch names, After Effects exports, third-party renders, or anything else:
 
 ```
-TNTS201_30_0001.tga   (K-Watch naming)
-FEDX0000.tga          (letters + digits, no separator)
+WIPE201_30_0001.tga   (K-Watch naming)
+LOGO0000.tga          (letters + digits, no separator)
 shot_0001.tga         (underscore separator)
 render.0001.tga       (dot separator)
 ```
@@ -467,7 +467,7 @@ The only requirement is that frames are numbered sequentially.
 When you open a folder containing a TGA sequence, MacHuna collapses the entire sequence to a single entry:
 
 ```
-TNTS201  (30 frames)
+WIPE201  (30 frames)
 ```
 
 Select this entry and convert as normal. MacHuna handles the frame ordering automatically.

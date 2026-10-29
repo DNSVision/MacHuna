@@ -153,7 +153,7 @@ class TestHeaderVariableFields(unittest.TestCase):
     # reads it: up to the first null. K-Watch (952/953/951.SWS, 9.7 Release 5)
     # and Kahuna Manager both write it at 0x0FC with 0x0FB left zero; MacHuna
     # wrote it at 0x0FB until 2026-10-28, and a PC tester's Kahuna listed every
-    # name without its first letter ("Gen_E_Agora" as "en_E_Agora").
+    # name without its first letter ("Lower_Third" as "ower_Third").
     @staticmethod
     def _desk_name(hdr):
         return bytes(hdr[0xFC:0x108]).split(b'\0')[0]
@@ -163,8 +163,8 @@ class TestHeaderVariableFields(unittest.TestCase):
         self.assertEqual(self._desk_name(hdr), b'myclip')
 
     def test_clip_name_first_letter_kept(self):
-        hdr = _make_header(clip_name='Gen_E_Agora')
-        self.assertEqual(self._desk_name(hdr), b'Gen_E_Agora')
+        hdr = _make_header(clip_name='Lower_Third')
+        self.assertEqual(self._desk_name(hdr), b'Lower_Third')
         self.assertEqual(hdr[0xFB], 0, "0x0FB is zero in K-Watch's and Kahuna Manager's files")
 
     def test_clip_name_truncated_at_11_chars(self):
@@ -244,7 +244,7 @@ class TestSwsDescription(unittest.TestCase):
     def test_a_typed_description_on_every_route(self):
         for route in ('clip', 'still', 'seq', 'sws', 'eif'):
             with self.subTest(route=route):
-                self.assertEqual(self._name(route, 'Gen E Agora'), 'Gen E Agora')
+                self.assertEqual(self._name(route, 'Lower Third'), 'Lower Third')
                 self.assertEqual(self._name(route, 'A much longer name'), 'A much long')
 
     def test_empty_is_the_rows_own_name_cut_to_11(self):
@@ -5976,7 +5976,7 @@ class TestNumbersOnlySequences(unittest.TestCase):
     OLD = re.compile(r'^(.+?)(?:[._-]?)(\d+)$')
 
     def _folder(self, names):
-        d = tempfile.mkdtemp(prefix='ARTE_')
+        d = tempfile.mkdtemp(prefix='GRAPHIC_')
         self.addCleanup(shutil.rmtree, d, True)
         for n in names:
             open(os.path.join(d, n), 'wb').close()
@@ -6002,20 +6002,20 @@ class TestNumbersOnlySequences(unittest.TestCase):
                          os.path.basename(d))
 
     def test_named_sequences_keep_their_name(self):
-        for base, want in (('ARTE_', 'ARTE'), ('STING', 'STING'), ('clip.', 'clip')):
+        for base, want in (('GRAPHIC_', 'GRAPHIC'), ('STING', 'STING'), ('clip.', 'clip')):
             self.assertEqual(m._sequence_name(base, '/x/FOLDER/f.tga'), want)
 
     def test_names_with_letters_group_as_before(self):
         names = ['STING0001', 'REPLAY1_100_0001', 'shot1_0001', 'A1', 'clip.0001',
-                 'x-12', 'Gen_E_Agora_00001', 'ARTE_000', 'v2_final_010', 'B_0', 'a1b2c3']
+                 'x-12', 'Lower_Third_00001', 'GRAPHIC_000', 'v2_final_010', 'B_0', 'a1b2c3']
         for n in names:
             with self.subTest(name=n):
                 self.assertEqual(m._GENERIC_TGA_RE.match(n).groups(), self.OLD.match(n).groups())
 
     def test_numbers_beside_a_named_sequence_stay_apart(self):
-        d = self._folder(['ARTE_000.tga', 'ARTE_001.tga', '000.tga', '001.tga'])
+        d = self._folder(['GRAPHIC_000.tga', 'GRAPHIC_001.tga', '000.tga', '001.tga'])
         seqs = sorted((b, len(f)) for b, f in m._find_tga_sequences(d))
-        self.assertEqual(seqs, [('', 2), ('ARTE', 2)])
+        self.assertEqual(seqs, [('', 2), ('GRAPHIC', 2)])
 
     def test_a_lone_numbered_still_is_not_a_sequence(self):
         d = self._folder(['0230.tga'])

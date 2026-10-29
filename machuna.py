@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.19.0"
+VERSION = "1.20.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -3568,7 +3568,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
 # ─────────────────────────────────────────────────────────────
 
 # Matches generic TGA sequence frames: base name + optional separator + frame number
-# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  FEDX0000.tga  0001.tga
+# Covers: shot_0001.tga  shot.0001.tga  shot-0001.tga  LOGO0000.tga  0001.tga
 # The base may be EMPTY: frames named only with numbers (000.tga ... 229.tga)
 # are one sequence. It was `.+?`, which took the first digit as the base and
 # split such a folder at every hundred (a PC tester, 2026-10-28).

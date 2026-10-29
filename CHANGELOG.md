@@ -4,7 +4,9 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased (v1.20.0)
+## v1.20.0 — 2026-10-29
+
+**Release 2 from a PC tester's report, item by item, each tested by David on his Mac.** Pictures that are not 16:9 placed in the frame, not stretched; a separate key for any source (clips, sequences, stills, SWS and EIF), its own key removed, the key saved on its own, a keyed file used as a key by its alpha; a description for Kahuna SWS on every route, empty meaning the row's own name; Sony TGA and TGA Sequence from a clip keep its length at the standard's rate. Parity kit against 2.8.0: 39 of 44 cases identical, the 5 sequence and still SWS cases differing only in the clip name bytes (by design). MacHuna 2.9.0 pins it.
 
 ### Fixed
 - **A clip made into Sony TGA or a TGA Sequence kept one TGA per source frame, whatever the standard** (David's test, 2026-10-28: a 25p clip as Sony TGA at 1080p50 played at twice the speed). Measured through the bridge for five clip rates (25p, 50p, 50i, 29.97p, 59.94p) at five standards: a 25p or 50i clip at 1080p50 came out half length, 50p at 1080p25 twice as long, and 29.97 and 59.94 clips wrong on every 50 Hz standard. Both now take the rule SWS uses (`convert_clip`), so the clip keeps its length at the standard's rate: a progressive clip at another rate has frames repeated or picked by time (decision H, `_retime_tga_folder`); an interlaced clip on a progressive standard is deinterlaced, then picked; and they refuse exactly what SWS refuses (`_interlaced_rate_note` for interlaced to another interlaced rate). Sony TGA through `keep_duration=True` on `_hula_convert_mov_to_tga`. Measured again: every combination 1.00 of the clip's length or refused, the refusals the same as SWS's; the combinations that were right are unchanged. **K-Frame TGA is unchanged**: it has no Video standard (decision 44), and the desk plays the frames at its own format.
@@ -31,7 +33,7 @@ All notable changes to MacHuna are documented here.
 **From a PC tester's report, item by item, each tested by David on his Mac.** SWS clip names keep their first letter on a Kahuna; frames named only with numbers and numbered PNGs are sequences; 25p clips to an interlaced standard are kept frame for frame (PsF); the TGA rate (50 | 25i | 25p) for TGA sequences, with K-Frame EIF weaving a 50p render for an interlaced desk; a row converted again replaces its own untouched output; several PNG stills that failed now convert. Parity kit: the 25 non-SWS cases identical, the 19 SWS cases differing in the clip name only (by design). MacHuna 2.8.0 pins it.
 
 ### Fixed
-- **A Kahuna listed every SWS clip name without its first letter.** `build_sws_header` wrote the name at 0x0FB; K-Watch (9.7 Release 5) and Kahuna Manager both write it at **0x0FC** with 0x0FB zero, and the desk reads from 0x0FC, so "Gen_E_Agora" was listed as "en_E_Agora" (a PC tester's Kahuna, 2026-10-28). Present in every SWS MacHuna has written. Now at 0x0FC, 11 characters at most, a null kept at 0x107: the field 0x0FB-0x107 is byte for byte that of two K-Watch files that play on a Kahuna and a Kahuna Manager file. Fail-first tests read the name the way the desk does. Parity kit: the 19 SWS cases differ in the name field and the (blanked) timestamps only, checked byte by byte across all 153 files; the other 25 cases are identical. **Still to confirm on a Kahuna.**
+- **A Kahuna listed every SWS clip name without its first letter.** `build_sws_header` wrote the name at 0x0FB; K-Watch (9.7 Release 5) and Kahuna Manager both write it at **0x0FC** with 0x0FB zero, and the desk reads from 0x0FC, so "Lower_Third" was listed as "ower_Third" (a PC tester's Kahuna, 2026-10-28). Present in every SWS MacHuna has written. Now at 0x0FC, 11 characters at most, a null kept at 0x107: the field 0x0FB-0x107 is byte for byte that of two K-Watch files that play on a Kahuna and a Kahuna Manager file. Fail-first tests read the name the way the desk does. Parity kit: the 19 SWS cases differ in the name field and the (blanked) timestamps only, checked byte by byte across all 153 files; the other 25 cases are identical. **Still to confirm on a Kahuna.**
 - **A folder of frames named only with numbers came in as several sequences.** `_GENERIC_TGA_RE` (`^(.+?)...`) took the first digit as the sequence's name, so 000.tga to 229.tga became sequences "0", "1" and "2", split at every hundred (a PC tester, 2026-10-28), and a four-digit folder of 1000 frames or more, such as MacHuna's own K-Frame TGA or TGA Sequence output read back, or a desk export, split at frame 1000. The base may now be empty (`^(.*?)...`): one sequence, named after its folder (`_sequence_name`; it was listed as "0"). Every name with a letter in it groups exactly as before: checked against the old rule in the tests and over all 300 distinct TGA names in the test media, where only the 250 all-digit names changed. Parity kit 44 of 44 identical.
 
 ### Added
@@ -903,7 +905,7 @@ The EIF write and conversion paths are coded and verified by analysis against re
 ## v1.5.34 — 2026-05-13
 
 ### Fixed
-- **TGA sequences without separators now detected correctly.** Files named with a plain letters+digits pattern (e.g. `FEDX0000.tga`) were silently skipped because the sequence-detection regex required a separator character (`_`, `.`, or `-`) between the base name and the frame number. The separator is now optional, so `FEDX0000.tga … FEDX0051.tga` is correctly grouped as a single TGA sequence.
+- **TGA sequences without separators now detected correctly.** Files named with a plain letters+digits pattern (e.g. `LOGO0000.tga`) were silently skipped because the sequence-detection regex required a separator character (`_`, `.`, or `-`) between the base name and the frame number. The separator is now optional, so `LOGO0000.tga … LOGO0051.tga` is correctly grouped as a single TGA sequence.
 
 ---
 
@@ -924,7 +926,7 @@ The EIF write and conversion paths are coded and verified by analysis against re
 
 ### Changed
 - **Watch Folder removed.** MacHuna is a field tool for freelancers, not a networked server app. Watch Folder was a legacy of the K-Watch workflow and is no longer needed. `WatchService` and all associated UI removed.
-- **Slot Override removed.** Replaced with a "Use source file number" checkbox in Batch Convert. K-Watch named files (e.g. `TNTS201_30_0001.tga`) carry their slot number in the filename; ticking this uses it directly. Unticked: all items sequence from Start Number.
+- **Slot Override removed.** Replaced with a "Use source file number" checkbox in Batch Convert. K-Watch named files (e.g. `WIPE201_30_0001.tga`) carry their slot number in the filename; ticking this uses it directly. Unticked: all items sequence from Start Number.
 - **Smart folder browser replaces file picker.** "Open Files…" now opens a folder picker. The app scans the folder and shows a custom browser listing one entry per TGA sequence (collapsed with frame count) plus any other supported files. No more scrolling through hundreds of individual TGA frames.
 - **"Include audio" moved to folder browser dialog.** Only shown when at least one video file with an audio track is detected. Hidden for TGA-only folders. Framed as "Exclude audio" (default = include).
 - **"TGA source already interlaced" label shortened** to "TGA source interlaced".
