@@ -509,6 +509,14 @@ def build_sws_header(source_filename: str,
 #  FFmpeg helpers
 # ─────────────────────────────────────────────────────────────
 
+def _sws_clip_name(description, fallback: str) -> str:
+    """The name a Kahuna lists for an SWS (0x0FC; `build_sws_header` cuts it
+    to 11): the description typed for the row, case and spaces kept, as
+    K-Watch and Kahuna Manager write it; or, left empty, the row's own name
+    (release 2, item 10, David 2026-10-29)."""
+    return (description or '').strip() or fallback
+
+
 def _get_ffmpeg_path(binary: str = 'ffmpeg') -> str:
     """Return the path to ffmpeg/ffprobe.
     
@@ -1114,8 +1122,10 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
                   log=print,
                   ignore_alpha: bool = False,
                   auto_play: bool = False,
-                  loop_play: bool = False):
-    """Convert a single TGA/PNG/BMP/JPG still to .SWS."""
+                  loop_play: bool = False,
+                  description: str = None):
+    """Convert a single TGA/PNG/BMP/JPG still to .SWS. description: the name a
+    Kahuna lists (`_sws_clip_name`); empty, the file's name."""
 
     log(f"Converting still: {os.path.basename(input_path)}")
     info = get_video_info(input_path)
@@ -1165,7 +1175,9 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
 
         plane_size = os.path.getsize(fill_raw)
         src_name   = os.path.basename(input_path)
-        clip_name  = f"{file_number}_1_000"
+        # The file's name, as for a clip: "<number>_1_000" until item 10,
+        # a name with no source behind it (MacHuna's first version).
+        clip_name  = _sws_clip_name(description, Path(input_path).stem)
 
         hdr = build_sws_header(
             source_filename=src_name,
@@ -1297,8 +1309,11 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  auto_play: bool = False,
                  loop_play: bool = False,
                  sound_file: str = None,
-                 clear_frames: str = None):
+                 clear_frames: str = None,
+                 description: str = None):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS.
+
+    description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
 
     clear_frames: 'start', 'end' or 'both' adds a clear frame there (decision
     54); the sound moves one frame later with a frame at the start.
@@ -1464,7 +1479,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                 f"{output_frame_count / output_fps:.2f}s")
 
         src_name = os.path.basename(input_path)
-        clip_name  = Path(input_path).stem  # use filename stem as clip name
+        clip_name  = _sws_clip_name(description, Path(input_path).stem)
 
         hdr = build_sws_header(
             source_filename=src_name,
@@ -2284,8 +2299,12 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          _audio_stereo24=None,
                          sound_file: str = None,
                          clear_frames: str = None,
-                         source_rate: str = None):
+                         source_rate: str = None,
+                         description: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
+
+    description: the name a Kahuna lists (`_sws_clip_name`); empty, the
+    sequence's own name (`_sequence_name`), as the list shows it.
 
     source_rate (decision 67, the TGA rate): how many TGAs make one second.
     'field' (50 for a 50Hz desk): woven in pairs for an interlaced standard, one
@@ -2449,7 +2468,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
         output_frame_count += _add_clear_planes(fill_raw, actual_key, w, h, clear_frames, log)
         src_name  = os.path.basename(tga_files[0])
-        clip_name = clip_name_override or Path(tga_files[0]).stem
+        # The sequence's name: until item 10 it was the first frame's
+        # ("TNT3_60_0001", listed as "TNT3_60_000"; "0001" for frames
+        # numbered only).
+        first_stem = Path(tga_files[0]).stem
+        numbered = _GENERIC_TGA_RE.match(first_stem)
+        clip_name = _sws_clip_name(description, clip_name_override or _sequence_name(
+            numbered.group(1) if numbered else first_stem, tga_files[0]))
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
         out_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
@@ -2563,8 +2588,11 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        video_standard: str, split_fat32: bool = True, log=print,
                        ignore_alpha: bool = False, auto_play: bool = False,
                        loop_play: bool = False, include_audio: bool = True,
-                       sound_file: str = None, clear_frames: str = None) -> str:
+                       sound_file: str = None, clear_frames: str = None,
+                       description: str = None) -> str:
     """Re-encode an SWS to another standard, keeping its audio.
+
+    description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
 
     sound_file: a sound to carry instead of the SWS's own (2026-10-11). Either
     way the sound keeps its own length (_write_sws_sound).
@@ -2702,10 +2730,11 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             audio_samples = _write_sws_sound(audio_raw, stereo)
             log(f"  {stem}: sound {audio_samples / EAF_SAMPLE_RATE:.2f}s, "
                 f"picture {count / out_fps:.2f}s")
-        log(f"  clip name: {stem}   key: {'yes' if key else 'none'}   frames: {count}")
+        clip_name = _sws_clip_name(description, stem)
+        log(f"  clip name: {clip_name}   key: {'yes' if key else 'none'}   frames: {count}")
         hdr = build_sws_header(
             source_filename=os.path.basename(sws_path),
-            clip_name=stem,
+            clip_name=clip_name,
             width=W, height=H,
             frame_count=count,
             plane_size=plane_size,
@@ -3364,7 +3393,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         log=print, cancel_event=None,
                         include_audio: bool = True,
                         sound_file: str = None,
-                        clear_frames: str = None) -> str:
+                        clear_frames: str = None,
+                        description: str = None) -> str:
     """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio,
     or with sound_file instead (2026-10-11), kept at its own length.
 
@@ -3458,7 +3488,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                     log(f"  Frame {o + 1}/{out_count}")
 
         out_count += _add_clear_planes(fill_path, key_path, 1920, 1080, clear_frames, log)
-        clip_name = h.clip_name or Path(eif_path).stem
+        clip_name = _sws_clip_name(description, h.clip_name or Path(eif_path).stem)
         audio_raw = audio_samples = None
         stereo = chosen
         if stereo is None and include_audio:

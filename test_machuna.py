@@ -179,6 +179,82 @@ class TestHeaderVariableFields(unittest.TestCase):
         self.assertEqual(ver, m.SWS_VERSION.split(b'\0')[0])
 
 
+class TestSwsDescription(unittest.TestCase):
+    """Release 2, item 10: the name a Kahuna lists (0x0FC, 11 characters) can
+    be typed per row, mixed case and spaces kept, as K-Watch and Kahuna
+    Manager write it; on every SWS route. Left empty it is the row's own name
+    cut to 11, on every route (David, 2026-10-29): a sequence wrote its first
+    frame's name ("TNT3_60_000") and a still "4_1_000"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='swsdesc_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        quiet = lambda *a: None
+
+        def run(*args):
+            subprocess.run([ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        cls.p = {}
+        cls.p['clip'] = os.path.join(cls.tmp, 'KNOCKOUT_WIPE.mov')
+        run('-f', 'lavfi', '-i', 'testsrc2=s=64x36:r=50,trim=end_frame=2', '-c:v', 'prores_ks',
+            '-profile:v', '3', '-pix_fmt', 'yuv422p10le', cls.p['clip'])
+        cls.p['still'] = os.path.join(cls.tmp, 'LOGO_BUG.png')
+        Image.fromarray(np.full((36, 64, 3), 90, np.uint8), 'RGB').save(cls.p['still'])
+        sd = os.path.join(cls.tmp, 'seq'); os.makedirs(sd)
+        nd = os.path.join(cls.tmp, 'MYFOLDER'); os.makedirs(nd)
+        for n in range(2):
+            Image.fromarray(np.full((36, 64, 3), 90 + n, np.uint8), 'RGB').save(
+                os.path.join(sd, f'TNT3_60_{n + 1:04d}.tga'))
+            Image.fromarray(np.full((36, 64, 3), 90 + n, np.uint8), 'RGB').save(
+                os.path.join(nd, f'{n + 1:04d}.tga'))
+        cls.p['seq'] = sorted(os.path.join(sd, f) for f in os.listdir(sd))
+        cls.p['numbers'] = sorted(os.path.join(nd, f) for f in os.listdir(nd))
+        d = os.path.join(cls.tmp, 'sws'); os.makedirs(d)
+        m.convert_clip(cls.p['clip'], 12, d, video_standard='1080p50', log=quiet)
+        cls.p['sws'] = os.path.join(d, '12.SWS')
+        d = os.path.join(cls.tmp, 'eif'); os.makedirs(d)
+        cls.p['eif'] = m.convert_clip_to_eif(cls.p['clip'], d, log=quiet, out_name='0001',
+                                             description='Weather Intro')
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _name(self, route, description=None):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        quiet = lambda *a: None
+        kw = {'description': description} if description is not None else {}
+        if route == 'clip':
+            m.convert_clip(self.p['clip'], 1, d, video_standard='1080p50', log=quiet, **kw)
+        elif route == 'still':
+            m.convert_still(self.p['still'], 4, d, video_standard='1080p50', log=quiet, **kw)
+        elif route in ('seq', 'numbers'):
+            m.convert_tga_sequence(self.p[route], 1, d, '1080p50', log=quiet, write_log=False, **kw)
+        elif route == 'sws':
+            m.convert_sws_to_sws(self.p['sws'], 1, d, '1080p50', log=quiet, **kw)
+        else:
+            m.convert_eif_to_sws(self.p['eif'], 1, d, video_standard='1080p50', log=quiet, **kw)
+        out = [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.SWS')][0]
+        with open(out, 'rb') as f:
+            hdr = f.read(512)
+        self.assertEqual(hdr[0xFB], 0)
+        return bytes(hdr[0xFC:0x108]).split(b'\0')[0].decode('ascii')
+
+    def test_a_typed_description_on_every_route(self):
+        for route in ('clip', 'still', 'seq', 'sws', 'eif'):
+            with self.subTest(route=route):
+                self.assertEqual(self._name(route, 'Gen E Agora'), 'Gen E Agora')
+                self.assertEqual(self._name(route, 'A much longer name'), 'A much long')
+
+    def test_empty_is_the_rows_own_name_cut_to_11(self):
+        for route, want in (('clip', 'KNOCKOUT_WI'), ('still', 'LOGO_BUG'), ('seq', 'TNT3_60'),
+                            ('numbers', 'MYFOLDER'), ('sws', '12'), ('eif', 'WEATHER INT')):
+            with self.subTest(route=route):
+                self.assertEqual(self._name(route), want)
+                self.assertEqual(self._name(route, '   '), want, 'spaces alone are empty')
+
+
 # ── Video standard codes in header ────────────────────────────────────────────
 
 class TestVideoStandardCodes(unittest.TestCase):
