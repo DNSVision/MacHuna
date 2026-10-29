@@ -222,6 +222,51 @@ def _remap_v210(path: str, plane_size: int, index: list):
     os.replace(tmp, path)
 
 
+def _retime_tga_folder(folder: str, pattern: str, start: int,
+                       src_fps: float, dst_fps: float, log=print) -> int:
+    """Decision H for a folder of TGAs written one per source frame: keep the
+    frames _pick_frames chooses, in order, named from `pattern` (a path with
+    %04d) counting from `start`. A frame shown twice is copied. Returns the
+    number of TGAs. The TGA routes used to stop at one TGA per source frame,
+    so a 25p clip on a 50p desk played at twice the speed (David, 2026-10-29)."""
+    names = sorted(n for n in os.listdir(folder)
+                   if n.lower().endswith('.tga') and not n.startswith('.'))
+    index = _pick_frames(len(names), src_fps, dst_fps)
+    if index == list(range(len(names))):
+        return len(names)
+    hold = os.path.join(folder, '.retime')
+    os.makedirs(hold)
+    for n in names:
+        os.replace(os.path.join(folder, n), os.path.join(hold, n))
+    last = {i: k for k, i in enumerate(index)}
+    for k, i in enumerate(index):
+        src, dst = os.path.join(hold, names[i]), pattern % (start + k)
+        if last[i] == k:
+            os.replace(src, dst)
+        else:
+            shutil.copyfile(src, dst)
+    shutil.rmtree(hold)
+    log(f"  Frames picked by time: {len(names)} @ {src_fps:g} → "
+        f"{len(index)} @ {dst_fps:g}fps, duration kept")
+    return len(index)
+
+
+def _interlaced_rate_note(name: str, source_fps: float, video_standard: str):
+    """An interlaced source on an interlaced standard, as convert_clip decides
+    it: the same rate goes through, 59.94 and 60 are one family (returns the
+    note to log), and any other rate is refused."""
+    target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[video_standard]]
+    if abs(source_fps - target_fps) < 0.01:
+        return None
+    note = _family_note(source_fps, target_fps)
+    if note:
+        return note
+    raise ValueError(
+        f"{name}: source is interlaced at {source_fps:.2f}fps and "
+        f"{video_standard} runs at {target_fps:.2f}fps. MacHuna does not convert "
+        f"one interlaced rate to another - convert the source to the target rate first.")
+
+
 def _i_to_p_plan(source_fps: float, video_standard: str, parity: str = None):
     """The deinterlace an interlaced source needs for a progressive standard:
     (yadif filter, the rate it produces, the target rate). The rate change
@@ -5405,12 +5450,24 @@ def kframe_tga_asks_desk_format(path: str) -> bool:
 def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                               target: str, standard: str,
                               clip_name: str = 'WIPE',
-                              field_order: str = 'TFF', log=print):
+                              field_order: str = 'TFF', log=print,
+                              keep_duration: bool = False):
     """Convert a MOV file to a TGA sequence using the selected video standard.
 
     Progressive standards → direct frame extraction.
     Interlaced standards → frame pairs field-woven into interlaced output.
     K-Frame TGA confirmed on a live K-Frame, 2026-10-07.
+
+    keep_duration (Sony TGA, which has a Video standard): the clip keeps its
+    length at the standard's rate, by the rule SWS uses (convert_clip). A
+    progressive clip at another rate has frames repeated or picked by time
+    (decision H); interlaced on a progressive standard is deinterlaced, then
+    picked; a progressive clip on an interlaced standard is woven at the field
+    rate, kept whole (PsF) at the frame rate, else refused; interlaced to
+    another interlaced rate is refused. Without it the frames go through one
+    TGA each, as K-Frame TGA's decision 44 wants: that desk plays them at its
+    own format, and MacHuna is not told what that is. A 25p clip made into
+    Sony TGA at 1080p50 played at twice the speed (David, 2026-10-29).
     """
     stem      = Path(mov_path).stem
     is_sony   = target == HULA_TARGET_SONY_TGA
@@ -5419,7 +5476,31 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     dest_dir  = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
     interlaced = 'i' in standard
-    if interlaced and not kframe_tga_asks_desk_format(mov_path):
+    info = get_video_info(mov_path)
+    deinterlace, pick_from = None, None
+    target_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[standard]]
+    if keep_duration:
+        src_fps, src_laced = info.get('fps', 0), info.get('is_interlaced', False)
+        name = Path(mov_path).name
+        if interlaced and not src_laced:
+            # Raises for a rate it cannot weave or keep whole, as SWS does.
+            interlaced = _p_to_i_field_map(src_fps, standard, field_order) != ''
+            if not interlaced:
+                log(f"  {name} is progressive at the frame rate of {standard}: "
+                    f"each frame kept whole (PsF)")
+        elif src_laced and not interlaced:
+            deinterlace, produced, _t = _i_to_p_plan(src_fps, standard)
+            if abs(produced - target_fps) > 0.01:
+                pick_from = produced
+            log(f"  {name} is interlaced: deinterlaced for {standard}")
+        elif src_laced:
+            note = _interlaced_rate_note(name, src_fps, standard)
+            if note:
+                log(note)
+            interlaced = False   # already woven
+        elif abs(src_fps - target_fps) >= 0.01:
+            pick_from = src_fps
+    elif interlaced and not kframe_tga_asks_desk_format(mov_path):
         # Only a progressive source at 50fps or more is woven. Weaving an
         # already-interlaced source again halved it and mixed fields from
         # different frames (decision 44 for K-Frame TGA; extended to Sony TGA
@@ -5434,10 +5515,11 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     # EIF. Untagged HD is BT.709, not SD colour. Material that goes through
     # interlaced is scaled a field at a time so the fields never blend; a
     # source that is about to be woven is progressive, so is scaled whole.
-    info = get_video_info(mov_path)
     vf = [_UNTAGGED_HD_AS_709] if _assume_709_and_say(info, log) else []
+    if deinterlace:
+        vf.append(deinterlace)
     if (info.get('width'), info.get('height')) != (1920, 1080):
-        fields = info.get('is_interlaced', False) and not interlaced
+        fields = info.get('is_interlaced', False) and not interlaced and not deinterlace
         # Decision 68.2: a clip that is not 16:9 on screen is fitted, not stretched.
         fit = _fit_on_frame(info['width'], info['height'], info.get('sar', 1.0))
         if fit:
@@ -5463,6 +5545,9 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                    '-start_number', '1', pattern]
         log(f"  Extracting {os.path.basename(mov_path)} → TGA ({standard})...")
         _run_ffmpeg(cmd, check=True)
+        if pick_from:
+            _retime_tga_folder(dest_dir, pattern, 0 if is_sony else 1,
+                               pick_from, target_fps, log)
         count = len(list(Path(dest_dir).glob('*.tga')))
         log(f"  Done → {dest_dir}  ({count} TGA files)")
     else:

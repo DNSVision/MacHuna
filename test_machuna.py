@@ -7437,3 +7437,94 @@ class TestSaveKey(unittest.TestCase):
             m.save_key('sequence', bare['path'], bare['files'], out, 'NONE_KEY', log=lambda *x: None)
         self.assertIn('has no key to save', str(e.exception))
         self.assertFalse(os.path.exists(out), 'nothing left behind')
+
+
+class TestSonyTgaKeepsTheClipsLength(unittest.TestCase):
+    """Release 2 (David's test, 2026-10-29): a 25p clip made into Sony TGA at
+    1080p50 played at twice the speed. Every frame became one TGA whatever the
+    desk's rate. With keep_duration, Sony TGA takes the rule SWS uses: frames
+    repeated or picked by time (decision H), refused where SWS refuses. K-Frame
+    TGA, which has no Video standard (decision 44), is left as it was."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        cls.tmp = tempfile.mkdtemp(prefix='mh-tga-rate-')
+        cls.clips = {}
+        # Each frame a different grey, so the order of the TGAs can be read back.
+        for tag, rate, n, laced in (('p25', '25', 4, False), ('p50', '50', 6, False),
+                                    ('p2997', '30000/1001', 4, False), ('i50', '25', 3, True)):
+            path = os.path.join(cls.tmp, f'{tag}.mov')
+            vf = "geq=lum='16+N*40':cb=128:cr=128" + (',setfield=tff' if laced else '')
+            cmd = [cls.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                   f'color=c=black:s=64x36:r={rate}', '-frames:v', str(n), '-vf', vf]
+            if laced:
+                cmd += ['-flags', '+ilme+ildct']
+            subprocess.run(cmd + ['-c:v', 'prores_ks', path], check=True)
+            cls.clips[tag] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _sony(self, tag, standard, **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        out = m._hula_convert_mov_to_tga(self.clips[tag], d, m.HULA_TARGET_SONY_TGA, standard,
+                                         clip_name='TEST', log=lambda *a: None, **kw)
+        names = sorted(n for n in os.listdir(out) if not n.startswith('.'))
+        greys = [int(round(np.asarray(Image.open(os.path.join(out, n)).convert('L')).mean()))
+                 for n in names]
+        return names, greys
+
+    def test_25p_on_a_50p_desk_shows_each_frame_twice(self):
+        names, greys = self._sony('p25', '1080p50', keep_duration=True)
+        self.assertEqual(names, [f'TEST{k:04d}.tga' for k in range(8)])
+        self.assertEqual(greys[0::2], greys[1::2], 'each frame twice, in its place')
+        self.assertEqual(greys[0::2], sorted(set(greys)), 'in order, none lost')
+
+    def test_50p_on_a_25p_desk_keeps_every_other_frame(self):
+        _, all_six = self._sony('p50', '1080p50', keep_duration=True)
+        names, greys = self._sony('p50', '1080p25', keep_duration=True)
+        self.assertEqual(len(names), 3)
+        self.assertEqual(greys, all_six[0::2])
+
+    def test_interlaced_on_a_progressive_desk_is_deinterlaced_to_its_rate(self):
+        names, _ = self._sony('i50', '1080p50', keep_duration=True)
+        self.assertEqual(len(names), 6, '3 interlaced frames are 6 fields at 50p')
+        names, _ = self._sony('i50', '1080p25', keep_duration=True)
+        self.assertEqual(len(names), 3)
+
+    def test_the_same_rate_is_unchanged(self):
+        for tag, std, n in (('p25', '1080p25', 4), ('p25', '1080i50', 4), ('p50', '1080p50', 6),
+                            ('p50', '1080i50', 3), ('i50', '1080i50', 3), ('p2997', '1080p2997', 4)):
+            if std not in m.FORMAT_VARIANTS:
+                continue
+            with self.subTest(clip=tag, standard=std):
+                self.assertEqual(len(self._sony(tag, std, keep_duration=True)[0]), n)
+
+    def test_refused_where_sws_refuses(self):
+        for tag, std in (('p2997', '1080i50'), ('i50', '1080i5994')):
+            with self.subTest(clip=tag, standard=std):
+                with self.assertRaises(ValueError):
+                    self._sony(tag, std, keep_duration=True)
+                with self.assertRaises(ValueError):
+                    m.convert_clip(self.clips[tag], 1, tempfile.mkdtemp(dir=self.tmp), std,
+                                   split_fat32=False, log=lambda *a: None, include_audio=False)
+
+    def test_without_it_frames_go_through_as_before(self):
+        # K-Frame TGA (decision 44): the desk plays the frames at its own format.
+        d = tempfile.mkdtemp(dir=self.tmp)
+        out = m._hula_convert_mov_to_tga(self.clips['p25'], d, m.HULA_TARGET_KFRAME_TGA,
+                                         '1080p50', log=lambda *a: None)
+        self.assertEqual(len([n for n in os.listdir(out) if n.endswith('.tga')]), 4)
+
+    def test_retime_a_written_folder(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        for k in range(1, 4):
+            Image.new('L', (4, 2), k * 50).save(os.path.join(d, f'{k:04d}.tga'))
+        n = m._retime_tga_folder(d, os.path.join(d, '%04d.tga'), 1, 25, 50, log=lambda *a: None)
+        self.assertEqual(n, 6)
+        self.assertEqual(sorted(os.listdir(d)), [f'{k:04d}.tga' for k in range(1, 7)])
+        self.assertEqual([Image.open(os.path.join(d, f'{k:04d}.tga')).getpixel((0, 0))
+                          for k in range(1, 7)], [50, 50, 100, 100, 150, 150])
