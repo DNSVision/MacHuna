@@ -621,7 +621,7 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   `DNSVision/MacHuna-Swift` is **private** for now, by David's decision
   2026-09-24, and can be opened whenever there is something worth showing.
 
-**Settled - do not reopen:** stills are SWS-only (see "Stills are SWS-only (settled)").
+**Was settled, REVERSED 2026-10-30:** stills are no longer SWS-only (see "Stills are SWS-only (REVERSED by David, 2026-10-30)").
 
 **Dropped from THIS version, but being built in Swift:** true drag-and-drop, and
 manual batch reorder. Both were dropped because Tkinter could not do them well,
@@ -846,7 +846,10 @@ A full adversarial code review (Fable 5) produced a working file `REVIEW_FIXES_v
 
    **What remains is a different question, and it is a desk question, not a code one** — see "Should a keyless source get a key plane at all?" in the hardware checklist.
 
-### Stills are SWS-only (settled — do not reopen)
+### Stills are SWS-only (REVERSED by David, 2026-10-30)
+
+**REVERSED 2026-10-30 (David):** a K-Frame user asked to convert named stills to K-Frame EIF, so each gets its number and description on the desk. David: "If it's something people need, which it clearly is, we should add it back in." Stills to K-Frame EIF are now wanted; which other outputs, and how a K-Frame treats a one-frame EIF, are being settled (Swift decision 69; a desk test is planned). The rest of this section is the history of the old rule.
+
 
 **Decision (David, 2026-08-05): single-frame clips are not a thing. This is out of the spec permanently and is not to be proposed again.**
 
