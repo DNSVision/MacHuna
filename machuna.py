@@ -2514,7 +2514,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
         output_frame_count += _add_clear_planes(fill_raw, actual_key, w, h, clear_frames, log)
         src_name  = os.path.basename(tga_files[0])
         # The sequence's name: until item 10 it was the first frame's
-        # ("TNT3_60_0001", listed as "TNT3_60_000"; "0001" for frames
+        # ("PROMO3_60_0001", listed as "PROMO3_60_000"; "0001" for frames
         # numbered only).
         first_stem = Path(tga_files[0]).stem
         numbered = _GENERIC_TGA_RE.match(first_stem)

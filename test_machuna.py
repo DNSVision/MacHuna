@@ -184,7 +184,7 @@ class TestSwsDescription(unittest.TestCase):
     be typed per row, mixed case and spaces kept, as K-Watch and Kahuna
     Manager write it; on every SWS route. Left empty it is the row's own name
     cut to 11, on every route (David, 2026-10-29): a sequence wrote its first
-    frame's name ("TNT3_60_000") and a still "4_1_000"."""
+    frame's name ("PROMO3_60_000") and a still "4_1_000"."""
 
     @classmethod
     def setUpClass(cls):
@@ -205,7 +205,7 @@ class TestSwsDescription(unittest.TestCase):
         nd = os.path.join(cls.tmp, 'MYFOLDER'); os.makedirs(nd)
         for n in range(2):
             Image.fromarray(np.full((36, 64, 3), 90 + n, np.uint8), 'RGB').save(
-                os.path.join(sd, f'TNT3_60_{n + 1:04d}.tga'))
+                os.path.join(sd, f'PROMO3_60_{n + 1:04d}.tga'))
             Image.fromarray(np.full((36, 64, 3), 90 + n, np.uint8), 'RGB').save(
                 os.path.join(nd, f'{n + 1:04d}.tga'))
         cls.p['seq'] = sorted(os.path.join(sd, f) for f in os.listdir(sd))
@@ -248,7 +248,7 @@ class TestSwsDescription(unittest.TestCase):
                 self.assertEqual(self._name(route, 'A much longer name'), 'A much long')
 
     def test_empty_is_the_rows_own_name_cut_to_11(self):
-        for route, want in (('clip', 'KNOCKOUT_WI'), ('still', 'LOGO_BUG'), ('seq', 'TNT3_60'),
+        for route, want in (('clip', 'KNOCKOUT_WI'), ('still', 'LOGO_BUG'), ('seq', 'PROMO3_60'),
                             ('numbers', 'MYFOLDER'), ('sws', '12'), ('eif', 'WEATHER INT')):
             with self.subTest(route=route):
                 self.assertEqual(self._name(route), want)
@@ -6006,7 +6006,7 @@ class TestNumbersOnlySequences(unittest.TestCase):
             self.assertEqual(m._sequence_name(base, '/x/FOLDER/f.tga'), want)
 
     def test_names_with_letters_group_as_before(self):
-        names = ['STING0001', 'REPLAY1_100_0001', 'shot1_0001', 'A1', 'clip.0001',
+        names = ['STING0001', 'BUMPER1_100_0001', 'shot1_0001', 'A1', 'clip.0001',
                  'x-12', 'Lower_Third_00001', 'GRAPHIC_000', 'v2_final_010', 'B_0', 'a1b2c3']
         for n in names:
             with self.subTest(name=n):
