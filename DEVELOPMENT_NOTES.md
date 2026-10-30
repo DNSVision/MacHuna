@@ -181,7 +181,7 @@ Release 2 (engine v1.20.0): 8. DONE (engine 31ad2be): **pictures that are not 16
 - Every new self-test check was falsified (the fix taken out, the check seen to fail) before it counted; the PC should falsify its copies the same way.
 - Repos never name a user, a tester, a job or a user's file.
 
-**FOR THE PC after the Mac ships:** all of the above in one batch, plus the PC-only items: a spinner beside "Converting" (the Mac has one), the full status text on hover if missing, and reproduce "changing the number does not let it convert again" on 0.2.0.
+**FOR THE PC after the Mac ships (Mac 2.9.0 SHIPPED 2026-10-30: re-pin the engine to v1.20.0 and swift-ref to v2.9.0; parity manifest is the Mac's 2.9.0 one):** all of the above in one batch, plus the PC-only items: a spinner beside "Converting" (the Mac has one), the full status text on hover if missing, and reproduce "changing the number does not let it convert again" on 0.2.0.
 
 **OPEN from the same user, waiting on him (or David at a desk):**
 - **HDR colour (a real bug, measured 2026-10-27):** a BT.2020-tagged source is converted to BT.709 values on the way to EIF (colour bars tagged 709 and 2020 gave identical EIFs), so an HDR K-Frame reading them as 2020 shows a colour shift. Likely fix: keep a 2020 source's values as they are. Needs his short HDR clip, the EIF his K-Frame makes from it, and the desk's HDR setting (HLG/PQ, format). Client material lives only in testmedia (git-ignored).
