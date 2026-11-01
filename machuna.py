@@ -3390,7 +3390,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
     into an .eaf. Same header and picture encoder as the desk-confirmed MOV
     route. sound_file: a sound to carry instead (2026-10-11), fitted to the
-    picture. description: what the K-Frame shows; blank means the file name.
+    picture. description: what the K-Frame shows; blank means the SWS's own
+    Description (`sws_desk_fields`), else its Name, else its file name.
     """
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     h    = HulaSWSHeader(sws_path)
@@ -3429,7 +3430,10 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     starts, ends = _clear_counts(clear_frames)
     clear = _clear_eif_frame(bool(h.has_key)) if starts or ends else b''
     stereo = _delay_sound(stereo, fps, clear_frames)
-    header   = _build_eif_header(_eif_description(description, stem),
+    # Blank, the SWS's own Description, else its Name, else its number (2.9.1,
+    # David's test 2026-11-01: it gave its number).
+    own_name, own_desc = sws_desk_fields(sws_path)
+    header   = _build_eif_header(_eif_description(description, own_desc or own_name or stem),
                                  out_count + starts + ends, fps,
                                  has_audio=stereo is not None, dest_dir=dest_dir)
     fill_off = h.data_offset

@@ -6057,12 +6057,23 @@ class TestEifDescription(unittest.TestCase):
                 self.assertEqual(self._name(made), 'X' * 31)
 
     def test_blank_or_absent_keeps_the_file_name(self):
-        want = {'clip': 'WIPE_LONG_SOURCE_NAME_FOR_TESTING', 'tga': 'SEQ', 'sws': '7'}
+        # An SWS gives its own Description (2.9.1, David's test 2026-11-01:
+        # it gave its number, "7").
+        want = {'clip': 'WIPE_LONG_SOURCE_NAME_FOR_TESTING', 'tga': 'SEQ', 'sws': 'SEQ'}
         for n, route in enumerate(('clip', 'tga', 'sws')):
             for k, kw in enumerate(({}, {'description': ''}, {'description': '   '})):
                 with self.subTest(route=route, kw=kw):
                     made = self._write(route, 20 + 3 * n + k, **kw)
                     self.assertEqual(self._name(made), want[route][:31])
+
+
+    def test_an_sws_gives_its_own_description(self):
+        d = os.path.join(self.tmp, 'typed'); os.makedirs(d)
+        sws = m.convert_tga_sequence(self.tgas, 8, d, '1080p50', log=self.q, write_log=False,
+                                     description='FT SCORE', desk_description='Full time score, both teams')
+        out = os.path.join(self.tmp, 'eif-typed'); os.makedirs(out)
+        made = m.convert_sws_to_eif(sws, out, log=self.q, out_name='0001')
+        self.assertEqual(self._name(made), 'FULL TIME SCORE, BOTH TEAMS')
 
 
 class TestNumbersOnlySequences(unittest.TestCase):
