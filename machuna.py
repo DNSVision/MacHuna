@@ -610,7 +610,10 @@ def sws_desk_fields(path) -> tuple:
     except Exception:
         return '', ''
     field = lambda a, b: raw[a:b].split(b'\0')[0].decode('ascii', 'replace').strip()
-    return field(0xFC, 0x108), _without_ending(field(0x20, 0xEB))
+    # MacHuna wrote the name at 0x0FB until v1.19.0 (0x0FB is zero in K-Watch's
+    # files and in later MacHuna's), so an old one's is read from there.
+    name = field(0xFB, 0x107) if len(raw) > 0xFB and raw[0xFB] else field(0xFC, 0x108)
+    return name, _without_ending(field(0x20, 0xEB))
 
 
 def _sws_names(description, desk_description, own_description: str, own_name: str = '') -> tuple:

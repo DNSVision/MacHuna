@@ -341,6 +341,15 @@ class TestSwsDeskNameAndDescription(TestSwsDescription):
         self.assertEqual(bytes(hdr[0x20:0xEB]).split(b'\0')[0], b'Its own description')
         self.assertEqual(m.sws_desk_fields(src), ('Own name', 'Its own description'))
 
+    def test_an_old_machuna_sws_keeps_its_whole_name(self):
+        """MacHuna wrote the name at 0x0FB until v1.19.0, so 0x0FC holds it
+        without its first letter ("LIP50P"). Its own name is read from 0x0FB."""
+        src = os.path.join(tempfile.mkdtemp(dir=self.tmp), '50.SWS')
+        shutil.copy(self.p['sws'], src)
+        with open(src, 'r+b') as f:
+            f.seek(0xFB); f.write(b'CLIP50P'.ljust(12, b'\0'))
+        self.assertEqual(m.sws_desk_fields(src)[0], 'CLIP50P')
+
 
 # ── Video standard codes in header ────────────────────────────────────────────
 
