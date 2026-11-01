@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.20.1 — 2026-11-01
+
+**A Kahuna SWS gets a Name and a Description, as the desk shows them** (found at a Kahuna on 2026-10-31). MacHuna 2.9.1 pins it.
+
+### Fixed
+- **An SWS's Description was always the source's file name.** A Kahuna shows two fields for a clip: Name (0x0FC, 11 characters) and Description (0x020, of which it shows 32). v1.20.0's `description=` set the Name only, and 0x020 was the source's file name with its ending (`CLIP50P.mov`), or a sequence's first frame (`STING0001.tga`), as K-Watch writes it. Every SWS route now takes `desk_description=`: typed, or the row's own name without its ending. The Name, unless typed, comes from a typed description, else the source's own, else the row's own description, ending at a whole word (`_sws_desk_name_from`: "Home team line-up" gives "Home team"). An SWS converted again keeps its own Name and Description (`sws_desk_fields`; an SWS from MacHuna before v1.19.0, which wrote the name at 0x0FB, keeps its whole name). Parity kit against 2.9.0: the 25 non-SWS cases identical; the 19 SWS cases differ in the Name and Description bytes only (pictures, key and sound byte for byte), by design.
+
 ## v1.20.0 — 2026-10-29
 
 **Release 2 from a PC tester's report, item by item, each tested by David on his Mac.** Pictures that are not 16:9 placed in the frame, not stretched; a separate key for any source (clips, sequences, stills, SWS and EIF), its own key removed, the key saved on its own, a keyed file used as a key by its alpha; a description for Kahuna SWS on every route, empty meaning the row's own name; Sony TGA and TGA Sequence from a clip keep its length at the standard's rate. Parity kit against 2.8.0: 39 of 44 cases identical, the 5 sequence and still SWS cases differing only in the clip name bytes (by design). MacHuna 2.9.0 pins it.
