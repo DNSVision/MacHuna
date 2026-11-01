@@ -248,11 +248,98 @@ class TestSwsDescription(unittest.TestCase):
                 self.assertEqual(self._name(route, 'A much longer name'), 'A much long')
 
     def test_empty_is_the_rows_own_name_cut_to_11(self):
+        # 2.9.1 (Swift decision 71): an SWS source keeps its own listed name,
+        # and a name taken from a longer one ends at a whole word.
         for route, want in (('clip', 'KNOCKOUT_WI'), ('still', 'LOGO_BUG'), ('seq', 'PROMO3_60'),
-                            ('numbers', 'MYFOLDER'), ('sws', '12'), ('eif', 'WEATHER INT')):
+                            ('numbers', 'MYFOLDER'), ('sws', 'KNOCKOUT_WI'), ('eif', 'WEATHER')):
             with self.subTest(route=route):
                 self.assertEqual(self._name(route), want)
                 self.assertEqual(self._name(route, '   '), want, 'spaces alone are empty')
+
+
+class TestSwsDeskNameAndDescription(TestSwsDescription):
+    """2.9.1 (Swift decision 71, found at a Kahuna 2026-10-31): a Kahuna shows
+    two fields for an SWS, Name (0x0FC, 11) and Description (0x020, of which
+    it shows 32). 2.9.0 wrote the typed text as the Name only, and 0x020 was
+    always the source's file name with its ending. Now 0x020 is the row's
+    description (typed, or the row's own name without an ending), and the
+    Name, unless typed, comes from it: its first 11 characters, ending at a
+    whole word. An SWS source keeps its own two."""
+
+    def _both(self, route, description=None, desk_description=None):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        quiet = lambda *a: None
+        kw = {}
+        if description is not None:
+            kw['description'] = description
+        if desk_description is not None:
+            kw['desk_description'] = desk_description
+        if route == 'clip':
+            m.convert_clip(self.p['clip'], 1, d, video_standard='1080p50', log=quiet, **kw)
+        elif route == 'still':
+            m.convert_still(self.p['still'], 4, d, video_standard='1080p50', log=quiet, **kw)
+        elif route in ('seq', 'numbers'):
+            m.convert_tga_sequence(self.p[route], 1, d, '1080p50', log=quiet, write_log=False, **kw)
+        elif route == 'sws':
+            m.convert_sws_to_sws(self.p['sws'], 1, d, '1080p50', log=quiet, **kw)
+        else:
+            m.convert_eif_to_sws(self.p['eif'], 1, d, video_standard='1080p50', log=quiet, **kw)
+        out = [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.SWS')][0]
+        with open(out, 'rb') as f:
+            hdr = f.read(512)
+        name = bytes(hdr[0xFC:0x108]).split(b'\0')[0].decode('ascii')
+        desc = bytes(hdr[0x20:0xEB]).split(b'\0')[0].decode('ascii')
+        return name, desc
+
+    def test_the_name_ends_at_a_whole_word(self):
+        for text, want in (('Home team line-up, first half', 'Home team'),
+                           ('Full time score', 'Full time'), ('Lower Third Home', 'Lower Third'),
+                           ('LOWER_THIRD_HOME', 'LOWER_THIRD'), ('KNOCKOUT_WIPE', 'KNOCKOUT_WI'),
+                           ('Short', 'Short'), ('A verylongword', 'A verylongw'),
+                           ('Exactly 11c', 'Exactly 11c'), ('  padded  ', 'padded')):
+            with self.subTest(text=text):
+                self.assertEqual(m._sws_desk_name_from(text), want)
+
+    def test_left_alone_both_come_from_the_rows_own_name_without_an_ending(self):
+        for route, want in (('clip', ('KNOCKOUT_WI', 'KNOCKOUT_WIPE')),
+                            ('still', ('LOGO_BUG', 'LOGO_BUG')),
+                            ('seq', ('PROMO3_60', 'PROMO3_60')),
+                            ('numbers', ('MYFOLDER', 'MYFOLDER')),
+                            ('sws', ('KNOCKOUT_WI', 'KNOCKOUT_WIPE')),
+                            ('eif', ('WEATHER', 'WEATHER INTRO'))):
+            with self.subTest(route=route):
+                self.assertEqual(self._both(route), want)
+
+    def test_a_typed_description_names_the_clip_too(self):
+        for route in ('clip', 'still', 'seq', 'sws', 'eif'):
+            with self.subTest(route=route):
+                self.assertEqual(self._both(route, desk_description='Home team line-up, first half'),
+                                 ('Home team', 'Home team line-up, first half'))
+
+    def test_a_typed_name_and_description_are_kept_apart(self):
+        for route in ('clip', 'still', 'seq', 'sws', 'eif'):
+            with self.subTest(route=route):
+                self.assertEqual(self._both(route, description='FT SCORE',
+                                            desk_description='Full time score, both teams'),
+                                 ('FT SCORE', 'Full time score, both teams'))
+
+    def test_the_description_holds_32(self):
+        self.assertEqual(self._both('clip', desk_description='x' * 40)[1], 'x' * 32)
+        self.assertEqual(self._both('clip', desk_description='   ')[1], 'KNOCKOUT_WIPE',
+                         'spaces alone are empty')
+
+    def test_an_sws_source_keeps_its_own_two(self):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        m.convert_clip(self.p['clip'], 7, d, video_standard='1080p50', log=lambda *a: None,
+                       description='Own name', desk_description='Its own description')
+        src = os.path.join(d, '7.SWS')
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m.convert_sws_to_sws(src, 1, out, '1080p50', log=lambda *a: None)
+        with open(os.path.join(out, '1.SWS'), 'rb') as f:
+            hdr = f.read(512)
+        self.assertEqual(bytes(hdr[0xFC:0x108]).split(b'\0')[0], b'Own name')
+        self.assertEqual(bytes(hdr[0x20:0xEB]).split(b'\0')[0], b'Its own description')
+        self.assertEqual(m.sws_desk_fields(src), ('Own name', 'Its own description'))
 
 
 # ── Video standard codes in header ────────────────────────────────────────────

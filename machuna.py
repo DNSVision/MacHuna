@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.20.0"
+VERSION = "1.20.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -553,6 +553,77 @@ def build_sws_header(source_filename: str,
 # ─────────────────────────────────────────────────────────────
 #  FFmpeg helpers
 # ─────────────────────────────────────────────────────────────
+
+SWS_DESK_NAME_LIMIT = 11      # 0x0FC, what a Kahuna lists as Name
+SWS_DESCRIPTION_LIMIT = 32    # 0x020, of which a Kahuna shows 32 (desk, 2026-10-31)
+_MEDIA_ENDINGS = ('.mov', '.mp4', '.m4v', '.mxf', '.avi', '.mkv', '.webm', '.mpg', '.mpeg',
+                  '.png', '.tga', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp', '.gif', '.dpx',
+                  '.exr', '.psd', '.heic', '.sws', '.eif', '.wav')
+
+
+def _sws_text(text, limit: int) -> str:
+    """Printable ASCII ("?" for anything else), trimmed, cut to `limit`."""
+    t = ''.join(c if ' ' <= c <= '~' else '?' for c in (text or '')).strip()
+    return t[:limit].rstrip()
+
+
+def _without_ending(name: str) -> str:
+    """A file's name without a media ending ("CLIP50P.mov" -> "CLIP50P"):
+    a Kahuna shows the Description as text, and the ending says nothing."""
+    base = name or ''
+    if base.lower().endswith(_MEDIA_ENDINGS):
+        base = base[:base.rfind('.')]
+    return base
+
+
+def _sws_desk_description(typed, fallback: str) -> str:
+    """What a Kahuna shows as Description (0x020; Swift decision 71): the
+    description typed for the row, case and spaces kept, 32 at most; or,
+    left empty, the row's own name without its ending. Until 2.9.1 this was
+    always the source's file name, ending included, as K-Watch writes it."""
+    return (_sws_text(typed, SWS_DESCRIPTION_LIMIT)
+            or _sws_text(_without_ending(fallback), SWS_DESCRIPTION_LIMIT))
+
+
+def _sws_desk_name_from(text: str) -> str:
+    """A Name (11) taken from a longer description: its first 11
+    characters, ending at a whole word when a space falls far enough in
+    ("Home team line-up" -> "Home team", not "Home team l"); otherwise
+    simply cut. MacHuna-Swift's `Item.deskName(from:)` is the same rule."""
+    t = (text or '').strip()
+    if len(t) <= SWS_DESK_NAME_LIMIT:
+        return t
+    cut = t[:SWS_DESK_NAME_LIMIT]
+    if t[SWS_DESK_NAME_LIMIT] == ' ':
+        return cut.rstrip()
+    i = cut.rfind(' ')
+    return cut[:i].rstrip() if i >= 4 else cut
+
+
+def sws_desk_fields(path) -> tuple:
+    """An SWS's own (Name, Description): 0x0FC and 0x020, the Description
+    without a media ending. Split files are read as one. ('', '') if the
+    file cannot be read."""
+    try:
+        with open_sws(path) as f:
+            raw = f.read(0x108)
+    except Exception:
+        return '', ''
+    field = lambda a, b: raw[a:b].split(b'\0')[0].decode('ascii', 'replace').strip()
+    return field(0xFC, 0x108), _without_ending(field(0x20, 0xEB))
+
+
+def _sws_names(description, desk_description, own_description: str, own_name: str = '') -> tuple:
+    """(Name, Description) for an SWS route (Swift decision 71). The
+    Description is typed or the row's own; the Name is typed, or, when a
+    description was typed, taken from it, or else the source's own (an SWS
+    source's listed name), or taken from the row's own description."""
+    desc = _sws_desk_description(desk_description, own_description)
+    typed_desc = _sws_text(desk_description, SWS_DESCRIPTION_LIMIT)
+    fallback = (_sws_desk_name_from(typed_desc) if typed_desc
+                else (own_name or _sws_desk_name_from(desc)))
+    return _sws_clip_name(description, fallback), desc
+
 
 def _sws_clip_name(description, fallback: str) -> str:
     """The name a Kahuna lists for an SWS (0x0FC; `build_sws_header` cuts it
@@ -1168,9 +1239,11 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
                   ignore_alpha: bool = False,
                   auto_play: bool = False,
                   loop_play: bool = False,
-                  description: str = None):
+                  description: str = None,
+                  desk_description: str = None):
     """Convert a single TGA/PNG/BMP/JPG still to .SWS. description: the name a
-    Kahuna lists (`_sws_clip_name`); empty, the file's name."""
+    Kahuna lists (`_sws_clip_name`); empty, the file's name. desk_description:
+    what a Kahuna shows as Description (0x020; `_sws_names`)."""
 
     log(f"Converting still: {os.path.basename(input_path)}")
     info = get_video_info(input_path)
@@ -1219,13 +1292,12 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             os.rename(fill_raw + '.alpha.raw', actual_key)
 
         plane_size = os.path.getsize(fill_raw)
-        src_name   = os.path.basename(input_path)
         # The file's name, as for a clip: "<number>_1_000" until item 10,
         # a name with no source behind it (MacHuna's first version).
-        clip_name  = _sws_clip_name(description, Path(input_path).stem)
+        clip_name, desk_desc = _sws_names(description, desk_description, Path(input_path).stem)
 
         hdr = build_sws_header(
-            source_filename=src_name,
+            source_filename=desk_desc,
             clip_name=clip_name,
             width=w, height=h,
             frame_count=1,
@@ -1355,10 +1427,13 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  loop_play: bool = False,
                  sound_file: str = None,
                  clear_frames: str = None,
-                 description: str = None):
+                 description: str = None,
+                 desk_description: str = None):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
+    desk_description: what a Kahuna shows as Description (0x020, 32; Swift
+    decision 71); empty, the row's own name without its ending (`_sws_names`).
 
     clear_frames: 'start', 'end' or 'both' adds a clear frame there (decision
     54); the sound moves one frame later with a frame at the start.
@@ -1523,11 +1598,10 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
             log(f"  Sound: {audio_samples / EAF_SAMPLE_RATE:.2f}s, picture: "
                 f"{output_frame_count / output_fps:.2f}s")
 
-        src_name = os.path.basename(input_path)
-        clip_name  = _sws_clip_name(description, Path(input_path).stem)
+        clip_name, desk_desc = _sws_names(description, desk_description, Path(input_path).stem)
 
         hdr = build_sws_header(
-            source_filename=src_name,
+            source_filename=desk_desc,
             clip_name=clip_name,
             width=w, height=h,
             frame_count=output_frame_count,
@@ -2345,11 +2419,14 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          sound_file: str = None,
                          clear_frames: str = None,
                          source_rate: str = None,
-                         description: str = None):
+                         description: str = None,
+                         desk_description: str = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the
     sequence's own name (`_sequence_name`), as the list shows it.
+    desk_description: what a Kahuna shows as Description (0x020, 32; Swift
+    decision 71); empty, the row's own name without its ending (`_sws_names`).
 
     source_rate (decision 67, the TGA rate): how many TGAs make one second.
     'field' (50 for a 50Hz desk): woven in pairs for an interlaced standard, one
@@ -2512,13 +2589,13 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             raise ValueError("The TGA sequence produced no frames, so nothing was written.")
         log(f"  plane_size: {plane_size:,}  output frames: {output_frame_count}")
         output_frame_count += _add_clear_planes(fill_raw, actual_key, w, h, clear_frames, log)
-        src_name  = os.path.basename(tga_files[0])
         # The sequence's name: until item 10 it was the first frame's
         # ("PROMO3_60_0001", listed as "PROMO3_60_000"; "0001" for frames
         # numbered only).
         first_stem = Path(tga_files[0]).stem
         numbered = _GENERIC_TGA_RE.match(first_stem)
-        clip_name = _sws_clip_name(description, clip_name_override or _sequence_name(
+        clip_name, desk_desc = _sws_names(description, desk_description,
+                                          clip_name_override or _sequence_name(
             numbered.group(1) if numbered else first_stem, tga_files[0]))
         log(f"  clip name: {clip_name}   key: {'yes' if actual_key is not None else 'none'}")
 
@@ -2532,7 +2609,7 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                 f"{output_frame_count / out_fps:.2f}s")
 
         hdr = build_sws_header(
-            source_filename=src_name,
+            source_filename=desk_desc,
             clip_name=clip_name,
             width=w, height=h,
             frame_count=output_frame_count,
@@ -2634,10 +2711,13 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        ignore_alpha: bool = False, auto_play: bool = False,
                        loop_play: bool = False, include_audio: bool = True,
                        sound_file: str = None, clear_frames: str = None,
-                       description: str = None) -> str:
+                       description: str = None,
+                       desk_description: str = None) -> str:
     """Re-encode an SWS to another standard, keeping its audio.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
+    desk_description: what a Kahuna shows as Description (0x020, 32; Swift
+    decision 71); empty, the row's own name without its ending (`_sws_names`).
 
     sound_file: a sound to carry instead of the SWS's own (2026-10-11). Either
     way the sound keeps its own length (_write_sws_sound).
@@ -2775,10 +2855,13 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
             audio_samples = _write_sws_sound(audio_raw, stereo)
             log(f"  {stem}: sound {audio_samples / EAF_SAMPLE_RATE:.2f}s, "
                 f"picture {count / out_fps:.2f}s")
-        clip_name = _sws_clip_name(description, stem)
+        # An SWS keeps its own Name and Description unless others are typed
+        # (Swift decision 71); until 2.9.1 it was named by its number.
+        own_name, own_desc = sws_desk_fields(sws_path)
+        clip_name, desk_desc = _sws_names(description, desk_description, own_desc or stem, own_name)
         log(f"  clip name: {clip_name}   key: {'yes' if key else 'none'}   frames: {count}")
         hdr = build_sws_header(
-            source_filename=os.path.basename(sws_path),
+            source_filename=desk_desc,
             clip_name=clip_name,
             width=W, height=H,
             frame_count=count,
@@ -3439,7 +3522,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         include_audio: bool = True,
                         sound_file: str = None,
                         clear_frames: str = None,
-                        description: str = None) -> str:
+                        description: str = None,
+                        desk_description: str = None) -> str:
     """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio,
     or with sound_file instead (2026-10-11), kept at its own length.
 
@@ -3454,6 +3538,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
     is always kept: an EIF always stores one, and a key that is opaque
     throughout may be an intended full-frame key (decision C, to drop it, was
     reverted by David the same day: "always retain an alpha if there is one").
+    description / desk_description: the Name and Description a Kahuna shows
+    (`_sws_names`); empty, the EIF's own description.
     """
     h = EIFHeader(eif_path)
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
@@ -3533,7 +3619,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                     log(f"  Frame {o + 1}/{out_count}")
 
         out_count += _add_clear_planes(fill_path, key_path, 1920, 1080, clear_frames, log)
-        clip_name = _sws_clip_name(description, h.clip_name or Path(eif_path).stem)
+        clip_name, desk_desc = _sws_names(description, desk_description,
+                                          h.clip_name or Path(eif_path).stem)
         audio_raw = audio_samples = None
         stereo = chosen
         if stereo is None and include_audio:
@@ -3543,7 +3630,7 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
             audio_raw = os.path.join(tmp, 'audio.pcm')
             audio_samples = _write_sws_sound(audio_raw, stereo)
         hdr = build_sws_header(
-            source_filename=os.path.basename(eif_path),
+            source_filename=desk_desc,
             clip_name=clip_name,
             width=1920, height=1080,
             frame_count=out_count,
