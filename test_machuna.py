@@ -310,11 +310,14 @@ class TestSwsDeskNameAndDescription(TestSwsDescription):
             with self.subTest(route=route):
                 self.assertEqual(self._both(route), want)
 
-    def test_a_typed_description_names_the_clip_too(self):
-        for route in ('clip', 'still', 'seq', 'sws', 'eif'):
+    def test_a_typed_description_leaves_the_name_as_it_was(self):
+        """David's test (2026-11-01): Source name, then Desk name, then
+        Description. A typed description does not change the Name."""
+        for route, name in (('clip', 'KNOCKOUT_WI'), ('still', 'LOGO_BUG'), ('seq', 'PROMO3_60'),
+                            ('sws', 'KNOCKOUT_WI'), ('eif', 'WEATHER')):
             with self.subTest(route=route):
                 self.assertEqual(self._both(route, desk_description='Home team line-up, first half'),
-                                 ('Home team', 'Home team line-up, first half'))
+                                 (name, 'Home team line-up, first half'))
 
     def test_a_typed_name_and_description_are_kept_apart(self):
         for route in ('clip', 'still', 'seq', 'sws', 'eif'):

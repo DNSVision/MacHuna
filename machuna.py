@@ -617,15 +617,14 @@ def sws_desk_fields(path) -> tuple:
 
 
 def _sws_names(description, desk_description, own_description: str, own_name: str = '') -> tuple:
-    """(Name, Description) for an SWS route (Swift decision 71). The
-    Description is typed or the row's own; the Name is typed, or, when a
-    description was typed, taken from it, or else the source's own (an SWS
-    source's listed name), or taken from the row's own description."""
+    """(Name, Description) for an SWS route (Swift decision 71). Each is
+    typed or the row's own, and neither follows the other (David's test,
+    2026-11-01: Source name, then Desk name, then Description). The row's own
+    Name is an SWS source's listed name, or else taken from the row's own
+    description."""
     desc = _sws_desk_description(desk_description, own_description)
-    typed_desc = _sws_text(desk_description, SWS_DESCRIPTION_LIMIT)
-    fallback = (_sws_desk_name_from(typed_desc) if typed_desc
-                else (own_name or _sws_desk_name_from(desc)))
-    return _sws_clip_name(description, fallback), desc
+    own = own_name or _sws_desk_name_from(_sws_desk_description(None, own_description))
+    return _sws_clip_name(description, own), desc
 
 
 def _sws_clip_name(description, fallback: str) -> str:
