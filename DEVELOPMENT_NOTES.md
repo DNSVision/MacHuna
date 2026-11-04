@@ -239,6 +239,17 @@ together first, then the public PC release. Each line is open until ticked here.
    unchanged (both builds, self-tests, parity kit). Then ONE hand test signing of a scratch copy of
    MacHuna.exe, and package.ps1 changes proposed as text before they are made. A new publisher may still
    meet SmartScreen for a few weeks until Windows builds its reputation.
+   **The M1's tools (its HANDOVER 1122d85, checked by the M5):** SignTool 10.0.28000 (Windows SDK
+   BuildTools package, unpacked), the .NET 8.0.33 x64 runtime (the build still uses .NET 10 by full path),
+   the Artifact Signing add-in (no ARM64 build exists, so all four are x64 under emulation), Azure CLI
+   2.92.0; self-tests 87/87 on both builds, parity kit 44/44, so the build is unchanged. Azure CLI usage
+   data: off (David's choice, on the M5's advice). **Test signing:** Azure CLI must be told the directory
+   (its onmicrosoft.com name, kept in the M1's names file, not a repo) or it finds nothing; signed in as
+   David. SignTool then crashed loading add-in 1.0.151, which needs the .NET 10 x64 runtime although
+   Microsoft's page still says .NET 8; **1.0.146 needs .NET 8 and is used instead** (no new install, no
+   administrator prompt; the 1.0.151 folder removed). **Revisit when Microsoft drops 1.0.146:** then the
+   .NET 10 x64 runtime and the newest add-in, and the self-tests and parity kit again. Result of the
+   test signing: pending.
 7. **Licences:** the PC's notices inside the installer, and its GPL source zip beside each release (the
    ffmpeg 8.1.2 tarball, the exact configure line, the build script), checked the way the Mac's are.
 8. **Website (wording to David first):** the PC buttons decided 2026-10-18 (Intel/AMD and ARM, the matching
