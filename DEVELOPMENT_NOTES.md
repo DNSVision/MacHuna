@@ -219,6 +219,14 @@ together first, then the public PC release. Each line is open until ticked here.
    post says US/Canada only (unverified). If refused, delete the signing account to stop the charge (David
    confirms) and ship unsigned. **Next, once Completed:** a certificate profile and the signer role, then
    the M1 adds signing to its installer build. No Azure IDs in any repo.
+   **The M1's needs (its reply 2026-11-04, checked by the M5):** the account name, the certificate profile
+   name, the endpoint copied from the account's Overview page, and the publisher name, kept in a file in
+   David's Windows profile, never committed; David's own Azure sign-in on the machine when a build is
+   signed (no stored secret); David given "Artifact Signing Certificate Profile Signer" (Owner does not
+   include it); SignTool, the .NET 8 runtime, the Artifact Signing add-in and Azure CLI, each with David's
+   OK, all one architecture. package.ps1 then signs every exe, ffmpeg, ffprobe and each installer with a
+   timestamp, verifies them, and re-runs the self-test. **The SHA-256 sent to the M5 is taken after
+   signing.** Basic allows 5,000 signatures a month (Microsoft's pricing page); a build uses 10 to 15.
 7. **Licences:** the PC's notices inside the installer, and its GPL source zip beside each release (the
    ffmpeg 8.1.2 tarball, the exact configure line, the build script), checked the way the Mac's are.
 8. **Website (wording to David first):** the PC buttons decided 2026-10-18 (Intel/AMD and ARM, the matching
