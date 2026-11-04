@@ -243,7 +243,7 @@ together first, then the public PC release. Each line is open until ticked here.
    BuildTools package, unpacked), the .NET 8.0.33 x64 runtime (the build still uses .NET 10 by full path),
    the Artifact Signing add-in (no ARM64 build exists, so all four are x64 under emulation), Azure CLI
    2.92.0; self-tests 87/87 on both builds, parity kit 44/44, so the build is unchanged. Azure CLI usage
-   data: off (David's choice, on the M5's advice). **Test signing:** Azure CLI must be told the directory
+   data: asked to be turned off (the M5's advice); to confirm in the M1's report. **Test signing:** Azure CLI must be told the directory
    (its onmicrosoft.com name, kept in the M1's names file, not a repo) or it finds nothing; signed in as
    David. SignTool then crashed loading add-in 1.0.151, which needs the .NET 10 x64 runtime although
    Microsoft's page still says .NET 8; **1.0.146 needs .NET 8 and is used instead** (no new install, no
