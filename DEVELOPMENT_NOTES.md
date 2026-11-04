@@ -212,6 +212,13 @@ together first, then the public PC release. Each line is open until ticked here.
    be borrowed. Settles whether the update-check hang was the emulation's.
 6. **Signing:** resume the Azure set-up at step 6, where billing starts (David's decision). Sign the installer
    and the app; check the signature, and what SmartScreen says, on a clean PC.
+   **2026-11-04: step 6 DONE** (Artifact Signing account, Basic, region **North Europe**; billing started).
+   **Step 7 SUBMITTED, In Progress:** the Identity Verifier role given, then a Public organisation
+   validation as "DNS Vision Ltd" with its Companies House number. The certificate will carry the
+   registered office address (David told). Microsoft's guide lists UK organisations as eligible; one forum
+   post says US/Canada only (unverified). If refused, delete the signing account to stop the charge (David
+   confirms) and ship unsigned. **Next, once Completed:** a certificate profile and the signer role, then
+   the M1 adds signing to its installer build. No Azure IDs in any repo.
 7. **Licences:** the PC's notices inside the installer, and its GPL source zip beside each release (the
    ffmpeg 8.1.2 tarball, the exact configure line, the build script), checked the way the Mac's are.
 8. **Website (wording to David first):** the PC buttons decided 2026-10-18 (Intel/AMD and ARM, the matching
