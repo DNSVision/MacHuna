@@ -227,6 +227,18 @@ together first, then the public PC release. Each line is open until ticked here.
    OK, all one architecture. package.ps1 then signs every exe, ffmpeg, ffprobe and each installer with a
    timestamp, verifies them, and re-runs the self-test. **The SHA-256 sent to the M5 is taken after
    signing.** Basic allows 5,000 signatures a month (Microsoft's pricing page); a build uses 10 to 15.
+   **2026-11-04, same day: THE AZURE SIDE IS COMPLETE.** The identity check needed David's personal
+   Verified ID (AU10TIX, held in Microsoft Authenticator); a 409 "already exists" on sharing it was harmless
+   and the check went to Completed within the hour. Certificate profile `machuna-public`, Public Trust,
+   Active, with the street address and postcode boxes left unticked: the subject is CN=DNS Vision Ltd,
+   O=DNS Vision Ltd, L=London, S=Greater London, C=GB. Its certificates show a few days' life (normal:
+   Microsoft renews them; the timestamp keeps a signature valid). David has "Artifact Signing Certificate
+   Profile Signer" on the account. Endpoint confirmed from the account's Overview:
+   `https://neu.codesigning.azure.net/`. **The M1:** its four tools installed, all x64 (Azure CLI 2.92.0;
+   its installer wrapper reported exit 255 though the tool is in, to be explained); now proving the build
+   unchanged (both builds, self-tests, parity kit). Then ONE hand test signing of a scratch copy of
+   MacHuna.exe, and package.ps1 changes proposed as text before they are made. A new publisher may still
+   meet SmartScreen for a few weeks until Windows builds its reputation.
 7. **Licences:** the PC's notices inside the installer, and its GPL source zip beside each release (the
    ffmpeg 8.1.2 tarball, the exact configure line, the build script), checked the way the Mac's are.
 8. **Website (wording to David first):** the PC buttons decided 2026-10-18 (Intel/AMD and ARM, the matching
