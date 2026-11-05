@@ -6318,12 +6318,59 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
     return out_path
 
 
+def _fit_tga_folder_to_show(folder: str, target: str, clip_name, src_fps: float,
+                            src_interlaced: bool, show: str, field_order: str = 'TFF',
+                            log=print) -> int:
+    """Swift decision 74.1 (David, 2026-11-05): fit a folder of TGAs written one
+    per SWS or EIF frame to a PROGRESSIVE show (1080p50 or 1080p25), so they play
+    for the clip's own length on the desk, which shows one TGA a frame. A K-Frame
+    played a 25p clip's TGAs at double speed on a 50p desk (2026-11-05).
+
+    Interlaced (woven 25) material is deinterlaced: a frame per field for 50p, a
+    frame per frame for 25p (`_i_to_p_plan`, as for a clip). Progressive material
+    at the other rate has frames repeated or picked by time (`_retime_tga_folder`,
+    decision H). Already right: untouched. Only the 25/50 family is fitted;
+    other rates keep today's handling. Returns the number of TGAs."""
+    show_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[show]]
+    is_sony = target == HULA_TARGET_SONY_TGA
+    start = 0 if is_sony else 1
+    pattern = os.path.join(folder, f"{clip_name}%04d.tga" if is_sony else '%04d.tga')
+    names = sorted(n for n in os.listdir(folder)
+                   if n.lower().endswith('.tga') and not n.startswith('.'))
+    family = any(abs(src_fps - r) < 0.5 for r in (25.0, 50.0))
+    if 'i' in show or not family or not names:
+        return len(names)
+    if src_interlaced:
+        parity = 'bff' if field_order == 'BFF' else 'tff'
+        vf, _produced, _t = _i_to_p_plan(src_fps, show, parity=parity)
+        files = [os.path.join(folder, n) for n in names]
+        with tempfile.TemporaryDirectory() as tmp:
+            made = os.path.join(tmp, 'out')
+            os.makedirs(made)
+            cmd = ([_get_ffmpeg_path('ffmpeg'), '-y'] + _tga_input_args(files, tmp, f'{src_fps:g}')
+                   + ['-vf', f'{vf},scale=flags=bitexact', '-start_number', str(start),
+                      os.path.join(made, os.path.basename(pattern))])
+            _run_ffmpeg(cmd, check=True)
+            for n in names:
+                os.remove(os.path.join(folder, n))
+            for n in sorted(os.listdir(made)):
+                os.replace(os.path.join(made, n), os.path.join(folder, n))
+        count = len([n for n in os.listdir(folder) if n.lower().endswith('.tga')])
+        log(f"  Interlaced, for a {show[4:]} show: deinterlaced, {len(names)} → {count} TGAs, "
+            f"duration kept")
+        return count
+    if abs(src_fps - show_fps) >= 0.01:
+        return _retime_tga_folder(folder, pattern, start, src_fps, show_fps, log)
+    return len(names)
+
+
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
                     clip_names: list = None, include_audio: bool = True,
                     log=print, sound_files: list = None,
-                    clear_frames: str = None, no_alpha: bool = False):
+                    clear_frames: str = None, no_alpha: bool = False,
+                    keep_duration: bool = False):
     """Convert a list of SWS or MOV files to the specified extraction target.
 
     clip_names, when given, is one Sony clip name per input path (bespoke
@@ -6331,6 +6378,11 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
     sound_files, when given, is one sound file (or None) per input path, for
     QuickTime MOV output; TGA cannot carry sound. no_alpha (Ignore key) makes
     a QuickTime MOV with no alpha channel; TGA output is not affected.
+
+    keep_duration (Swift decision 74.1, K-Frame TGA): `standard` is the show's
+    format (1080p50, 1080i50 or 1080p25) and an SWS or EIF at 25 or 50 is fitted
+    to it, as `_hula_convert_mov_to_tga` does for a clip: see
+    `_fit_tga_folder_to_show`. Off, everything is exactly as before.
     """
     os.makedirs(dest_dir, exist_ok=True)
     ok = fail = 0
@@ -6363,6 +6415,11 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     out = _hula_convert_eif_to_tga(
                         path, dest_dir, target=target,
                         clip_name=cn, log=log)
+                    if keep_duration and not interlaced:
+                        # A 25fps EIF holds woven 50i (desk session 2026-10-07).
+                        h = EIFHeader(path)
+                        _fit_tga_folder_to_show(out, target, cn, h.fps, h.fps < 48.0,
+                                                standard, field_order, log)
             elif ext == '.mov':
                 if target == HULA_TARGET_QUICKTIME_MOV:
                     raise ValueError(
@@ -6394,6 +6451,10 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
             else:
                 out = _hula_convert_tga(path, dest_dir, target,
                                   clip_name=cn, log=log)
+                if keep_duration:
+                    h = HulaSWSHeader(path)
+                    _fit_tga_folder_to_show(out, target, cn, h.fps, 'i' in h.standard,
+                                            standard, field_order, log)
             if out and clear_frames:
                 # Decision 54: every TGA route, padded the same way afterwards.
                 add_clear_tga_frames(out, clear_frames, log=log)

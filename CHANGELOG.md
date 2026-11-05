@@ -4,6 +4,11 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## Unreleased
+
+### Fixed
+- **K-Frame TGA from a 25-a-second source played at double speed on a 50p desk** (found on a K-Frame, 2026-11-05: a K-Frame shows one TGA a frame, so 50 TGAs of a 2-second 25p clip played in 1 second; each frame written twice played right). Swift decision 74/74.1: the app asks the show's format (50p, 50i or 25p) and every file is fitted to it. `_hula_run_batch(..., keep_duration=True)` fits an SWS or EIF at 25 or 50 to a progressive show with the new `_fit_tga_folder_to_show`: woven 50i deinterlaced (a frame per field for 50p, a frame per frame for 25p), progressive at the other rate repeated or picked by time; a clip uses `_hula_convert_mov_to_tga(..., keep_duration=True)` as Sony TGA does. Files already in the show's format are byte for byte as before; off, nothing changes. Other rates keep today's handling.
+
 ## v1.20.1 — 2026-11-01
 
 **A Kahuna SWS gets a Name and a Description, as the desk shows them** (found at a Kahuna on 2026-10-31). MacHuna 2.9.1 pins it.

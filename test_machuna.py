@@ -7638,3 +7638,115 @@ class TestSonyTgaKeepsTheClipsLength(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(d)), [f'{k:04d}.tga' for k in range(1, 7)])
         self.assertEqual([Image.open(os.path.join(d, f'{k:04d}.tga')).getpixel((0, 0))
                           for k in range(1, 7)], [50, 50, 100, 100, 150, 150])
+
+
+class TestKframeTgaFitsTheShow(unittest.TestCase):
+    """Swift decision 74/74.1 (K-Frame desk, 2026-11-05): K-Frame TGA from a 25p
+    clip played at double speed on a 50p desk, because the desk shows one TGA a
+    frame. David: the app asks the SHOW's format (50p, 50i or 25p) and every
+    file is fitted to it; files already in that format go through untouched.
+    Clips take Sony's keep_duration route; SWS and EIF take keep_duration on
+    _hula_run_batch. Rates outside 25/50 keep today's handling."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        ff = m._get_ffmpeg_path('ffmpeg')
+        cls.tmp = tempfile.mkdtemp(prefix='mh-kframe-show-')
+        q = lambda *a: None
+
+        def clip(tag, rate, n, laced=False):
+            path = os.path.join(cls.tmp, f'{tag}.mov')
+            # Each source frame (each FIELD, for an interlaced one) a different grey.
+            vf = "geq=lum='16+N*30':cb=128:cr=128"
+            if laced:
+                vf += ',tinterlace=mode=interleave_top,setfield=tff'
+            # n source frames (counted before weaving: an interlaced clip has n/2).
+            cmd = [ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                   f'color=c=black:s=64x36:r={rate}:d={n / rate}', '-vf', vf]
+            if laced:
+                cmd += ['-flags', '+ilme+ildct']
+            subprocess.run(cmd + ['-c:v', 'prores_ks', '-color_primaries', 'bt709',
+                                  '-color_trc', 'bt709', '-colorspace', 'bt709', path],
+                           check=True, stdin=subprocess.DEVNULL)
+            return path
+        cls.clips = {'p25': clip('p25', 25, 4), 'p50': clip('p50', 50, 6),
+                     'i50': clip('i50', 50, 6, laced=True)}
+        cls.src = {}
+        for tag, std in (('p25', '1080p25'), ('p50', '1080p50'), ('i50', '1080i50')):
+            d = os.path.join(cls.tmp, f'sws_{tag}'); os.makedirs(d)
+            m.convert_clip(cls.clips[tag], 1, d, video_standard=std, split_fat32=False,
+                           log=q, include_audio=False)
+            cls.src[f'sws_{tag}'] = os.path.join(d, '1.SWS')
+        for tag in ('p50', 'i50'):
+            d = os.path.join(cls.tmp, f'eif_{tag}'); os.makedirs(d)
+            cls.src[f'eif_{tag}'] = m.convert_clip_to_eif(cls.clips[tag], d, log=q, out_name='0001',
+                                                          include_audio=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _read(out):
+        names = sorted(n for n in os.listdir(out) if n.endswith('.tga'))
+        greys = [int(round(np.asarray(Image.open(os.path.join(out, n)).convert('L'))
+                           [:, 16:48].mean())) for n in names]
+        return names, greys
+
+    def _batch(self, src, show, **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([self.src[src]], d, m.HULA_TARGET_KFRAME_TGA, standard=show,
+                          log=lambda *a: None, **kw)
+        (folder,) = [os.path.join(d, f) for f in os.listdir(d) if os.path.isdir(os.path.join(d, f))]
+        return folder
+
+    def _clip(self, tag, show, **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        return m._hula_convert_mov_to_tga(self.clips[tag], d, m.HULA_TARGET_KFRAME_TGA, show,
+                                          log=lambda *a: None, **kw)
+
+    def _bytes(self, folder):
+        return [open(os.path.join(folder, n), 'rb').read() for n in self._read(folder)[0]]
+
+    def test_25p_for_a_50p_show_is_each_frame_twice(self):
+        for make in (lambda **kw: self._batch('sws_p25', '1080p50', **kw),
+                     lambda **kw: self._clip('p25', '1080p50', **kw)):
+            names, greys = self._read(make(keep_duration=True))
+            self.assertEqual(names, [f'{k:04d}.tga' for k in range(1, 9)])
+            self.assertEqual(greys[0::2], greys[1::2])
+            self.assertEqual(greys[0::2], sorted(set(greys)), 'in order, none lost')
+
+    def test_50i_for_a_50p_show_is_a_frame_per_field_in_order(self):
+        for src in ('sws_i50', 'eif_i50'):
+            with self.subTest(src=src):
+                names, greys = self._read(self._batch(src, '1080p50', keep_duration=True))
+                self.assertEqual(len(names), 6, '3 interlaced frames are 6 fields')
+                self.assertEqual(greys, sorted(greys), 'top field first: the greys rise')
+                self.assertEqual(len(set(greys)), 6)
+        names, _ = self._read(self._clip('i50', '1080p50', keep_duration=True))
+        self.assertEqual(len(names), 6)
+
+    def test_for_a_25p_show_50p_keeps_every_other_and_50i_a_frame_per_frame(self):
+        for src, n in (('sws_p50', 3), ('eif_p50', 3), ('sws_i50', 3), ('eif_i50', 3)):
+            with self.subTest(src=src):
+                names, greys = self._read(self._batch(src, '1080p25', keep_duration=True))
+                self.assertEqual(len(names), n)
+                self.assertEqual(greys, sorted(greys))
+        _, all_six = self._read(self._batch('sws_p50', '1080p50', keep_duration=True))
+        _, three = self._read(self._batch('sws_p50', '1080p25', keep_duration=True))
+        self.assertEqual(three, all_six[0::2])
+
+    def test_files_already_right_go_through_untouched(self):
+        # Byte for byte what K-Frame TGA writes today, for each format's own show
+        # and for 25p on a 50i show (PsF).
+        for src, show in (('sws_p50', '1080p50'), ('eif_p50', '1080p50'), ('sws_i50', '1080i50'),
+                          ('eif_i50', '1080i50'), ('sws_p25', '1080p25'), ('sws_p25', '1080i50'),
+                          ('sws_p50', '1080i50'), ('eif_p50', '1080i50')):
+            with self.subTest(src=src, show=show):
+                self.assertEqual(self._bytes(self._batch(src, show, keep_duration=True)),
+                                 self._bytes(self._batch(src, show)))
+
+    def test_without_keep_duration_nothing_changes(self):
+        self.assertEqual(len(self._read(self._batch('sws_p25', '1080p50'))[0]), 4)
+        self.assertEqual(len(self._read(self._batch('eif_i50', '1080p50'))[0]), 3)
