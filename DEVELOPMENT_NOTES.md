@@ -226,7 +226,7 @@ together first, then the public PC release. Each line is open until ticked here.
    include it); SignTool, the .NET 8 runtime, the Artifact Signing add-in and Azure CLI, each with David's
    OK, all one architecture. package.ps1 then signs every exe, ffmpeg, ffprobe and each installer with a
    timestamp, verifies them, and re-runs the self-test. **The SHA-256 sent to the M5 is taken after
-   signing.** Basic allows 5,000 signatures a month (Microsoft's pricing page); a build uses 10 to 15.
+   signing.** Basic allows 5,000 signatures a month (Microsoft's pricing page); a build uses about 54 (measured 2026-11-05, below).
    **2026-11-04, same day: THE AZURE SIDE IS COMPLETE.** The identity check needed David's personal
    Verified ID (AU10TIX, held in Microsoft Authenticator); a 409 "already exists" on sharing it was harmless
    and the check went to Completed within the hour. Certificate profile `machuna-public`, Public Trust,
@@ -243,13 +243,28 @@ together first, then the public PC release. Each line is open until ticked here.
    BuildTools package, unpacked), the .NET 8.0.33 x64 runtime (the build still uses .NET 10 by full path),
    the Artifact Signing add-in (no ARM64 build exists, so all four are x64 under emulation), Azure CLI
    2.92.0; self-tests 87/87 on both builds, parity kit 44/44, so the build is unchanged. Azure CLI usage
-   data: asked to be turned off (the M5's advice); to confirm in the M1's report. **Test signing:** Azure CLI must be told the directory
+   data: was on (Azure CLI's default), now OFF (`core.collect_telemetry = false`, confirmed by the M1
+   2026-11-05). The exit 255 was the M1's own follow-up command (`az version` piped into `Select-Object -First 6`,
+   which closed the pipe early); the install returned 0. **Test signing:** Azure CLI must be told the directory
    (its onmicrosoft.com name, kept in the M1's names file, not a repo) or it finds nothing; signed in as
    David. SignTool then crashed loading add-in 1.0.151, which needs the .NET 10 x64 runtime although
    Microsoft's page still says .NET 8; **1.0.146 needs .NET 8 and is used instead** (no new install, no
    administrator prompt; the 1.0.151 folder removed). **Revisit when Microsoft drops 1.0.146:** then the
    .NET 10 x64 runtime and the newest add-in, and the self-tests and parity kit again. Result of the
-   test signing: pending.
+   test signing: PASSED (2026-11-04): `signtool verify /pa` OK, chained to Microsoft's root, timestamped, and the
+   signed copy still runs 87/87.
+   **2026-11-05: `package.ps1 -Sign` BUILT (MacHuna-PC 238c055, 8a238d8; PC decision 80; checked by the M5, no
+   names in the repo).** Off by default, so test builds stay unsigned. It checks first (the profile's three files,
+   one x64 SignTool and add-in, Azure CLI signed in), signs every EXE, DLL and PYD nobody else has signed (25 per
+   package: MacHuna.exe/.dll, the bridge, ffmpeg, ffprobe, 20 numpy/Pillow/OpenBLAS files) before the zips, then
+   each Setup and its uninstaller through Inno Setup; then verifies every signature it made (`verify /pa`,
+   Windows' Valid, a timestamp, signer equal to the profile's publisher) and stops on any failure. **One change
+   from the proposal:** the licence trace and the GPL source check identify files by their exact bytes, which
+   signing changes (the first run stopped there, as it should), so they now run BEFORE signing, the shared frozen
+   bridge stays unsigned and each package's copy is signed; a bridge signed in place is refused. AppPublisher is
+   now "DNS Vision Ltd" (AppId unchanged). **One signed build in scratch, not for testers:** 52 signatures, all
+   verified; self-tests x64 87/87, arm64 87/87. The first signed tester build is the next PC port. MacHuna-PC
+   6ef6959 (names, no IDs, in a private repo) left in the history on purpose: no rewrite.
 7. **Licences:** the PC's notices inside the installer, and its GPL source zip beside each release (the
    ffmpeg 8.1.2 tarball, the exact configure line, the build script), checked the way the Mac's are.
 8. **Website (wording to David first):** the PC buttons decided 2026-10-18 (Intel/AMD and ARM, the matching
