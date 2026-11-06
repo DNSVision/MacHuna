@@ -7640,6 +7640,101 @@ class TestSonyTgaKeepsTheClipsLength(unittest.TestCase):
                           for k in range(1, 7)], [50, 50, 100, 100, 150, 150])
 
 
+class TestStillToKframeEif(unittest.TestCase):
+    """Swift decision 69 (a K-Frame user, 2026-10-30; settled on a K-Frame
+    2026-11-05): a still to K-Frame EIF is a ONE-FRAME EIF, which the desk lists
+    as a still, as it does its own PNG import, and as it exports a still. Made
+    from the still's RGB, as TGA to EIF is: the kit's first one went through an
+    ffmpeg movie and came out BT.601 (red lighter, measured). The one made this
+    way keyed identically to the desk's own import of the same PNG."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='mh-still-eif-')
+        x = np.linspace(0, 255, 1920)[None, :].repeat(1080, 0)
+        rgb = np.stack([x, x[:, ::-1], np.full_like(x, 90)], -1).astype(np.uint8)
+        rgb[300:500, 300:700] = (255, 0, 0)
+        rgb[600:800, 900:1300] = (0, 255, 0)
+        alpha = np.zeros((1080, 1920), np.uint8)
+        alpha[200:900, 200:1700] = 255
+        cls.rgb, cls.alpha = rgb, alpha
+        cls.rgba = np.dstack([rgb, alpha])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _save(self, name, img):
+        p = os.path.join(self.tmp, name)
+        img.save(p, quality=100) if name.endswith('.jpg') else img.save(p)
+        return p
+
+    def _eif(self, still, fps=50.0, **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        out = m.convert_still_to_eif(still, d, '4001', fps, log=lambda *a: None, **kw)
+        h = m.EIFHeader(out)
+        with open(out, 'rb') as f:
+            f.seek(h.video_start)
+            u = [f.read(m._EIF_UNIT_BYTES) for _ in range(3)]
+        return out, h, np.array(m._decode_eif_frame_rgba(*u)).astype(int)
+
+    def test_one_frame_with_its_description_and_key(self):
+        for fps in (50.0, 25.0):
+            with self.subTest(fps=fps):
+                out, h, got = self._eif(self._save('CAPTION.png', Image.fromarray(self.rgba)), fps,
+                                        description='Caption one')
+                self.assertEqual(os.path.basename(out), '4001.eif')
+                self.assertEqual((h.frame_count, h.fps), (1, fps))
+                self.assertEqual(h.clip_name, 'CAPTION ONE')
+                self.assertEqual(os.path.getsize(out),
+                                 h.video_start + 3 * m._EIF_UNIT_BYTES + len(m._eif_tail(fps)))
+                self.assertFalse(os.path.exists(out[:-4] + '.eaf'), 'a still has no sound')
+                np.testing.assert_array_equal(got[..., 3], self.alpha)
+
+    def test_blank_description_is_the_file_name(self):
+        _, h, _ = self._eif(self._save('LOWER_THIRD.png', Image.fromarray(self.rgb)))
+        self.assertEqual(h.clip_name, 'LOWER_THIRD')
+
+    def test_colours_are_bt709_from_the_rgb(self):
+        # Inside the flat red and green boxes, the colour comes back within a
+        # step; BT.601 would be far out (red Y 397 against 340 in the kit).
+        _, _, got = self._eif(self._save('C.png', Image.fromarray(self.rgba)))
+        for box, want in (((slice(320, 480), slice(320, 680)), (255, 0, 0)),
+                          ((slice(620, 780), slice(920, 1280)), (0, 255, 0))):
+            self.assertLessEqual(np.abs(got[box][..., :3] - want).max(), 2)
+        self.assertLess(np.abs(got[..., :3] - self.rgb).mean(), 1.0)
+
+    def test_the_same_as_a_one_frame_tga_sequence(self):
+        # The route the desk proved, byte for byte.
+        tga = self._save('SAME.tga', Image.fromarray(self.rgba))
+        out, _, _ = self._eif(self._save('SAME.png', Image.fromarray(self.rgba)))
+        d = tempfile.mkdtemp(dir=self.tmp)
+        seq = m.convert_tga_seq_to_eif([tga], d, 'SAME', 50.0, log=lambda *a: None, out_name='4001')
+        self.assertEqual(open(out, 'rb').read(), open(seq, 'rb').read())
+
+    def test_every_still_type(self):
+        grey = self.rgb[..., 0]
+        for name, img, want in (
+                ('a.jpg', Image.fromarray(self.rgb), self.rgb),
+                ('a.bmp', Image.fromarray(self.rgb), self.rgb),
+                ('a.tif', Image.fromarray(self.rgba), self.rgb),
+                ('a.tga', Image.fromarray(self.rgba), self.rgb),
+                ('g.png', Image.fromarray(grey), np.dstack([grey] * 3)),
+                ('g16.tif', Image.fromarray(grey.astype(np.uint16) * 257), np.dstack([grey] * 3)),
+                ('g16.png', Image.fromarray(grey.astype(np.uint16) * 257), np.dstack([grey] * 3)),
+                ('k.jpg', Image.fromarray(self.rgb).convert('CMYK'), self.rgb)):
+            with self.subTest(still=name):
+                _, h, got = self._eif(self._save(name, img))
+                self.assertEqual(h.frame_count, 1)
+                self.assertLess(np.abs(got[..., :3] - want).mean(), 1.5)
+
+    def test_not_16_9_is_placed(self):
+        _, _, got = self._eif(self._save('small.png', Image.fromarray(self.rgb[:480, :640])))
+        self.assertEqual(got[5, 5, 3], 255, 'no key: black bars, solid')
+        self.assertLessEqual(got[5, 5, :3].max(), 2)
+        self.assertLessEqual(np.abs(got[540, 960, :3] - self.rgb[240, 320]).max(), 3)
+
+
 class TestKframeTgaFitsTheShow(unittest.TestCase):
     """Swift decision 74/74.1 (K-Frame desk, 2026-11-05): K-Frame TGA from a 25p
     clip played at double speed on a 50p desk, because the desk shows one TGA a

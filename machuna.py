@@ -3381,6 +3381,35 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     return dest_path
 
 
+def convert_still_to_eif(input_path: str, dest_dir: str, out_name: str,
+                         fps: float = 50.0, log=print, cancel_event=None,
+                         description: str = None) -> str:
+    """A still to K-Frame EIF (Swift decision 69): a ONE-FRAME EIF, which a
+    K-Frame lists as a still, as its own PNG import (desk session 2026-11-05;
+    the desk also exports a still as a one-frame EIF). Made from the picture's
+    RGB through `convert_tga_seq_to_eif`, the route that keyed identically to
+    the desk's own import: never through an ffmpeg movie, whose default
+    conversion is BT.601. Not 16:9: placed, as a sequence frame is (68.2).
+    description: what the K-Frame shows; blank, the file's name. No sound and
+    no clear frames: either would make it a clip. None if cancelled."""
+    log(f"Converting still to EIF: {os.path.basename(input_path)}")
+    stem = Path(input_path).stem
+    with tempfile.TemporaryDirectory() as tmp:
+        read_path = input_path
+        with Image.open(input_path) as img:
+            wide = img.mode.startswith('I') and not input_path.lower().endswith('.png')
+        if wide:
+            # A 16-bit grey TIFF: Pillow's own conversion clips it to white, so
+            # it is read as a 16-bit grey PNG is (`_open_frame`).
+            read_path = os.path.join(tmp, stem + '.png')
+            with Image.open(input_path) as img:
+                img.save(read_path)
+        return convert_tga_seq_to_eif([read_path], dest_dir, stem, fps, log=log,
+                                      cancel_event=cancel_event, out_name=out_name,
+                                      source_rate='field', interlaced_out=False,
+                                      description=description)
+
+
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         log=print, cancel_event=None, out_name: str = None,
                         include_audio: bool = True,
