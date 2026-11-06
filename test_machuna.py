@@ -7747,6 +7747,26 @@ class TestKframeTgaFitsTheShow(unittest.TestCase):
                 self.assertEqual(self._bytes(self._batch(src, show, keep_duration=True)),
                                  self._bytes(self._batch(src, show)))
 
+    def test_sony_tga_from_sws_and_eif_is_fitted_too(self):
+        # David, 2026-11-06: the same bug on Sony TGA from an SWS or EIF (its
+        # clips were fixed in release 2). Sony names from 0, with the clip name.
+        def sony(src, show, **kw):
+            d = tempfile.mkdtemp(dir=self.tmp)
+            m._hula_run_batch([self.src[src]], d, m.HULA_TARGET_SONY_TGA, standard=show,
+                              clip_name='RATE', clip_names=['RATE'], log=lambda *a: None, **kw)
+            return os.path.join(d, 'RATE')
+        names, greys = self._read(sony('sws_p25', '1080p50', keep_duration=True))
+        self.assertEqual(names, [f'RATE{k:04d}.tga' for k in range(8)])
+        self.assertEqual(greys[0::2], greys[1::2])
+        names, greys = self._read(sony('eif_i50', '1080p50', keep_duration=True))
+        self.assertEqual(names, [f'RATE{k:04d}.tga' for k in range(6)])
+        self.assertEqual(greys, sorted(greys))
+        self.assertEqual(len(self._read(sony('sws_p50', '1080p25', keep_duration=True))[0]), 3)
+        for src, show in (('sws_p50', '1080p50'), ('sws_p25', '1080i50'), ('eif_i50', '1080i50')):
+            with self.subTest(src=src, show=show):
+                self.assertEqual(self._bytes(sony(src, show, keep_duration=True)),
+                                 self._bytes(sony(src, show)))
+
     def test_without_keep_duration_nothing_changes(self):
         self.assertEqual(len(self._read(self._batch('sws_p25', '1080p50'))[0]), 4)
         self.assertEqual(len(self._read(self._batch('eif_i50', '1080p50'))[0]), 3)

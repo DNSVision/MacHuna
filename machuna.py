@@ -6379,9 +6379,9 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
     QuickTime MOV output; TGA cannot carry sound. no_alpha (Ignore key) makes
     a QuickTime MOV with no alpha channel; TGA output is not affected.
 
-    keep_duration (Swift decision 74.1, K-Frame TGA): `standard` is the show's
-    format (1080p50, 1080i50 or 1080p25) and an SWS or EIF at 25 or 50 is fitted
-    to it, as `_hula_convert_mov_to_tga` does for a clip: see
+    keep_duration (Swift decision 74.1, K-Frame TGA and Sony TGA): `standard` is
+    the show's format (1080p50, 1080i50 or 1080p25) and an SWS or EIF at 25 or 50
+    is fitted to it, as `_hula_convert_mov_to_tga` does for a clip: see
     `_fit_tga_folder_to_show`. Off, everything is exactly as before.
     """
     os.makedirs(dest_dir, exist_ok=True)
