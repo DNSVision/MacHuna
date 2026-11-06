@@ -103,6 +103,8 @@ change reaches MacHuna for Mac unless: the full suite passes (pytest and unittes
 change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
 version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
 
+**Small, for the next Mac release and the PC (found by the M1, 2026-11-06, in David's PC 2.10.0 checks):** the player's status line says "1 frames" for a one-frame file (a still to K-Frame EIF, decision 69). Mac: `MacHuna-Swift/Sources/MacHuna/PlayerView.swift:227`, `\(info.frames) frames`; the PC copies it. Fix: "1 frame" for one, "N frames" otherwise; the self-test reads the status for GREY.png's EIF (fail first). Not worth a release on its own; the PC ports it with the next parity.
+
 **Small, for the next engine release (found by the M1, 2026-10-16; not worth a release on its own):**
 `check_ffmpeg` (`machuna.py:559`) says "Install with: brew install ffmpeg". Both apps bundle their own ffmpeg, so
 a user only sees this if the app's own copy is missing, and then the advice is wrong on a Mac too: it should say
