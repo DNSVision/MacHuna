@@ -4,7 +4,9 @@ All notable changes to MacHuna are documented here.
 
 ---
 
-## Unreleased
+## v1.21.0 — 2026-11-06
+
+**From a K-Frame desk session (2026-11-05): K-Frame TGA fits every file to the show's format, Sony TGA from SWS and EIF keeps its length, and stills to K-Frame EIF.** MacHuna 2.10.0 pins it.
 
 ### Added
 - **Stills to K-Frame EIF** (Swift decision 69, a K-Frame user's request; settled on a K-Frame 2026-11-05). `convert_still_to_eif(input_path, dest_dir, out_name, fps, log, cancel_event, description)` writes a ONE-FRAME EIF, which a K-Frame lists as a still, as its own PNG import (and as it exports a still). Made from the picture's RGB through `convert_tga_seq_to_eif`, the route that keyed identically to the desk's own import (an ffmpeg-made movie came out BT.601). PNG, TGA, TIFF, BMP and JPEG; a 16-bit grey TIFF, which Pillow clipped to white, is read as a 16-bit grey PNG. No sound or clear frames. `TestStillToKframeEif`, fail-first, falsified twice.
