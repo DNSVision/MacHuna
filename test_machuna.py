@@ -3532,7 +3532,17 @@ class TestFableSmallFixes(unittest.TestCase):
 
 
 
-REFERENCE_EIF_DIR = Path(os.path.expanduser('~/Desktop/TEST WIPES/50i/EIF'))
+# Desk-made reference EIFs: copies in the Swift repo's test media (2026-11-09), because
+# the Desktop folders cannot be listed from here (macOS privacy), which skipped these
+# tests on the M5. The Desktop originals are the fallback.
+_USER_REF = Path(os.path.expanduser('~/Developer/MacHuna-Swift/testmedia/user-ref'))
+
+
+def _ref_dir(copy, desktop):
+    return _USER_REF / copy if (_USER_REF / copy).is_dir() else Path(os.path.expanduser(desktop))
+
+
+REFERENCE_EIF_DIR = _ref_dir('reference-eif-50i', '~/Desktop/TEST WIPES/50i/EIF')
 
 
 def _reference_files_readable():
@@ -3576,7 +3586,7 @@ class TestEafAgainstRealFiles(unittest.TestCase):
 
 
 REFERENCE_EIF_DIRS = (REFERENCE_EIF_DIR,
-                      Path(os.path.expanduser('~/Desktop/TEST WIPES/50P/EIF')))
+                      _ref_dir('reference-eif-50p', '~/Desktop/TEST WIPES/50P/EIF'))
 
 # EIF header 0x064 rate code, as every desk-made reference file has it:
 # 0x10484 in all 18 at 25fps, 0x104A4 in all 10 at 50fps.
