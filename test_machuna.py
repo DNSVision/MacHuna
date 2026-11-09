@@ -1466,7 +1466,11 @@ class TestOutputLabelsMatchTheirNotes(unittest.TestCase):
 
 DESK_2026_10_07 = Path(os.path.expanduser(
     '~/Developer/MacHuna-Swift/testmedia/desk/2026-10-07-kframe'))
-KNOCKOUT_WIPE = Path(os.path.expanduser(
+# The real-world Knockout wipe: a copy in the Swift repo's test media (2026-11-09),
+# so the tests do not depend on the Desktop; the Desktop original is the fallback.
+_KNOCKOUT_COPY = Path(os.path.expanduser(
+    '~/Developer/MacHuna-Swift/testmedia/user-ref/knockout/KNOCKOUT_WIPE.mov'))
+KNOCKOUT_WIPE = _KNOCKOUT_COPY if _KNOCKOUT_COPY.exists() else Path(os.path.expanduser(
     '~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov'))
 
 
@@ -4647,7 +4651,7 @@ class TestKeyPrecisionWithoutColourLabel(unittest.TestCase):
 
 
 KWATCH_2026_10_09 = Path('/Users/davidsteer/Developer/MacHuna-Swift/testmedia/desk/2026-10-09-kahuna')
-KNOCKOUT_MOV = Path(os.path.expanduser('~/Desktop/TEST WIPES/50P/MOVS/With Sound/KNOCKOUT_WIPE.mov'))
+KNOCKOUT_MOV = KNOCKOUT_WIPE
 
 
 def _readable(p):
