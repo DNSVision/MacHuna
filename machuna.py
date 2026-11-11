@@ -1402,6 +1402,26 @@ def _assume_709_and_say(info: dict, log=print) -> bool:
     return assume
 
 
+def _is_hdr_labelled(info: dict) -> bool:
+    """A clip labelled BT.2020 colour: HDR (HLG or PQ) material."""
+    return info.get('color_space', '') in ('bt2020nc', 'bt2020c')
+
+
+def _keep_values_and_say(info: dict, log=print) -> bool:
+    """For routes whose output holds the clip's own Y'CbCr values and no colour
+    label (SWS, EIF): True when the source must be relabelled BT.709 first so
+    ffmpeg leaves its values alone. An unlabelled HD clip (`_assume_709`), and,
+    since 2026-11-11, a clip labelled BT.2020: asking for a BT.709 output made
+    ffmpeg convert an HDR clip's colours, and an HDR desk then read the
+    converted values as BT.2020 (a K-Frame user's report). Its values now go
+    through exactly as they came in; whites and greys were never affected.
+    Not for routes that make RGB (TGA), which must read BT.2020 as BT.2020."""
+    if _is_hdr_labelled(info):
+        log("  Source is labelled HDR (BT.2020): its colour values are kept exactly as they are")
+        return True
+    return _assume_709_and_say(info, log)
+
+
 def _v210_plane_size(width: int, height: int) -> int:
     """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
     multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when
@@ -1549,7 +1569,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0, fit=fit,
                                   interlaced=rescale and info.get('is_interlaced', False),
-                                  assume_709=_assume_709_and_say(info, log))
+                                  assume_709=_keep_values_and_say(info, log))
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -3197,7 +3217,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     extract_alpha=info['has_alpha'],
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
-                                    assume_709=_assume_709_and_say(info, log))
+                                    assume_709=_keep_values_and_say(info, log))
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if cross_rate and frame_count:
             index = _pick_frames(frame_count, fps_in, fps)

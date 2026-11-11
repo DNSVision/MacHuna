@@ -3171,6 +3171,74 @@ class TestUntaggedHdColour(unittest.TestCase):
             self.assertNotIn(note, text, f'{route}: a labelled clip was reported as unlabelled')
 
 
+class TestHdrSourceKeepsItsValues(unittest.TestCase):
+    """2026-11-11 (a K-Frame user's report, re-measured): a clip labelled
+    BT.2020 (HDR) had its colours converted to BT.709 values on the way to SWS
+    and EIF (up to 73 Y and 58 chroma codes of 1023 on colour bars), because
+    every route asked ffmpeg for a BT.709 output. An HDR desk reads those
+    values as BT.2020, so saturated colours shifted. SWS and EIF hold no colour
+    label: the values must go through exactly as they came in, whatever the
+    source is labelled. Neutrals were never affected."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _clip(self, name, tags):
+        import subprocess
+        out = os.path.join(self.tmp, name + '.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'smptehdbars=s=1920x1080:r=25:d=0.08', '-vf',
+                        f'format=yuv422p10le,setparams=range=tv:{tags}',
+                        '-c:v', 'prores_ks', '-profile:v', '3', out], check=True)
+        return out
+
+    def _pair(self):
+        import subprocess
+        hd = self._clip('hd', 'colorspace=bt709:color_primaries=bt709:color_trc=bt709')
+        hdr = self._clip('hdr', 'colorspace=bt2020nc:color_primaries=bt2020:color_trc=arib-std-b67')
+        raw = [subprocess.run([self.ff, '-v', 'error', '-i', p, '-frames:v', '1', '-f', 'rawvideo',
+                               '-pix_fmt', 'yuv422p10le', '-'], capture_output=True).stdout for p in (hd, hdr)]
+        self.assertEqual(raw[0], raw[1], 'test sources must hold the same pixels, only labelled differently')
+        return hd, hdr
+
+    def test_an_hdr_labelled_clip_reaches_sws_and_eif_unchanged(self):
+        hd, hdr = self._pair()
+        pictures = {}
+        for tag, src in (('hd', hd), ('hdr', hdr)):
+            eif = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name=f'{tag}eif')
+            h = m.EIFHeader(eif)
+            with open(eif, 'rb') as f:
+                f.seek(h.video_start)
+                pictures[('eif', tag)] = f.read(3 * m._EIF_UNIT_BYTES)
+            d = os.path.join(self.tmp, f'{tag}sws'); os.makedirs(d)
+            m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False,
+                           split_fat32=False, log=lambda *a: None)
+            hs = m.HulaSWSHeader(os.path.join(d, '1.SWS'))
+            pictures[('sws', tag)] = Path(d, '1.SWS').read_bytes()[hs.data_offset:hs.data_offset + hs.plane_size]
+        for route in ('eif', 'sws'):
+            self.assertTrue(pictures[(route, 'hd')] == pictures[(route, 'hdr')],
+                            f'{route}: an HDR-labelled clip came out with different values')
+
+    def test_the_log_says_an_hdr_clip_keeps_its_values(self):
+        hd, hdr = self._pair()
+        note = 'labelled HDR (BT.2020)'
+        for tag, src, want in (('hd', hd, False), ('hdr', hdr, True)):
+            for route in ('sws', 'eif'):
+                lines = []
+                d = os.path.join(self.tmp, f'log-{tag}-{route}'); os.makedirs(d)
+                if route == 'sws':
+                    m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False,
+                                   split_fat32=False, log=lines.append)
+                else:
+                    m.convert_clip_to_eif(src, d, log=lines.append, out_name='0001')
+                said = note in '\n'.join(map(str, lines))
+                self.assertEqual(said, want, f'{route}, {tag}: HDR note {"missing" if want else "wrongly given"}')
+
+
 class TestTgaAlphaIsReadNotAssumed(unittest.TestCase):
     """Fable black-box pass, 2026-10-08: the probe assumed every TGA has alpha,
     so a 24-bit TGA sequence (common for fill-only graphics) failed to convert
