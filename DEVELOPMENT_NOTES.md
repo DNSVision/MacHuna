@@ -103,6 +103,12 @@ change reaches MacHuna for Mac unless: the full suite passes (pytest and unittes
 change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
 version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
 
+**NEXT RELEASE (David, 2026-11-14): K-Frame EIF numbers start at 1000, so the four digits never start with a 0.**
+Today an EIF is numbered 1-9999 (engine `validate_bespoke_ids`, BESPOKE_MODE_EIF) and written <NNNN>.eif, so 1 is
+0001.eif; the app seeds the first row with 1 (or the highest number + 1, `ConversionView.autofill`). To settle with
+David before building: the range (1000-9999, or 1000-1999) and whether 0xxx is refused or only no longer the
+default (the 2026-11-05 K-Frame day loaded 0911/0931/0951). Then: engine rule + message, the app's first number for
+EIF, Number Sequentially, the manual and Quick Start, a fail-first test; PC port note. SWS and Sony unchanged.
 **FIXED 2026-11-14 (David: "fix the bug"), unreleased: TGA/PNG sequences to Kahuna SWS used BT.601 colour maths.**
 `TestSequenceToSwsIsBt709` (pure red, green, blue, grey; failed first with red 324). The command now states BT.709 and
 limited range. Parity against manifest-mac-2.10.0: exactly the 4 sequence-to-SWS cases differ (sws-sting-i50,
