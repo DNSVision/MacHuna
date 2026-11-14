@@ -3319,7 +3319,16 @@ class TestHdrLutEveryRoute(unittest.TestCase):
     coding. Sources are a smooth in-gamut gradient with a ramp key, so no
     pixel holds a colour RGB cannot (any LUT clips those)."""
 
-    ROUTES = [('clip', 'sws'), ('clip', 'eif'), ('sws', 'sws'), ('sws', 'eif'), ('eif', 'sws')]
+    ROUTES = [('clip', 'sws'), ('clip', 'eif'), ('sws', 'sws'), ('sws', 'eif'), ('eif', 'sws'),
+              ('seq', 'sws'), ('seq', 'eif'), ('still', 'sws'), ('still', 'eif'),
+              ('sws720', 'sws'), ('sws720', 'eif')]
+    # RGB sources to SWS through ffmpeg: without a LUT a sequence uses BT.601
+    # (found 2026-11-14, roadmap, not yet fixed) and a still is about a code
+    # off exact BT.709 (ffmpeg's 8-bit path); with a LUT both decode at 16 bits
+    # with BT.709 stated, within a quarter of a code. So for them the identity
+    # LUT's file is the baseline, and `test_rgb_sources_with_a_lut_are_exact_bt709`
+    # holds it to the maths of the source's own pixels.
+    BASELINE_IS_IDENTITY = {('seq', 'sws'), ('still', 'sws')}
 
     @classmethod
     def setUpClass(cls):
@@ -3338,7 +3347,27 @@ class TestHdrLutEveryRoute(unittest.TestCase):
         d = os.path.join(cls.tmp, 'src-sws'); os.makedirs(d)
         m.convert_clip(clip, 1, d, video_standard='1080p25', include_audio=False, split_fat32=False, log=q)
         eif = m.convert_clip_to_eif(clip, cls.tmp, log=q, out_name='0001')
-        cls.src = {'clip': clip, 'sws': os.path.join(d, '1.SWS'), 'eif': eif}
+        seq = os.path.join(cls.tmp, 'seq'); os.makedirs(seq)
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-i', clip, '-pix_fmt', 'rgba',
+                        os.path.join(seq, 'GRAD%04d.tga')], check=True, stdin=subprocess.DEVNULL)
+        still = os.path.join(cls.tmp, 'GRAD.png')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-i', clip, '-frames:v', '1', '-pix_fmt', 'rgba', still],
+                       check=True, stdin=subprocess.DEVNULL)
+        # An SWS that is not 1920x1080 (older material): scaled on the way to
+        # SWS, and through RGB on the way to EIF. Built as the routes write one.
+        f720, k720 = os.path.join(cls.tmp, 'f720.v210'), os.path.join(cls.tmp, 'k720.v210')
+        m.convert_to_v210(clip, f720, extract_alpha=True, width=1280, height=720, assume_709=True)
+        os.replace(f720 + '.alpha.raw', k720)
+        ps720 = m._v210_plane_size(1280, 720)
+        n720 = os.path.getsize(f720) // ps720
+        hdr720 = m.build_sws_header(source_filename='G720', clip_name='G720', width=1280, height=720,
+                                    frame_count=n720, plane_size=ps720, video_standard='1080p25',
+                                    is_still=False, fps=25.0, has_key=True)
+        sws720 = os.path.join(cls.tmp, 'G720.SWS')
+        m.write_sws(sws720, f720, k720, hdr720, False, frame_count=n720, log=q)
+        cls.src = {'clip': clip, 'sws': os.path.join(d, '1.SWS'), 'eif': eif,
+                   'seq': sorted(os.path.join(seq, f) for f in os.listdir(seq)), 'still': still,
+                   'sws720': sws720}
 
         def cube(name, fn, head=''):
             n = 9
@@ -3372,16 +3401,24 @@ class TestHdrLutEveryRoute(unittest.TestCase):
             if source == 'clip':
                 m.convert_clip(path, 7, d, video_standard='1080p25', include_audio=False,
                                split_fat32=False, log=q, **kw)
-            elif source == 'sws':
+            elif source in ('sws', 'sws720'):
                 m.convert_sws_to_sws(path, 7, d, '1080p25', split_fat32=False, log=q, **kw)
             elif source == 'eif':
                 m.convert_eif_to_sws(path, 7, d, video_standard='1080p25', split_fat32=False, log=q, **kw)
+            elif source == 'seq':
+                m.convert_tga_sequence(path, 7, d, '1080p25', False, False, q, write_log=False, **kw)
+            elif source == 'still':
+                m.convert_still(path, 7, d, '1080p25', False, False, q, **kw)
             out = os.path.join(d, '7.SWS')
         else:
             if source == 'clip':
                 out = m.convert_clip_to_eif(path, d, log=q, out_name='0007', **kw)
-            elif source == 'sws':
+            elif source in ('sws', 'sws720'):
                 out = m.convert_sws_to_eif(path, d, log=q, out_name='0007', **kw)
+            elif source == 'seq':
+                out = m.convert_tga_seq_to_eif(path, d, 'GRAD', 25.0, log=q, out_name='0007', **kw)
+            elif source == 'still':
+                out = m.convert_still_to_eif(path, d, '0007', 25.0, log=q, **kw)
         self.made[key] = out
         return out
 
@@ -3419,9 +3456,38 @@ class TestHdrLutEveryRoute(unittest.TestCase):
         c = np.abs(got[..., 1:] - want[..., 1:])[:, :, 0::2]
         return np.concatenate([y.ravel(), c.ravel()])
 
+    def baseline(self, s, o):
+        return self.make(s, o, self.ident if (s, o) in self.BASELINE_IS_IDENTITY else None)
+
+    def test_rgb_sources_with_a_lut_are_exact_bt709(self):
+        # With a LUT that changes nothing, a sequence or still to SWS must be
+        # the BT.709 coding of its own RGB pixels, worked out here.
+        import numpy as np
+        from PIL import Image
+        for source, pic in (('seq', self.src['seq'][0]), ('still', self.src['still'])):
+            with self.subTest(source=source):
+                rgb = np.asarray(Image.open(pic).convert('RGB')).astype(np.float64) / 255
+                R, G, B = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+                Y = 0.2126 * R + 0.7152 * G + 0.0722 * B
+                want = np.stack([Y * 876 + 64, (B - Y) / 1.8556 * 896 + 512, (R - Y) / 1.5748 * 896 + 512], -1)
+                got, _ = self.planes(self.make(source, 'sws', self.ident))
+                g = got[0]
+                # Brightness at every pixel within a code. Colour within half a
+                # code on average and one 8-bit RGB step (~3.5 codes) at most:
+                # the source's 8-bit steps meet ffmpeg's 4:2:2 filter, and the
+                # maths here samples a single pixel (measured 2026-11-14: max
+                # 3.27, brightness max 0.53). BT.601 would be ~70 codes off.
+                dy = np.abs(g[..., 0] - want[..., 0])
+                dc = np.abs(g[:, 0::2, 1:] - want[:, 0::2, 1:])
+                self.assertLessEqual(float(dy.max()), 1.0, f'brightness max {dy.max()}')
+                self.assertLess(float(dc.mean()), 0.5, f'colour mean {dc.mean():.3f}')
+                self.assertLessEqual(float(dc.max()), 4.0, f'colour max {dc.max()}')
+
     def test_an_identity_lut_changes_nothing(self):
         import numpy as np
         for s, o in self.ROUTES:
+            if (s, o) in self.BASELINE_IS_IDENTITY:
+                continue
             with self.subTest(route=f'{s} to {o}'):
                 a, ka = self.planes(self.make(s, o, None))
                 b, kb = self.planes(self.make(s, o, self.ident))
@@ -3434,7 +3500,7 @@ class TestHdrLutEveryRoute(unittest.TestCase):
         cube = m.read_cube(self.half['path'])
         for s, o in self.ROUTES:
             with self.subTest(route=f'{s} to {o}'):
-                a, ka = self.planes(self.make(s, o, None))
+                a, ka = self.planes(self.baseline(s, o))
                 b, kb = self.planes(self.make(s, o, self.half))
                 want = np.stack(m.apply_cube_ycbcr(a[..., 0], a[..., 1], a[..., 2], cube, 'full'), axis=-1)
                 d = self.off(b, want)
@@ -3446,7 +3512,7 @@ class TestHdrLutEveryRoute(unittest.TestCase):
         import numpy as np
         for s, o in self.ROUTES:
             with self.subTest(route=f'{s} to {o}'):
-                a, _ = self.planes(self.make(s, o, None))
+                a, _ = self.planes(self.baseline(s, o))
                 b, _ = self.planes(self.make(s, o, self.recode))
                 Y, Cb, Cr = a[..., 0], a[..., 1], a[..., 2]
                 Yn, Cbn, Crn = (Y - 64) / 876, (Cb - 512) / 896, (Cr - 512) / 896

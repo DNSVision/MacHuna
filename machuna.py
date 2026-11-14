@@ -1254,12 +1254,14 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
                   auto_play: bool = False,
                   loop_play: bool = False,
                   description: str = None,
-                  desk_description: str = None):
+                  desk_description: str = None,
+                  lut: dict = None):
     """Convert a single TGA/PNG/BMP/JPG still to .SWS. description: the name a
     Kahuna lists (`_sws_clip_name`); empty, the file's name. desk_description:
     what a Kahuna shows as Description (0x020; `_sws_names`)."""
 
     log(f"Converting still: {os.path.basename(input_path)}")
+    lutc = _lut_for(lut, log)     # decision 78: the fill only
     info = get_video_info(input_path)
     w, h = info['width'], info['height']
     _interlaced_standards = {'1080i50', '1080i5994', '1080i60'}
@@ -1286,7 +1288,8 @@ def convert_still(input_path: str, file_number: int, dest_dir: str,
             if _png_frame_for_ffmpeg(input_path, plain):
                 read_path = plain
         key_raw = convert_to_v210(read_path, fill_raw, extract_alpha=has_alpha, fit=fit,
-                                  width=1920 if rescale else 0, height=1080 if rescale else 0)
+                                  width=1920 if rescale else 0, height=1080 if rescale else 0,
+                                  lut=lutc)
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -2787,7 +2790,8 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
                          clear_frames: str = None,
                          source_rate: str = None,
                          description: str = None,
-                         desk_description: str = None):
+                         desk_description: str = None,
+                         lut: dict = None):
     """Convert a numbered TGA sequence into a single multi-frame .SWS clip.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the
@@ -2905,8 +2909,16 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             cmd += ['-vf', fill_vf]
         if not vf_tinterlace and not do_i_to_p:
             cmd += ['-frames:v', str(frame_count)]
-        cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
-        _run_ffmpeg(cmd, check=True)
+        lutc = _lut_for(lut, log)
+        if lutc:
+            # Decision 78: through the LUT at 16-bit 4:4:4, BT.709 stated. (Without
+            # a LUT this command states no matrix and ffmpeg uses SD's BT.601:
+            # found 2026-11-14, roadmap, not yet fixed by David's choice.)
+            _fill_through_lut(cmd + ['-colorspace', 'bt709', '-color_range', 'tv'], fill_raw,
+                              1920 if scale_vf else w, 1080 if scale_vf else h, *lutc)
+        else:
+            cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
+            _run_ffmpeg(cmd, check=True)
 
         # Key/alpha
         actual_key = None
@@ -3643,7 +3655,8 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                              clear_frames: str = None,
                              description: str = None,
                              source_rate: str = None,
-                             interlaced_out: bool = False) -> str:
+                             interlaced_out: bool = False,
+                             lut: dict = None) -> str:
     """Convert a TGA sequence to K-Frame EIF format, with sound_file in an
     .eaf if given (2026-10-11), fitted to the picture as the K-Frame does.
     description: what the K-Frame shows; blank means clip_name, as before.
@@ -3663,6 +3676,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
     to 50fps progressive, which disagreed with both and with the MOV route.)
     """
     stereo = _sound_file_stereo24(sound_file, log) if sound_file else None
+    lutc = _lut_for(lut, log)     # decision 78: each pixel's colour, before 4:2:2
     if source_rate is None:
         source_rate = 'interlaced' if source_interlaced else 'field'
     source_interlaced = source_rate == 'interlaced'
@@ -3745,7 +3759,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                 if len(frame) == 2:
                     # Woven (TFF): the bottom field's lines from the next TGA.
                     rgba[1::2] = rgba_of(frame[1])[1::2]
-                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba, lut=lutc)
                 out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
                     log(f"  Frame {i + 1}/{frame_count}")
@@ -3764,7 +3778,7 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
 
 def convert_still_to_eif(input_path: str, dest_dir: str, out_name: str,
                          fps: float = 50.0, log=print, cancel_event=None,
-                         description: str = None) -> str:
+                         description: str = None, lut: dict = None) -> str:
     """A still to K-Frame EIF (Swift decision 69): a ONE-FRAME EIF, which a
     K-Frame lists as a still, as its own PNG import (desk session 2026-11-05;
     the desk also exports a still as a one-frame EIF). Made from the picture's
@@ -3788,7 +3802,7 @@ def convert_still_to_eif(input_path: str, dest_dir: str, out_name: str,
         return convert_tga_seq_to_eif([read_path], dest_dir, stem, fps, log=log,
                                       cancel_event=cancel_event, out_name=out_name,
                                       source_rate='field', interlaced_out=False,
-                                      description=description)
+                                      description=description, lut=lut)
 
 
 def convert_sws_to_eif(sws_path: str, dest_dir: str,
