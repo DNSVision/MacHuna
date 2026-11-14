@@ -4,6 +4,23 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.22.0 — 2026-11-14
+
+**HDR: a user's own LUT on every route (Swift decision 78), and TGA/PNG sequences to SWS in BT.709.** MacHuna 2.11.0 pins it.
+
+### Added
+- **HDR LUTs.** `read_cube` reads and checks a 3D .cube (refused in plain words when it cannot be used) and what its header says (levels, what it does from its CICP lines, title, copyright and licence, input and output colour). Every route takes `lut={'path', 'levels', 'name'}` and puts it on the fill only, never the key (ITU-R BT.2408: an SDR key is used directly):
+  - clips, stills and sequences to SWS: through the route's own filters at 16-bit 4:4:4 (`_fill_through_lut`), the LUT on each pixel's own colour, then ffmpeg's single reduction to v210. Applied after 4:2:2 instead, a broadcaster's textured card was 1.7% of pixels over 2 codes from their own HDR version; before, 0.009%.
+  - sequences and stills to EIF: `_encode_eif_frame_from_rgba(lut=)`, before the 4:2:2 filter.
+  - SWS and EIF sources: on their 4:2:2 (`_lut_v210_file`, `_lut_ycbcr_422`), said in the log.
+  - every TGA output: `lut_tga_folder` on the finished frames (colour only; header kept; compressed frames written back uncompressed, the form both desks were proven with), said in the log.
+  - QuickTime MOV from SWS, EIF and sequences: labelled as the LUT's output says (an SDR to HLG LUT: BT.2020 primaries, HLG, BT.2020 matrix, set on the frames).
+  - `lut_refuses`: a clip labelled BT.2020 given a LUT that expects SDR is refused before anything is written.
+  Against a broadcaster's real SDR wipe, their own HLG version and the LUT their chain uses: a clip through the SWS route matches to 0.4 of a 10-bit code on average; to K-Frame TGA 0.2 of an 8-bit level; an SWS to MOV 0.4. `TestHdrLut`, `TestHdrLutOnClips`, `TestHdrLutEveryRoute`, `TestHdrLutOnTga`, `TestHdrLutOnMov`, each failed first and falsified (31 breaks, all caught). Without a LUT nothing changes (parity kit).
+
+### Fixed
+- **TGA/PNG sequences to Kahuna SWS used SD colour maths (BT.601).** The fill command named no colour matrix, so ffmpeg converted the frames' RGB with its SD default: pure red Y'CbCr 324/360/960 where BT.709 is 250/409/960 (on screen, greens about 15% darker, reds and yellows a touch orange). The same frames to K-Frame EIF were right. Neutrals were never affected. `TestSequenceToSwsIsBt709`, fail-first. Parity: the 4 sequence-to-SWS cases differ by design (fill only); the next manifest records them.
+
 ## v1.21.1 — 2026-11-14
 
 **HDR clips keep their colour values on the way to SWS and EIF** (a K-Frame user's report). MacHuna 2.10.1 pins it.
