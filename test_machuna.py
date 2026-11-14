@@ -3309,6 +3309,173 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestHdrLutEveryRoute(unittest.TestCase):
+    """HDR item 4 (Swift decision 78), the agreed test standard (engine
+    DEVELOPMENT_NOTES, "HDR ITEM 4 TEST STANDARD"): every source into every
+    output it can go to, three ways. No LUT is today's file; an identity LUT
+    gives the same picture, key and sound; a LUT that halves every value
+    gives what the maths says from the no-LUT picture, key untouched; a LUT
+    that only recodes BT.709 as BT.2020 moves SWS/EIF values to the BT.2020
+    coding. Sources are a smooth in-gamut gradient with a ramp key, so no
+    pixel holds a colour RGB cannot (any LUT clips those)."""
+
+    ROUTES = [('clip', 'sws'), ('clip', 'eif'), ('sws', 'sws'), ('sws', 'eif'), ('eif', 'sws')]
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        if not shutil.which('ffmpeg') and not os.path.exists(cls.ff):
+            raise unittest.SkipTest('ffmpeg not available')
+        cls.tmp = tempfile.mkdtemp()
+        q = lambda *a: None
+        clip = os.path.join(cls.tmp, 'GRAD.mov')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'gradients=s=1920x1080:c0=0xC03030:c1=0x3060C0:x0=0:y0=0:x1=1919:y1=1079:r=25:d=0.12',
+                        '-vf', "format=yuva444p10le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='X*255/W',"
+                               "setparams=range=tv:colorspace=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', clip], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(cls.tmp, 'src-sws'); os.makedirs(d)
+        m.convert_clip(clip, 1, d, video_standard='1080p25', include_audio=False, split_fat32=False, log=q)
+        eif = m.convert_clip_to_eif(clip, cls.tmp, log=q, out_name='0001')
+        cls.src = {'clip': clip, 'sws': os.path.join(d, '1.SWS'), 'eif': eif}
+
+        def cube(name, fn, head=''):
+            n = 9
+            lines = ([head] if head else []) + [f'LUT_3D_SIZE {n}']
+            for b in range(n):
+                for g in range(n):
+                    for r in range(n):
+                        lines.append('%.6f %.6f %.6f' % fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+            p = os.path.join(cls.tmp, name + '.cube')
+            Path(p).write_text('\n'.join(lines) + '\n')
+            return {'path': p, 'levels': 'full', 'name': name}
+        cls.ident = cube('ident', lambda r, g, b: (r, g, b))
+        cls.half = cube('half', lambda r, g, b: (r / 2, g / 2, b / 2))
+        cls.recode = cube('recode', lambda r, g, b: (r, g, b), '# INPUT CICP: 1 1 1\n# OUTPUT CICP: 9 9 18')
+        cls.made = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def make(self, source, output, lut):
+        """The route's output file, made once per (source, output, LUT)."""
+        key = (source, output, lut['name'] if lut else None)
+        if key in self.made:
+            return self.made[key]
+        d = tempfile.mkdtemp(dir=self.tmp)
+        kw = {'lut': lut} if lut else {}
+        q = lambda *a: None
+        path = self.src[source]
+        if output == 'sws':
+            if source == 'clip':
+                m.convert_clip(path, 7, d, video_standard='1080p25', include_audio=False,
+                               split_fat32=False, log=q, **kw)
+            elif source == 'sws':
+                m.convert_sws_to_sws(path, 7, d, '1080p25', split_fat32=False, log=q, **kw)
+            elif source == 'eif':
+                m.convert_eif_to_sws(path, 7, d, video_standard='1080p25', split_fat32=False, log=q, **kw)
+            out = os.path.join(d, '7.SWS')
+        else:
+            if source == 'clip':
+                out = m.convert_clip_to_eif(path, d, log=q, out_name='0007', **kw)
+            elif source == 'sws':
+                out = m.convert_sws_to_eif(path, d, log=q, out_name='0007', **kw)
+        self.made[key] = out
+        return out
+
+    @staticmethod
+    def planes(path):
+        """(fill Y'CbCr float [frames, H, W, 3], key Y [frames, H, W]) of an SWS or EIF."""
+        import numpy as np
+        if path.lower().endswith('.sws'):
+            h = m.HulaSWSHeader(path)
+            b = Path(path).read_bytes()
+            n, ps = h.frame_count, h.plane_size
+            fill = m._v210_plane_to_yuv(b[h.data_offset:h.data_offset + n * ps], h.width, h.height, n)
+            key = (m._v210_plane_to_yuv(b[h.data_offset + n * ps:h.data_offset + 2 * n * ps],
+                                        h.width, h.height, n)[..., 0] if h.has_key else None)
+            return fill, key
+        h = m.EIFHeader(path)
+        fills, keys = [], []
+        with open(path, 'rb') as f:
+            for i in range(h.frame_count):
+                f.seek(h.video_start + i * 3 * m._EIF_UNIT_BYTES)
+                u = f.read(3 * m._EIF_UNIT_BYTES); U = m._EIF_UNIT_BYTES
+                fb, kb = m._eif_frame_to_v210be(u[:U], u[U:2 * U], u[2 * U:])
+                fills.append(m._v210_plane_to_yuv(fb, 1920, 1080, 1)[0])
+                keys.append(m._v210_plane_to_yuv(kb, 1920, 1080, 1)[0][..., 0])
+        return np.stack(fills), np.stack(keys)
+
+    @staticmethod
+    def off(got, want):
+        """How far a decoded picture is from the maths: brightness at every
+        pixel, colour where its samples are (4:2:2). Comparing brightness at
+        the samples only let a mix-up of the in-between pixels' colour
+        through, found by breaking it (2026-11-14)."""
+        import numpy as np
+        y = np.abs(got[..., 0] - want[..., 0])
+        c = np.abs(got[..., 1:] - want[..., 1:])[:, :, 0::2]
+        return np.concatenate([y.ravel(), c.ravel()])
+
+    def test_an_identity_lut_changes_nothing(self):
+        import numpy as np
+        for s, o in self.ROUTES:
+            with self.subTest(route=f'{s} to {o}'):
+                a, ka = self.planes(self.make(s, o, None))
+                b, kb = self.planes(self.make(s, o, self.ident))
+                self.assertEqual(a.shape, b.shape)
+                self.assertLessEqual(float(np.abs(a - b).max()), 0.0, 'picture changed')
+                self.assertTrue(np.array_equal(ka, kb), 'key changed')
+
+    def test_a_known_lut_gives_what_the_maths_says_and_never_touches_the_key(self):
+        import numpy as np
+        cube = m.read_cube(self.half['path'])
+        for s, o in self.ROUTES:
+            with self.subTest(route=f'{s} to {o}'):
+                a, ka = self.planes(self.make(s, o, None))
+                b, kb = self.planes(self.make(s, o, self.half))
+                want = np.stack(m.apply_cube_ycbcr(a[..., 0], a[..., 1], a[..., 2], cube, 'full'), axis=-1)
+                d = self.off(b, want)
+                self.assertLess(float(d.mean()), 0.3, f'mean {d.mean():.3f}')
+                self.assertLessEqual(float(d.max()), 2.0, f'max {d.max()}')
+                self.assertTrue(np.array_equal(ka, kb), 'the LUT changed the key')
+
+    def test_a_recoding_lut_writes_bt2020_values(self):
+        import numpy as np
+        for s, o in self.ROUTES:
+            with self.subTest(route=f'{s} to {o}'):
+                a, _ = self.planes(self.make(s, o, None))
+                b, _ = self.planes(self.make(s, o, self.recode))
+                Y, Cb, Cr = a[..., 0], a[..., 1], a[..., 2]
+                Yn, Cbn, Crn = (Y - 64) / 876, (Cb - 512) / 896, (Cr - 512) / 896
+                R = Yn + 1.5748 * Crn; B = Yn + 1.8556 * Cbn; G = (Yn - 0.2126 * R - 0.0722 * B) / 0.7152
+                Y2 = 0.2627 * R + 0.6780 * G + 0.0593 * B
+                want = np.stack([Y2 * 876 + 64, (B - Y2) / (2 * (1 - 0.0593)) * 896 + 512,
+                                 (R - Y2) / (2 * (1 - 0.2627)) * 896 + 512], axis=-1)
+                d = self.off(b, want)
+                self.assertLessEqual(float(d.max()), 2.0, f'max {d.max()}')
+                self.assertGreater(float(np.abs(b - a).max()), 5.0, 'nothing was recoded')
+
+    def test_an_hdr_labelled_clip_is_refused_by_an_sdr_lut(self):
+        import subprocess
+        hlg = os.path.join(self.tmp, 'HLG.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-i', self.src['clip'], '-c', 'copy',
+                        '-color_primaries', 'bt2020', '-color_trc', 'arib-std-b67', '-colorspace', 'bt2020nc',
+                        hlg], check=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(m.get_video_info(hlg)['color_space'], 'bt2020nc')
+        d = tempfile.mkdtemp(dir=self.tmp)
+        for fn in (lambda: m.convert_clip(hlg, 1, d, video_standard='1080p25', include_audio=False,
+                                          split_fat32=False, log=lambda *a: None, lut=self.recode),
+                   lambda: m.convert_clip_to_eif(hlg, d, log=lambda *a: None, out_name='0001',
+                                                 lut=self.recode)):
+            with self.assertRaises(ValueError) as cm:
+                fn()
+            self.assertIn('already HDR', str(cm.exception))
+        self.assertEqual(os.listdir(d), [], 'something was written')
+
+
 class TestHdrLutOnClips(unittest.TestCase):
     """HDR item 2 (Swift decision 78): a clip to Kahuna SWS or K-Frame EIF
     with a LUT. The LUT changes the fill only, after every other step, so

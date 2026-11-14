@@ -1537,7 +1537,7 @@ def read_cube(path: str) -> dict:
     return {'size': size, 'table': table, 'domain_min': dmin, 'domain_max': dmax,
             'title': title, 'notice': notice, 'levels': levels, 'does': does,
             'input_matrix': in_matrix, 'output_matrix': out_matrix,
-            'output_transfer': out_tf,
+            'input_transfer': in_tf, 'output_transfer': out_tf,
             'output_primaries': _CICP_PRIMARIES.get(cout[0]) if cout else None}
 
 
@@ -1611,17 +1611,108 @@ def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
     return tuple(v[back].reshape(shape) for v in res)
 
 
-def _lut_for(lut, log=print):
+def _lut_for(lut, log=print, info: dict = None, source: str = ''):
     """The route's chosen LUT, `lut` = {'path', 'levels', 'name'} from the
     app's preset, read and checked, and said in the log by name; None when
-    there is none. Returns (cube, levels) for `convert_to_v210`."""
+    there is none. Returns (cube, levels) for the route.
+
+    info: the source's `get_video_info`, when it has a colour label. A source
+    labelled BT.2020 (already HDR) given a LUT that expects SDR is refused,
+    before anything is written: converting it twice would ruin it."""
     if not lut:
         return None
     cube = read_cube(lut['path'])
+    name = lut.get('name') or os.path.basename(lut['path'])
+    if info and _is_hdr_labelled(info) and cube.get('input_transfer') == 'bt709':
+        raise ValueError(f"{os.path.basename(source) or 'This clip'} is already HDR (labelled BT.2020), "
+                         f"and {name} expects SDR. Nothing was converted.")
     log(f"  HDR: {lut.get('name') or os.path.basename(lut['path'])}"
         f"{' (' + cube['does'] + ')' if cube['does'] else ''}, "
         f"{'full' if lut['levels'] == 'full' else 'video'} range, picture only (the key is untouched)")
     return cube, lut['levels']
+
+
+def _v210_layout(width: int, height: int):
+    padded_w = ((width + 47) // 48) * 48
+    line_words = ((padded_w * 8 // 3 + 127) // 128) * 128 // 4
+    return padded_w // 6, line_words
+
+
+def _v210_unpack(words, width: int, height: int):
+    """One frame of v210 (32-bit words as numbers) to Y (h, width) and Cb, Cr
+    (h, width/2), 10-bit codes."""
+    import numpy as np
+    groups, line_words = _v210_layout(width, height)
+    f = np.asarray(words).reshape(height, line_words)[:, :groups * 4].reshape(height, groups, 4)
+    a, b, c = f & 0x3FF, (f >> 10) & 0x3FF, (f >> 20) & 0x3FF
+    # word 0: Cb0 Y0 Cr0 / 1: Y1 Cb1 Y2 / 2: Cr1 Y3 Cb2 / 3: Y4 Cr2 Y5
+    Y = np.stack([b[..., 0], a[..., 1], c[..., 1], b[..., 2], a[..., 3], c[..., 3]], axis=2)
+    Cb = np.stack([a[..., 0], b[..., 1], c[..., 2]], axis=2)
+    Cr = np.stack([c[..., 0], a[..., 2], b[..., 3]], axis=2)
+    return (Y.reshape(height, groups * 6)[:, :width], Cb.reshape(height, groups * 3)[:, :width // 2],
+            Cr.reshape(height, groups * 3)[:, :width // 2])
+
+
+def _v210_pack(words, Y, Cb, Cr, width: int, height: int):
+    """Y, Cb, Cr (as from `_v210_unpack`) written back into `words` in place;
+    a line's padding beyond the picture is left as it was."""
+    import numpy as np
+    groups, line_words = _v210_layout(width, height)
+    f = words.reshape(height, line_words)[:, :groups * 4].reshape(height, groups, 4)
+    a, b, c = f & 0x3FF, (f >> 10) & 0x3FF, (f >> 20) & 0x3FF
+    Yf = np.stack([b[..., 0], a[..., 1], c[..., 1], b[..., 2], a[..., 3], c[..., 3]], axis=2).reshape(height, -1)
+    Cbf = np.stack([a[..., 0], b[..., 1], c[..., 2]], axis=2).reshape(height, -1)
+    Crf = np.stack([c[..., 0], a[..., 2], b[..., 3]], axis=2).reshape(height, -1)
+    Yf[:, :width], Cbf[:, :width // 2], Crf[:, :width // 2] = Y, Cb, Cr
+    Yf, Cbf, Crf = (v.reshape(height, groups, -1).astype(np.uint32) for v in (Yf, Cbf, Crf))
+    top = f & ~np.uint32(0x3FFFFFFF)
+    f[..., 0] = top[..., 0] | Cbf[..., 0] | Yf[..., 0] << 10 | Crf[..., 0] << 20
+    f[..., 1] = top[..., 1] | Yf[..., 1] | Cbf[..., 1] << 10 | Yf[..., 2] << 20
+    f[..., 2] = top[..., 2] | Crf[..., 1] | Yf[..., 3] << 10 | Cbf[..., 2] << 20
+    f[..., 3] = top[..., 3] | Yf[..., 4] | Crf[..., 2] << 10 | Yf[..., 5] << 20
+    words.reshape(height, line_words)[:, :groups * 4] = f.reshape(height, groups * 4)
+    return words
+
+
+def _lut_ycbcr_422(Y, Cb, Cr, cube: dict, levels: str):
+    """A LUT on a 4:2:2 picture whose 4:4:4 is gone (an SWS or EIF source):
+    each pixel's colour is its own sample where it has one and the mean of
+    its neighbours where it does not; the new colour is kept where the
+    samples are. Floats in, floats out."""
+    import numpy as np
+    nxt = lambda c: np.concatenate([c[:, 1:], c[:, -1:]], axis=1)
+    cb = np.empty(Y.shape); cr = np.empty(Y.shape)
+    cb[:, 0::2], cr[:, 0::2] = Cb, Cr
+    cb[:, 1::2], cr[:, 1::2] = (Cb + nxt(Cb)) / 2, (Cr + nxt(Cr)) / 2
+    y2, cb2, cr2 = apply_cube_ycbcr(Y, cb, cr, cube, levels)
+    return y2, cb2[:, 0::2], cr2[:, 0::2]
+
+
+_LUT_422_NOTE = ("  HDR from an SWS or EIF: its colour is already halved (4:2:2), so fine colour "
+                 "detail can differ slightly from an HDR version made from the original clip. "
+                 "For the closest match, convert the original.")
+
+
+def _lut_v210_file(path: str, width: int, height: int, cube: dict, levels: str):
+    """A LUT on every frame of a raw big-endian v210 FILL file, in place (SWS
+    and EIF sources: their 4:4:4 is gone, so `_lut_ycbcr_422`). Stop is
+    checked on every frame. The key is a different file and never comes here."""
+    import numpy as np
+    plane = _v210_plane_size(width, height)
+    frames = os.path.getsize(path) // plane
+    data = np.memmap(path, dtype='>u4', mode='r+')
+    try:
+        for i in range(frames):
+            _check_stop()
+            words = np.array(data[i * plane // 4:(i + 1) * plane // 4]).astype(np.uint32)
+            Y, Cb, Cr = (v.astype(np.float64) for v in _v210_unpack(words, width, height))
+            y2, cb2, cr2 = _lut_ycbcr_422(Y, Cb, Cr, cube, levels)
+            to10 = lambda v: np.clip(np.rint(v), 4, 1019).astype(np.uint32)
+            _v210_pack(words, to10(y2), to10(cb2), to10(cr2), width, height)
+            data[i * plane // 4:(i + 1) * plane // 4] = words
+        data.flush()
+    finally:
+        del data
 
 
 def _fill_through_lut(cmd_decode: list, output_path: str, width: int, height: int,
@@ -1719,6 +1810,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
     log(f"Converting clip: {os.path.basename(input_path)}")
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     info = get_video_info(input_path)
+    lutc = _lut_for(lut, log, info, input_path)     # decision 78; refuses an HDR clip an SDR LUT
     w, h, fps = info['width'], info['height'], info['fps']
     frame_count = info['frame_count']
 
@@ -1822,7 +1914,7 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0, fit=fit,
                                   interlaced=rescale and info.get('is_interlaced', False),
                                   assume_709=_keep_values_and_say(info, log),
-                                  lut=_lut_for(lut, log))
+                                  lut=lutc)
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -2987,8 +3079,12 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
                        loop_play: bool = False, include_audio: bool = True,
                        sound_file: str = None, clear_frames: str = None,
                        description: str = None,
-                       desk_description: str = None) -> str:
+                       desk_description: str = None,
+                       lut: dict = None) -> str:
     """Re-encode an SWS to another standard, keeping its audio.
+
+    lut: a LUT for the fill (Swift decision 78), applied after the picture's
+    other steps (scale, deinterlace, weave, frame picking); the key never.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
     desk_description: what a Kahuna shows as Description (0x020, 32; Swift
@@ -3121,6 +3217,10 @@ def convert_sws_to_sws(sws_path: str, file_number: int, dest_dir: str,
         if count == 0:
             raise ValueError(f"{Path(sws_path).name}: the conversion produced no frames, "
                              f"so nothing was written.")
+        lutc = _lut_for(lut, log)
+        if lutc:
+            log(_LUT_422_NOTE)
+            _lut_v210_file(fill, W, H, *lutc)
         count += _add_clear_planes(fill, key, W, H, clear_frames, log)
         stereo = _delay_sound(stereo, out_fps, clear_frames)
 
@@ -3369,7 +3469,7 @@ def _encode_eif_frame_from_yuv(yuv, key_yuv=None) -> tuple:
     return data[:u], data[u:2*u], data[2*u:]
 
 
-def _encode_eif_frame_from_rgba(rgba) -> tuple:
+def _encode_eif_frame_from_rgba(rgba, lut=None) -> tuple:
     """Encode 1080×1920 RGBA (or RGB) uint8 to EIF unit bytes via BT.709 encoding.
 
     Values are ROUNDED, and colour is halved to 4:2:2 with a [1,2,1]/4 filter
@@ -3388,6 +3488,11 @@ def _encode_eif_frame_from_rgba(rgba) -> tuple:
     yn  = 0.2126 * r + 0.7152 * g + 0.0722 * b
     cbn = (b - yn) / 1.8556
     crn = (r - yn) / 1.5748
+    if lut:
+        # Decision 78: each pixel's own colour through the LUT before the
+        # colour is halved to 4:2:2; values then in the LUT's output coding.
+        y2, cb2, cr2 = apply_cube_ycbcr(yn * 876.0 + 64.0, cbn * 896.0 + 512.0, crn * 896.0 + 512.0, *lut)
+        yn, cbn, crn = (y2 - 64.0) / 876.0, (cb2 - 512.0) / 896.0, (cr2 - 512.0) / 896.0
     Y  = np.clip(np.rint(yn * 876.0 + 64.0), 64, 940).astype(np.int32)
 
     def _cosited(c):
@@ -3439,6 +3544,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
     log(f"Converting to EIF: {os.path.basename(input_path)}")
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     info   = get_video_info(input_path)
+    lutc   = _lut_for(lut, log, info, input_path)    # decision 78; refuses an HDR clip an SDR LUT
     fps_in = info['fps']
     fps    = 25.0 if abs(fps_in - 25.0) <= abs(fps_in - 50.0) else 50.0
     cross_rate = abs(fps_in - fps) >= 0.01
@@ -3472,7 +3578,7 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
                                     assume_709=_keep_values_and_say(info, log),
-                                    lut=_lut_for(lut, log))   # decision 78: the fill only
+                                    lut=lutc)   # decision 78: the fill only
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if cross_rate and frame_count:
             index = _pick_frames(frame_count, fps_in, fps)
@@ -3690,7 +3796,8 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         include_audio: bool = True,
                         sound_file: str = None,
                         clear_frames: str = None,
-                        description: str = None) -> str:
+                        description: str = None,
+                        lut: dict = None) -> str:
     """Convert a Kahuna SWS clip to K-Frame EIF format, carrying its audio
     into an .eaf. Same header and picture encoder as the desk-confirmed MOV
     route. sound_file: a sound to carry instead (2026-10-11), fitted to the
@@ -3700,6 +3807,9 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
     h    = HulaSWSHeader(sws_path)
     log(f"  {h}")
+    lutc = _lut_for(lut, log)     # decision 78: the fill only
+    if lutc:
+        log(_LUT_422_NOTE)
     fps  = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
     stem = Path(sws_path).stem
     dest_path = os.path.join(dest_dir, (out_name or stem) + '.eif')
@@ -3766,8 +3876,16 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         rgba  = np.dstack([rgb, alpha])
                     else:
                         rgba  = np.dstack([rgb, np.full((1080, 1920), 255, np.uint8)])
-                    u0, u1, u2 = _encode_eif_frame_from_rgba(rgba)
+                    u0, u1, u2 = _encode_eif_frame_from_rgba(rgba, lut=lutc)
                 else:
+                    if lutc:
+                        # Decision 78: each co-sited sample's own colour (the
+                        # 4:2:2 the SWS holds), the key untouched.
+                        y2, cb2, cr2 = _lut_ycbcr_422(fill_yuv[..., 0].astype(np.float64),
+                                                      fill_yuv[:, 0::2, 1].astype(np.float64),
+                                                      fill_yuv[:, 0::2, 2].astype(np.float64), *lutc)
+                        fill_yuv = np.stack([y2, np.repeat(cb2, 2, axis=1),
+                                             np.repeat(cr2, 2, axis=1)], axis=-1)
                     u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
                 out.write(u0); out.write(u1); out.write(u2)
                 if (n + 1) % 10 == 0 or n + 1 == out_count:
@@ -3833,7 +3951,8 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                         sound_file: str = None,
                         clear_frames: str = None,
                         description: str = None,
-                        desk_description: str = None) -> str:
+                        desk_description: str = None,
+                        lut: dict = None) -> str:
     """Convert a K-Frame EIF clip to Kahuna SWS format, with its .eaf audio,
     or with sound_file instead (2026-10-11), kept at its own length.
 
@@ -3928,6 +4047,10 @@ def convert_eif_to_sws(eif_path: str, file_number: int, dest_dir: str,
                 if (o + 1) % 10 == 0 or o + 1 == out_count:
                     log(f"  Frame {o + 1}/{out_count}")
 
+        lutc = _lut_for(lut, log)       # decision 78: the fill only, after any weave
+        if lutc:
+            log(_LUT_422_NOTE)
+            _lut_v210_file(fill_path, 1920, 1080, *lutc)
         out_count += _add_clear_planes(fill_path, key_path, 1920, 1080, clear_frames, log)
         clip_name, desk_desc = _sws_names(description, desk_description,
                                           h.clip_name or Path(eif_path).stem)
