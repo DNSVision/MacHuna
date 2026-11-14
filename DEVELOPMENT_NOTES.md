@@ -732,6 +732,27 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
   disk, so no risk), conversion later. Wait for a real job to set the first case - ideally with that
   house's own LUT and a desk to check against - because the hard part is direction (HDR to HD or
   HD to HDR) and which sources need it, not the code.
+  **2026-11-14: A REAL CASE, MEASURED (a broadcaster's own material, kept in private test media, never
+  named here).** A broadcaster sent an SDR wipe, the HLG version its own chain made from it, and the LUT
+  that chain uses: a public BBC R&D SDR-to-HLG 3D LUT (`3c_BT709_HLG_Type3_Display_DirectMapping`,
+  v1.7, 33-point). Both clips ProRes 4444 12-bit, 50p, 125 frames; SDR labelled matrix "gbr" (a wrong
+  tag, it is Y'CbCr BT.709), HLG labelled bt2020nc / arib-std-b67. Measured (scratchpad scripts):
+  - **Applying the LUT reproduces their HDR clip:** decode SDR as BT.709, R'G'B' as **full-range code
+    values (0..1 = codes 0..1023, in AND out**; the LUT header says "full range ... extended processing
+    range"), apply the LUT, encode BT.2020. Picture frames: mean difference 0.22-0.26 of a 10-bit code,
+    max 3, more than 2 codes on under 0.01% of pixels (against 45-60 mean / 220 max with no LUT). The
+    other three level mappings tried are 9-17 codes off on average, so the level mapping is THE setting
+    to get right. Tetrahedral and trilinear leave the same residue, so it is not the interpolation;
+    most likely the ProRes re-encode.
+  - **LICENCE:** the BBC LUT says "Free for research and educational use, contact transfer.rd@bbc.co.uk
+    for commercial use". MacHuna must NOT bundle it without the BBC's permission; a user loading their
+    own copy is their licence. A built-in default would need permission, or our own implementation of
+    the published ITU-R conversion, proven against this pair.
+  - **Pass-through on SWS (engine 4d9a2dd, unreleased):** both clips to SWS are IDENTICAL to a plain
+    ffmpeg bicubic 4:2:2 conversion of the source (Y, Cb, Cr max difference 0); the "gbr" label is
+    harmless. **Released v1.21.0 (MacHuna 2.10.0) shifts their HLG clip by up to 18 Y / 9 Cb codes** on
+    the same frame: the HDR colour bug, on real broadcast HDR material. Reason to release the fix soon.
+  - The clips' alpha is fully opaque (no key); the key travels separately in the sample's SFH matte.
 - Windows port (community contribution; note in README when repos go public).
 - ~~Going public~~ - **DONE, and this note was stale.** `DNSVision/MacHuna` has
   been public since before 2026-09-24, which is ahead of the condition written
