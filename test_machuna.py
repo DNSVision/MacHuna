@@ -3309,6 +3309,37 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestSequenceToSwsIsBt709(unittest.TestCase):
+    """Found 2026-11-14 (HDR work): a TGA/PNG sequence to Kahuna SWS stated no
+    colour matrix, so ffmpeg converted RGB with SD's BT.601 (pure red Y'CbCr
+    324/360/960 where BT.709 is 250/409/960); the same frames to K-Frame EIF
+    were right. Saturated colours were shifted on the desk; neutrals were not."""
+
+    def test_pure_colours_come_out_as_bt709(self):
+        import numpy as np
+        from PIL import Image
+        tmp = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, tmp, True)
+        a = np.zeros((1080, 1920, 4), np.uint8); a[..., 3] = 255
+        cols = {'red': (255, 0, 0), 'green': (0, 255, 0), 'blue': (0, 0, 255), 'grey': (128, 128, 128)}
+        for i, rgb in enumerate(cols.values()):
+            a[:, i * 480:(i + 1) * 480, :3] = rgb
+        files = []
+        for k in range(3):
+            p = os.path.join(tmp, f'COL{k + 1:04d}.tga'); Image.fromarray(a, 'RGBA').save(p); files.append(p)
+        d = os.path.join(tmp, 'out'); os.makedirs(d)
+        m.convert_tga_sequence(files, 1, d, '1080p25', False, False, lambda *x: None, write_log=False)
+        h = m.HulaSWSHeader(os.path.join(d, '1.SWS'))
+        b = Path(d, '1.SWS').read_bytes()
+        yuv = m._v210_plane_to_yuv(b[h.data_offset:h.data_offset + h.plane_size], 1920, 1080, 1)[0]
+        for i, (name, (r, g, bl)) in enumerate(cols.items()):
+            R, G, B = r / 255, g / 255, bl / 255
+            Y = 0.2126 * R + 0.7152 * G + 0.0722 * B
+            want = (Y * 876 + 64, (B - Y) / 1.8556 * 896 + 512, (R - Y) / 1.5748 * 896 + 512)
+            got = yuv[540, i * 480 + 240]
+            for c, (gv, wv) in enumerate(zip(got, want)):
+                self.assertAlmostEqual(float(gv), wv, delta=2.5, msg=f'{name} channel {c}: {got} vs {want}')
+
+
 class TestHdrLutEveryRoute(unittest.TestCase):
     """HDR item 4 (Swift decision 78), the agreed test standard (engine
     DEVELOPMENT_NOTES, "HDR ITEM 4 TEST STANDARD"): every source into every

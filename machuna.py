@@ -2909,13 +2909,15 @@ def convert_tga_sequence(tga_files: list, file_number: int, dest_dir: str,
             cmd += ['-vf', fill_vf]
         if not vf_tinterlace and not do_i_to_p:
             cmd += ['-frames:v', str(frame_count)]
+        # BT.709 stated (2026-11-14): with no matrix named ffmpeg converted the
+        # frames' RGB with SD's BT.601, so a sequence's saturated colours were
+        # shifted on a Kahuna (pure red 324 where BT.709 is 250); the same
+        # frames to K-Frame EIF were right. Neutrals were never affected.
+        cmd += ['-colorspace', 'bt709', '-color_range', 'tv']
         lutc = _lut_for(lut, log)
         if lutc:
-            # Decision 78: through the LUT at 16-bit 4:4:4, BT.709 stated. (Without
-            # a LUT this command states no matrix and ffmpeg uses SD's BT.601:
-            # found 2026-11-14, roadmap, not yet fixed by David's choice.)
-            _fill_through_lut(cmd + ['-colorspace', 'bt709', '-color_range', 'tv'], fill_raw,
-                              1920 if scale_vf else w, 1080 if scale_vf else h, *lutc)
+            # Decision 78: through the LUT at 16-bit 4:4:4.
+            _fill_through_lut(cmd, fill_raw, 1920 if scale_vf else w, 1080 if scale_vf else h, *lutc)
         else:
             cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]
             _run_ffmpeg(cmd, check=True)
