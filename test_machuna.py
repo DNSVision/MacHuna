@@ -3309,6 +3309,138 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestHdrLutOnClips(unittest.TestCase):
+    """HDR item 2 (Swift decision 78): a clip to Kahuna SWS or K-Frame EIF
+    with a LUT. The LUT changes the fill only, after every other step, so
+    an identity LUT must leave the whole file byte for byte as without one,
+    and the key is never touched."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(m.clear_stop)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _cube(self, fn, name):
+        n = 9
+        lines = ['# INPUT CICP: 1 1 1', '# OUTPUT CICP: 1 1 1', f'LUT_3D_SIZE {n}']
+        for b in range(n):
+            for g in range(n):
+                for r in range(n):
+                    lines.append('%.6f %.6f %.6f' % fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+        p = os.path.join(self.tmp, name + '.cube')
+        Path(p).write_text('\n'.join(lines) + '\n')
+        return {'path': p, 'levels': 'full', 'name': name}
+
+    def _keyed_clip(self, smooth=False):
+        # Bars (or a smooth colour gradient) with a left-to-right ramp key,
+        # 4:4:4 with alpha, 2 frames. The bars' sharp edges, sampled 4:2:2,
+        # hold colours no RGB can (2004 pixels a frame, measured): any LUT
+        # clips those, so "an identity LUT changes nothing" is tested on real
+        # colours, the gradient.
+        import subprocess
+        out = os.path.join(self.tmp, 'smooth.mov' if smooth else 'bars.mov')
+        pic = ('gradients=s=1920x1080:c0=0xC03030:c1=0x3060C0:x0=0:y0=0:x1=1919:y1=1079:r=25:d=0.08'
+               if smooth else 'smptehdbars=s=1920x1080:r=25:d=0.08')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        pic, '-vf',
+                        "format=yuva444p10le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='X*255/W',"
+                        "setparams=range=tv:colorspace=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', out],
+                       check=True, stdin=subprocess.DEVNULL)
+        return out
+
+    def _sws(self, src, lut, tag, lines=None):
+        d = os.path.join(self.tmp, tag); os.makedirs(d)
+        m.convert_clip(src, 1, d, video_standard='1080p25', include_audio=False, split_fat32=False,
+                       log=(lines.append if lines is not None else (lambda *a: None)), lut=lut)
+        p = os.path.join(d, '1.SWS'); h = m.HulaSWSHeader(p); b = Path(p).read_bytes()
+        return b, h
+
+    def test_an_identity_lut_leaves_sws_and_eif_byte_for_byte(self):
+        src = self._keyed_clip(smooth=True)
+        ident = self._cube(lambda r, g, b: (r, g, b), 'Identity')
+        plain, hp = self._sws(src, None, 'plain')
+        same, hs = self._sws(src, ident, 'ident')
+        # From the picture on: the header holds the time to the second.
+        self.assertTrue(plain[hp.data_offset:] == same[hs.data_offset:], 'an identity LUT changed the SWS')
+        e1 = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0001')
+        e2 = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0002', lut=ident)
+        h1, h2 = m.EIFHeader(e1), m.EIFHeader(e2)
+        b1, b2 = Path(e1).read_bytes(), Path(e2).read_bytes()
+        self.assertTrue(b1[h1.video_start:] == b2[h2.video_start:], 'an identity LUT changed the EIF')
+
+    def test_a_lut_changes_the_fill_and_never_the_key(self):
+        import numpy as np
+        src = self._keyed_clip()
+        half = self._cube(lambda r, g, b: (r / 2, g / 2, b / 2), 'Half')
+        plain, hp = self._sws(src, None, 'plain')
+        halved, hh = self._sws(src, half, 'half')
+        ps = hp.plane_size
+        fill_p = plain[hp.data_offset:hp.data_offset + ps]
+        fill_h = halved[hh.data_offset:hh.data_offset + ps]
+        y_p = m._v210_plane_to_yuv(fill_p, 1920, 1080, 1)[0][..., 0]
+        y_h = m._v210_plane_to_yuv(fill_h, 1920, 1080, 1)[0][..., 0]
+        # Full levels: a code is halved, so the bars' 75% white (Y 721) becomes ~360.
+        row = 100
+        top = y_p[row].max()
+        got = y_h[row][int(np.argmax(y_p[row]))]
+        self.assertAlmostEqual(float(got), top / 2, delta=1.0)
+        # Every key plane (after the fill planes) identical.
+        n = hp.frame_count
+        self.assertTrue(plain[hp.data_offset + n * ps:hp.data_offset + 2 * n * ps]
+                        == halved[hh.data_offset + n * ps:hh.data_offset + 2 * n * ps],
+                        'the LUT changed the key')
+
+    def test_a_lut_reaches_the_eif_picture(self):
+        import numpy as np
+        src = self._keyed_clip()
+        half = self._cube(lambda r, g, b: (r / 2, g / 2, b / 2), 'Half')
+        e1 = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0001')
+        e2 = m.convert_clip_to_eif(src, self.tmp, log=lambda *a: None, out_name='0002', lut=half)
+        b1, b2 = Path(e1).read_bytes(), Path(e2).read_bytes()
+        s1, s2 = m.EIFHeader(e1).video_start, m.EIFHeader(e2).video_start
+        self.assertEqual(len(b1) - s1, len(b2) - s2)
+        self.assertFalse(b1[s1:] == b2[s2:], 'the LUT did not reach the EIF')
+
+    def test_the_log_names_the_lut(self):
+        src = self._keyed_clip()
+        lines = []
+        self._sws(src, self._cube(lambda r, g, b: (r, g, b), 'Test LUT'), 'named', lines)
+        self.assertTrue(any('HDR: Test LUT' in str(l) for l in lines), lines)
+
+    def test_stop_stops_the_lut_step(self):
+        src = self._keyed_clip()
+        cube = m.read_cube(self._cube(lambda r, g, b: (r, g, b), 'S')['path'])
+        out = os.path.join(self.tmp, 'fill.v210')
+        m.request_stop()
+        with self.assertRaises(m.ConversionStopped):
+            m._fill_through_lut([self.ff, '-v', 'error', '-i', src], out, 1920, 1080, cube, 'full')
+
+    def test_the_lut_sees_each_pixels_own_colour(self):
+        # Applied after 4:2:2, a pixel's colour would be its neighbour's or a
+        # mean, and a LUT that maps colour into brightness would get fine
+        # colour detail wrong. A clip whose every other column is red, the
+        # rest blue at the same brightness: a LUT whose output brightness is
+        # its input red must give the red columns a different brightness from
+        # the blue ones.
+        import subprocess, numpy as np
+        src = os.path.join(self.tmp, 'cols.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'color=c=black:s=1920x1080:r=25:d=0.04', '-vf',
+                        "format=gbrp10le,geq=r='if(mod(X,2),0,800)':g='0':b='if(mod(X,2),800*0.2126/0.0722,0)',"
+                        "format=yuv444p10le,setparams=range=tv:colorspace=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', src], check=True, stdin=subprocess.DEVNULL)
+        redness = self._cube(lambda r, g, b: (r, r, r), 'Redness')
+        sws, h = self._sws(src, redness, 'cols')
+        y = m._v210_plane_to_yuv(sws[h.data_offset:h.data_offset + h.plane_size], 1920, 1080, 1)[0][..., 0]
+        row = y[540, 100:200]
+        self.assertGreater(float(row[0::2].mean() - row[1::2].mean()), 100,
+                           f'red and blue columns came out alike: {row[:8]}')
+
+
 class TestHdrSourceKeepsItsValues(unittest.TestCase):
     """2026-11-11 (a K-Frame user's report, re-measured): a clip labelled
     BT.2020 (HDR) had its colours converted to BT.709 values on the way to SWS

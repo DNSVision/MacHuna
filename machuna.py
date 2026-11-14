@@ -880,8 +880,15 @@ def convert_to_v210(input_path: str, output_path: str,
                     extract_alpha: bool = False,
                     width: int = 0, height: int = 0,
                     vf_extra: str = '', interlaced: bool = False,
-                    assume_709: bool = False, fit=None):
+                    assume_709: bool = False, fit=None, lut=None):
     """Convert input to raw v210 using ffmpeg, then byte-swap to big-endian.
+
+    lut: (cube, levels) from `_lut_for`, or None. With one, the fill is
+    decoded at 16-bit 4:4:4 through the same filters, the LUT applied to each
+    pixel's own colour, and only then reduced to 4:2:2 (`_fill_through_lut`):
+    applied after 4:2:2, a broadcaster's textured card came out 4.5% of
+    pixels more than 2 codes from their own HDR version (2026-11-14). The key
+    never goes through it. Without one, nothing here changes.
 
     ffmpeg outputs v210 as little-endian 32-bit words.
     Kahuna expects big-endian 32-bit words.
@@ -909,9 +916,14 @@ def convert_to_v210(input_path: str, output_path: str,
         vf_parts.append(vf_extra)
     if vf_parts:
         cmd_fill += ['-vf', ','.join(vf_parts)]
-    cmd_fill += ['-colorspace', 'bt709', '-color_range', 'tv', '-f', 'rawvideo', '-vcodec', 'v210', output_path]
-
-    _run_ffmpeg(cmd_fill, check=True)
+    if lut:
+        out_w, out_h = (width, height) if sized else \
+            (get_video_info(input_path)['width'], get_video_info(input_path)['height'])
+        _fill_through_lut(cmd_fill + ['-colorspace', 'bt709', '-color_range', 'tv'],
+                          output_path, out_w, out_h, *lut)
+    else:
+        cmd_fill += ['-colorspace', 'bt709', '-color_range', 'tv', '-f', 'rawvideo', '-vcodec', 'v210', output_path]
+        _run_ffmpeg(cmd_fill, check=True)
     _byteswap_v210(output_path)
 
     if extract_alpha:
@@ -1599,6 +1611,65 @@ def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
     return tuple(v[back].reshape(shape) for v in res)
 
 
+def _lut_for(lut, log=print):
+    """The route's chosen LUT, `lut` = {'path', 'levels', 'name'} from the
+    app's preset, read and checked, and said in the log by name; None when
+    there is none. Returns (cube, levels) for `convert_to_v210`."""
+    if not lut:
+        return None
+    cube = read_cube(lut['path'])
+    log(f"  HDR: {lut.get('name') or os.path.basename(lut['path'])}"
+        f"{' (' + cube['does'] + ')' if cube['does'] else ''}, "
+        f"{'full' if lut['levels'] == 'full' else 'video'} range, picture only (the key is untouched)")
+    return cube, lut['levels']
+
+
+def _fill_through_lut(cmd_decode: list, output_path: str, width: int, height: int,
+                      cube: dict, levels: str):
+    """`cmd_decode` (ffmpeg up to its output options) decoded to 16-bit 4:4:4,
+    every frame through the LUT, then a second ffmpeg reduces it to v210 as
+    the route would have. The LUT's result is handed back at 16 bits, so the
+    one reduction to 10 bits is ffmpeg's own, as without a LUT (rounding it
+    here first changed 2-3% of values by a code; ffmpeg alone gives the same
+    v210 from 16-bit 4:4:4 as straight from the source, checked). Each frame is checked against Stop, and both
+    ffmpegs are ended whatever happens."""
+    import numpy as np
+    import subprocess as _sp
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    dec = _sp.Popen(cmd_decode + ['-f', 'rawvideo', '-pix_fmt', 'yuv444p16le', '-'],
+                    stdout=_sp.PIPE, stderr=_sp.DEVNULL, stdin=_sp.DEVNULL)
+    enc = _sp.Popen([ffmpeg, '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'yuv444p16le',
+                     '-s', f'{width}x{height}', '-i', '-',
+                     # The values are BT.709-coded and limited range already:
+                     # labelled so, ffmpeg leaves them as they are.
+                     '-vf', 'setparams=colorspace=bt709:range=tv',
+                     '-colorspace', 'bt709', '-color_range', 'tv',
+                     '-f', 'rawvideo', '-vcodec', 'v210', output_path],
+                    stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.PIPE)
+    frame = width * height * 3 * 2
+    try:
+        while True:
+            _check_stop()
+            buf = dec.stdout.read(frame)
+            if len(buf) < frame:
+                break
+            p = np.frombuffer(buf, '<u2').reshape(3, height, width).astype(np.float64) / 64
+            y, cb, cr = apply_cube_ycbcr(p[0], p[1], p[2], cube, levels)
+            out = np.stack([y, cb, cr])
+            out = np.clip(np.rint(out * 64), 4 * 64, 1019 * 64 + 63).astype('<u2')
+            enc.stdin.write(out.tobytes())
+        enc.stdin.close()
+        if dec.wait() != 0 or enc.wait() != 0:
+            raise RuntimeError("The HDR step could not convert this clip"
+                               + (f": {enc.stderr.read().decode('utf-8', 'replace').strip()[-200:]}"
+                                  if enc.stderr else "."))
+    finally:
+        for proc in (dec, enc):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+
 def _v210_plane_size(width: int, height: int) -> int:
     """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
     multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when
@@ -1627,8 +1698,12 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
                  sound_file: str = None,
                  clear_frames: str = None,
                  description: str = None,
-                 desk_description: str = None):
+                 desk_description: str = None,
+                 lut: dict = None):
     """Convert a MOV/MP4/AVI/etc video clip to .SWS.
+
+    lut: {'path', 'levels', 'name'}, a LUT for the fill (Swift decision 78),
+    applied after every other step; None for none.
 
     description: the name a Kahuna lists (`_sws_clip_name`); empty, the file's.
     desk_description: what a Kahuna shows as Description (0x020, 32; Swift
@@ -1746,7 +1821,8 @@ def convert_clip(input_path: str, file_number: int, dest_dir: str,
         key_raw = convert_to_v210(input_path, fill_raw, extract_alpha=has_alpha, vf_extra=vf_tinterlace,
                                   width=1920 if rescale else 0, height=1080 if rescale else 0, fit=fit,
                                   interlaced=rescale and info.get('is_interlaced', False),
-                                  assume_709=_keep_values_and_say(info, log))
+                                  assume_709=_keep_values_and_say(info, log),
+                                  lut=_lut_for(lut, log))
         if rescale:
             log(f"  Scaling {w}×{h} → 1920×1080")
             w, h = 1920, 1080
@@ -3347,7 +3423,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                          include_audio: bool = True,
                          sound_file: str = None,
                          clear_frames: str = None,
-                         description: str = None) -> str:
+                         description: str = None,
+                         lut: dict = None) -> str:
     """Convert a video clip (MOV/MP4/etc.) to K-Frame EIF format, with its
     .eaf audio when the source has sound. Confirmed on a live K-Frame,
     2026-10-07. sound_file: a sound to carry instead (2026-10-11), fitted to
@@ -3394,7 +3471,8 @@ def convert_clip_to_eif(input_path: str, dest_dir: str, log=print,
                                     extract_alpha=info['has_alpha'],
                                     interlaced=info.get('is_interlaced', False) and
                                     (info['width'], info['height']) != (1920, 1080),
-                                    assume_709=_keep_values_and_say(info, log))
+                                    assume_709=_keep_values_and_say(info, log),
+                                    lut=_lut_for(lut, log))   # decision 78: the fill only
         frame_count = os.path.getsize(fill_v210) // _EIF_PLANE_SIZE
         if cross_rate and frame_count:
             index = _pick_frames(frame_count, fps_in, fps)
