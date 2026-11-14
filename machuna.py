@@ -1781,6 +1781,67 @@ def lut_refuses(lut, source: str, kind: str) -> None:
         _lut_for(lut, lambda *a: None, get_video_info(source), source)
 
 
+def _lut_colour(cube: dict) -> tuple:
+    """The label a file made through `cube` must carry: (primaries, transfer,
+    matrix) as its header states its output (an SDR to HLG LUT: bt2020,
+    arib-std-b67, bt2020nc), BT.709 where it does not say."""
+    return (cube.get('output_primaries') or 'bt709', cube.get('output_transfer') or 'bt709',
+            cube.get('output_matrix') or 'bt709')
+
+
+def _lut_rgba_file(path: str, width: int, height: int, cube: dict, levels: str):
+    """A LUT on the colour of every frame of a raw 8-bit RGBA file, in place;
+    alpha untouched (SWS and EIF to MOV, before clear frames and the encode).
+    Stop is checked on every frame."""
+    import numpy as np
+    frame = width * height * 4
+    frames = os.path.getsize(path) // frame
+    data = np.memmap(path, dtype=np.uint8, mode='r+')
+    try:
+        for i in range(frames):
+            _check_stop()
+            px = np.array(data[i * frame:(i + 1) * frame]).reshape(height, width, 4)
+            rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 255.0, cube, levels)
+            px[..., :3] = np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+            data[i * frame:(i + 1) * frame] = px.reshape(-1)
+        data.flush()
+    finally:
+        del data
+
+
+def _rgba_through_lut(cmd_decode: list, cmd_encode: list, width: int, height: int,
+                      cube: dict, levels: str):
+    """`cmd_decode` writes 16-bit RGBA frames to its output (`-`); each goes
+    through the LUT (colour only) into `cmd_encode`, which reads them from
+    its input. Stop is checked on every frame; both ffmpegs are ended
+    whatever happens."""
+    import numpy as np
+    import subprocess as _sp
+    dec = _sp.Popen(cmd_decode, stdout=_sp.PIPE, stderr=_sp.DEVNULL, stdin=_sp.DEVNULL)
+    enc = _sp.Popen(cmd_encode, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.PIPE)
+    frame = width * height * 4 * 2
+    try:
+        while True:
+            _check_stop()
+            buf = dec.stdout.read(frame)
+            if len(buf) < frame:
+                break
+            px = np.frombuffer(buf, '<u2').reshape(height, width, 4).copy()
+            rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 65535.0, cube, levels)
+            px[..., :3] = np.clip(np.rint(rgb * 65535.0), 0, 65535).astype('<u2')
+            enc.stdin.write(px.tobytes())
+        enc.stdin.close()
+        if dec.wait() != 0 or enc.wait() != 0:
+            raise RuntimeError("The HDR step could not make this MOV"
+                               + (f": {enc.stderr.read().decode('utf-8', 'replace').strip()[-200:]}"
+                                  if enc.stderr else "."))
+    finally:
+        for proc in (dec, enc):
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+
 _LUT_422_NOTE = ("  HDR from an SWS or EIF: its colour is already halved (4:2:2), so fine colour "
                  "detail can differ slightly from an HDR version made from the original clip. "
                  "For the closest match, convert the original.")
@@ -6599,7 +6660,7 @@ def _abandon_eif(dest_path: str, exc, log=print):
 
 def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
                 stereo_pcm: str, out_path: str, pcm_24bit: bool = False,
-                no_alpha: bool = False) -> list:
+                no_alpha: bool = False, colour: tuple = None) -> list:
     """The one ProRes 4444 encode used by every MOV path.
 
     Kept in one place so SWS, EIF and TGA sources cannot drift apart in
@@ -6616,11 +6677,20 @@ def _prores_cmd(raw_rgba: str, width: int, height: int, fps_str: str,
     if stereo_pcm:
         cmd += ['-f', 's32le' if pcm_24bit else 's16le',
                 '-ar', str(EAF_SAMPLE_RATE), '-ac', '2', '-i', stereo_pcm]
+    # colour: (primaries, transfer, matrix) for a file made through a LUT
+    # (decision 78); ffmpeg encodes the RGB with the matrix the label names
+    # (checked: BT.2020 red at Y 322, not BT.709's 286). None: BT.709, as always.
+    primaries, trc, matrix = colour or ('bt709', 'bt709', 'bt709')
+    if colour:
+        # The full label on the frames: set on the encoder alone, a MOV said
+        # only its matrix, not BT.2020 primaries or the HLG transfer (checked
+        # with ffprobe 2026-11-14), and a player could not know it is HDR.
+        cmd += ['-vf', f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
     cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
             '-pix_fmt', _prores_pix_fmt(no_alpha),
-            '-color_primaries', 'bt709',
-            '-color_trc', 'bt709',
-            '-colorspace', 'bt709']
+            '-color_primaries', primaries,
+            '-color_trc', trc,
+            '-colorspace', matrix]
     if stereo_pcm:
         cmd += ['-c:a', 'pcm_s24le' if pcm_24bit else 'pcm_s16le',
                 '-ar', str(EAF_SAMPLE_RATE)]
@@ -6705,7 +6775,8 @@ def _sound_file_pcm24(sound_file: str, tmp: str, log=print) -> str:
 def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                              include_audio: bool = True, out_name: str = None,
                              log=print, sound_file: str = None,
-                             clear_frames: str = None, no_alpha: bool = False) -> str:
+                             clear_frames: str = None, no_alpha: bool = False,
+                             lut: dict = None) -> str:
     """Convert one EIF to a ProRes 4444 MOV, with .eaf audio if present.
 
     The output is an ordinary QuickTime file: picture, key as a real alpha
@@ -6739,11 +6810,15 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
                     af.write(pcm)
             else:
                 log("  No companion .eaf - MOV will be silent")
+        lutc = _lut_for(lut, log)     # decision 78: the picture's colour, before clear frames
+        if lutc:
+            _lut_rgba_file(raw_rgba, 1920, 1080, *lutc)
         _pad_mov_inputs(raw_rgba, 1920, 1080, not no_alpha, stereo_pcm, 4, h.fps, clear_frames, log)
         log("  Encoding ProRes 4444..." + (" (no alpha: Ignore key)" if no_alpha else ""))
         _run_ffmpeg(_prores_cmd(raw_rgba, 1920, 1080, _fps_expr(h.fps),
                                 stereo_pcm, out_path, pcm_24bit=True,
-                                no_alpha=no_alpha), check=True)
+                                no_alpha=no_alpha,
+                                colour=_lut_colour(lutc[0]) if lutc else None), check=True)
     log(f"  Done → {out_path}")
     return out_path
 
@@ -6751,7 +6826,8 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                            fps: float, vf: str = None, out_fps: float = None,
                            log=print, sound_file: str = None,
-                           clear_frames: str = None, no_alpha: bool = False) -> str:
+                           clear_frames: str = None, no_alpha: bool = False,
+                           lut: dict = None) -> str:
     """Convert a TGA sequence to a ProRes 4444 MOV. TGA carries no audio;
     sound_file adds one at its own length (2026-10-11).
 
@@ -6769,8 +6845,11 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
     out_fps  = out_fps or fps
     log(f"  {len(tga_files)} frame(s) @ {fps:g}fps → ProRes 4444"
         + (f" (out {out_fps:g}fps)" if out_fps != fps else ""))
+    lutc = _lut_for(lut, log)
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = [ffmpeg, '-y'] + _tga_input_args(tga_files, tmp, _fps_expr(fps))
+        frames_in = _tga_input_args(tga_files, tmp, _fps_expr(fps))
+        cmd = [ffmpeg, '-y'] + frames_in
+        sound_in = []
         # Decision 54: clear frames added after any deinterlace, so one is one
         # frame of the output; the sound one frame later with one at the start.
         starts, ends = _clear_counts(clear_frames)
@@ -6778,8 +6857,9 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
             pcm = _sound_file_pcm24(sound_file, tmp, log)
             if starts:
                 _pad_file(pcm, b'\0' * (_samples_per_frame(out_fps) * starts * 8), b'')
-            cmd += ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
-                    '-i', pcm, '-map', '0:v', '-map', '1:a']
+            sound_in = ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
+                        '-i', pcm, '-map', '0:v', '-map', '1:a']
+            cmd += sound_in
         if starts or ends:
             with Image.open(tga_files[0]) as im:
                 keyed = 'A' in im.getbands() and not no_alpha
@@ -6787,6 +6867,26 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                    f"color=black{'@0' if keyed else ''}")
             vf = f"{vf},{pad}" if vf else pad
             log(f"  Adding {'clear' if keyed else 'black'} frame(s): {starts} at the start, {ends} at the end")
+        if lutc:
+            # Decision 78: the frames (deinterlaced and padded as below) at the
+            # output rate, 16-bit RGBA through the LUT, then encoded and
+            # labelled as the LUT's output says.
+            with Image.open(tga_files[0]) as im:
+                W, H = im.size
+            primaries, trc, matrix = _lut_colour(lutc[0])
+            dec = ([ffmpeg, '-y', '-v', 'error'] + frames_in + (['-vf', vf] if vf else [])
+                   + ['-r', _fps_expr(out_fps), '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'])
+            enc = ([ffmpeg, '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le',
+                    '-s', f'{W}x{H}', '-framerate', _fps_expr(out_fps), '-i', '-'] + sound_in
+                   + ['-vf', f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
+                   + ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', _prores_pix_fmt(no_alpha),
+                      '-color_primaries', primaries, '-color_trc', trc, '-colorspace', matrix,
+                      '-r', _fps_expr(out_fps)]
+                   + (['-c:a', 'pcm_s24le', '-ar', str(EAF_SAMPLE_RATE)] if sound_file else [])
+                   + [out_path])
+            _rgba_through_lut(dec, enc, W, H, *lutc)
+            log(f"  Done → {out_path}")
+            return out_path
         if vf:
             cmd += ['-vf', vf]
         cmd += ['-c:v', 'prores_ks', '-profile:v', '4444',
@@ -6805,7 +6905,8 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
 def _hula_convert_mov(sws_path: str, dest_parent: str,
                       include_audio: bool = True, out_name: str = None,
                       log=print, sound_file: str = None,
-                      clear_frames: str = None, no_alpha: bool = False) -> str:
+                      clear_frames: str = None, no_alpha: bool = False,
+                      lut: dict = None) -> str:
     """Convert one SWS to a ProRes 4444 MOV with embedded alpha and audio.
 
     Named after the source file rather than a slot number: this is an ordinary
@@ -6839,13 +6940,17 @@ def _hula_convert_mov(sws_path: str, dest_parent: str,
         else:
             stereo_pcm = (_hula_extract_audio_stereo(sws_path, header, tmp, log)
                           if include_audio else None)
+        lutc = _lut_for(lut, log)     # decision 78: the picture's colour, before clear frames
+        if lutc:
+            _lut_rgba_file(raw_rgba, header.width, header.height, *lutc)
         _pad_mov_inputs(raw_rgba, header.width, header.height,
                         bool(header.has_key) and not no_alpha,
                         stereo_pcm, 4 if pcm_24bit else 2, header.fps, clear_frames, log)
         log("  Encoding ProRes 4444..." + (" (no alpha: Ignore key)" if no_alpha else ""))
         _run_ffmpeg(_prores_cmd(raw_rgba, header.width, header.height,
                                 _fps_expr(header.fps), stereo_pcm, out_path,
-                                pcm_24bit=pcm_24bit, no_alpha=no_alpha),
+                                pcm_24bit=pcm_24bit, no_alpha=no_alpha,
+                                colour=_lut_colour(lutc[0]) if lutc else None),
                     check=True)
     log(f"  Done → {out_path}")
     return out_path
@@ -6903,8 +7008,11 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     clip_names: list = None, include_audio: bool = True,
                     log=print, sound_files: list = None,
                     clear_frames: str = None, no_alpha: bool = False,
-                    keep_duration: bool = False):
+                    keep_duration: bool = False, lut: dict = None):
     """Convert a list of SWS or MOV files to the specified extraction target.
+
+    lut (decision 78): for QuickTime MOV only. A TGA target's LUT is put on its
+    finished folder by the caller (`lut_tga_folder`), once, after this.
 
     clip_names, when given, is one Sony clip name per input path (bespoke
     names) and overrides the single shared clip_name for that item.
@@ -6932,7 +7040,8 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                          include_audio=include_audio,
                                          out_name=(cn or None) if clip_names else None,
                                          log=log, sound_file=sound,
-                                         clear_frames=clear_frames, no_alpha=no_alpha)
+                                         clear_frames=clear_frames, no_alpha=no_alpha,
+                                         lut=lut)
             elif ext == '.eif':
                 weave = interlaced and kframe_tga_asks_desk_format(path)
                 if interlaced and not weave:
@@ -6966,7 +7075,8 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                                   include_audio=include_audio,
                                   out_name=(cn or None) if clip_names else None,
                                   log=log, sound_file=sound,
-                                  clear_frames=clear_frames, no_alpha=no_alpha)
+                                  clear_frames=clear_frames, no_alpha=no_alpha,
+                                  lut=lut)
             elif interlaced:
                 src_header = HulaSWSHeader(path)
                 if src_header.fps >= 48.0:

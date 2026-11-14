@@ -3309,6 +3309,121 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestHdrLutOnMov(unittest.TestCase):
+    """HDR item 4d (decision 78): QuickTime MOV from SWS, EIF and TGA
+    sequences with a LUT. The picture is checked decoded, as any player reads
+    it: an identity LUT changes nothing beyond ProRes's own noise, a halving
+    LUT gives the closed form of the no-LUT picture, alpha is untouched, and
+    the file is LABELLED as the LUT's output says (HLG / BT.2020 for an SDR to
+    HLG LUT), with its picture encoded to match the label: a LUT that only
+    recodes BT.709 as BT.2020 must decode to the same RGB."""
+
+    SOURCES = ('sws', 'eif', 'seq')
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        if not shutil.which('ffmpeg') and not os.path.exists(cls.ff):
+            raise unittest.SkipTest('ffmpeg not available')
+        cls.tmp = tempfile.mkdtemp()
+        q = lambda *a: None
+        clip = os.path.join(cls.tmp, 'GRAD.mov')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'gradients=s=1920x1080:c0=0xC03030:c1=0x3060C0:x0=0:y0=0:x1=1919:y1=1079:r=25:d=0.08',
+                        '-vf', "format=yuva444p10le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='X*255/W',"
+                               "setparams=range=tv:colorspace=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', clip], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(cls.tmp, 'sws'); os.makedirs(d)
+        m.convert_clip(clip, 1, d, video_standard='1080p25', include_audio=False, split_fat32=False, log=q)
+        seq = os.path.join(cls.tmp, 'seq'); os.makedirs(seq)
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-i', clip, '-pix_fmt', 'bgra', '-rle', '0',
+                        os.path.join(seq, 'GRAD%04d.tga')], check=True, stdin=subprocess.DEVNULL)
+        cls.src = {'sws': os.path.join(d, '1.SWS'),
+                   'eif': m.convert_clip_to_eif(clip, cls.tmp, log=q, out_name='0001'),
+                   'seq': sorted(os.path.join(seq, f) for f in os.listdir(seq))}
+
+        def cube(name, fn, head=''):
+            n = 9
+            lines = ([head] if head else []) + [f'LUT_3D_SIZE {n}']
+            for b in range(n):
+                for g in range(n):
+                    for r in range(n):
+                        lines.append('%.6f %.6f %.6f' % fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+            p = os.path.join(cls.tmp, name + '.cube'); Path(p).write_text('\n'.join(lines) + '\n')
+            return {'path': p, 'levels': 'full', 'name': name}
+        cls.ident = cube('ident', lambda r, g, b: (r, g, b))
+        cls.half = cube('half', lambda r, g, b: (r / 2, g / 2, b / 2))
+        cls.recode = cube('recode', lambda r, g, b: (r, g, b), '# INPUT CICP: 1 1 1\n# OUTPUT CICP: 9 9 18')
+        cls.made = {}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def make(self, source, lut):
+        key = (source, lut['name'] if lut else None)
+        if key not in self.made:
+            d = tempfile.mkdtemp(dir=self.tmp)
+            kw = {'lut': lut} if lut else {}
+            q = lambda *a: None
+            if source == 'sws':
+                out = m._hula_convert_mov(self.src['sws'], d, include_audio=False, log=q, **kw)
+            elif source == 'eif':
+                out = m._hula_convert_eif_to_mov(self.src['eif'], d, include_audio=False, log=q, **kw)
+            else:
+                out = m.convert_tga_seq_to_mov(self.src['seq'], d, 'GRADSEQ', 25.0, log=q, **kw)
+            self.made[key] = out
+        return self.made[key]
+
+    def decoded(self, path):
+        import subprocess, numpy as np
+        raw = subprocess.run([self.ff, '-v', 'error', '-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'],
+                             capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
+        return np.frombuffer(raw, '<u2').reshape(-1, 1080, 1920, 4).astype(np.float64) / 65535
+
+    def labels(self, path):
+        s = m._first_video_stream(path)
+        return s.get('color_primaries'), s.get('color_transfer'), s.get('color_space')
+
+    def test_an_identity_lut_changes_nothing(self):
+        import numpy as np
+        for s in self.SOURCES:
+            with self.subTest(source=s):
+                a, b = self.decoded(self.make(s, None)), self.decoded(self.make(s, self.ident))
+                self.assertEqual(a.shape, b.shape)
+                d = np.abs(a - b) * 255
+                # ProRes is lossy: through a LUT a sequence's frames go by an
+                # equivalent but different path (16-bit RGBA), so its noise
+                # differs by a level or so (measured max 1.23 of 255).
+                self.assertLessEqual(float(d[..., :3].max()), 1.5, f'picture max {d[..., :3].max():.2f} of 255')
+                self.assertLess(float(d[..., :3].mean()), 0.1, f'picture mean {d[..., :3].mean():.3f} of 255')
+                self.assertLessEqual(float(d[..., 3].max()), 0.01, 'alpha changed')
+                self.assertEqual(self.labels(self.make(s, self.ident)), ('bt709', 'bt709', 'bt709'))
+
+    def test_a_known_lut_gives_the_closed_form_and_never_touches_alpha(self):
+        import numpy as np
+        for s in self.SOURCES:
+            with self.subTest(source=s):
+                a, b = self.decoded(self.make(s, None)), self.decoded(self.make(s, self.half))
+                want = np.clip(a[..., :3] / 2 - 32 / 876, 0, 1)
+                d = np.abs(b[..., :3] - want) * 255
+                self.assertLess(float(d.mean()), 0.5, f'mean {d.mean():.3f} of 255')
+                self.assertLessEqual(float(d.max()), 2.0, f'max {d.max():.2f} of 255')
+                self.assertLessEqual(float(np.abs(a[..., 3] - b[..., 3]).max() * 255), 0.01, 'alpha changed')
+
+    def test_an_hdr_lut_labels_the_mov_and_encodes_to_match(self):
+        import numpy as np
+        for s in self.SOURCES:
+            with self.subTest(source=s):
+                mov = self.make(s, self.recode)
+                self.assertEqual(self.labels(mov), ('bt2020', 'arib-std-b67', 'bt2020nc'))
+                a, b = self.decoded(self.make(s, None)), self.decoded(mov)
+                d = np.abs(a[..., :3] - b[..., :3]) * 255
+                self.assertLessEqual(float(d.max()), 2.0, f'decoded as BT.2020 it is not the same picture: '
+                                                          f'max {d.max():.2f} of 255')
+
+
 class TestHdrLutOnTga(unittest.TestCase):
     """HDR item 4c (decision 78): every TGA route ends in a folder of TGAs,
     and `_lut_tga_folder` puts the LUT on their colour: alpha untouched, the
