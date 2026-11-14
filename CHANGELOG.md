@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.21.1 — 2026-11-14
+
+**HDR clips keep their colour values on the way to SWS and EIF** (a K-Frame user's report). MacHuna 2.10.1 pins it.
+
+### Fixed
+- **A clip labelled HDR (BT.2020, HLG or PQ) had its saturated colours changed when made into Kahuna SWS or K-Frame EIF.** Every route asked ffmpeg for BT.709 output, so it converted the colours (up to 73 Y and 58 chroma codes of 1023 on colour bars; on a broadcaster's real HLG wipe up to 18 Y and 9 Cb), and an HDR desk then read the converted values as BT.2020. SWS and EIF carry no colour label, so the values must go through as they came in: `_keep_values_and_say` now relabels a BT.2020 clip BT.709 before ffmpeg on `convert_clip` and `convert_clip_to_eif`, and the log says "Source is labelled HDR (BT.2020): its colour values are kept exactly as they are". Whites and greys were never affected. The broadcaster's HLG wipe now reaches SWS identical to a plain 4:2:2 conversion of its own values. TGA routes unchanged: they must read BT.2020 as BT.2020, and do (measured). `TestHdrSourceKeepsItsValues`, fail-first. Mac parity kit 46/46 unchanged.
+
 ## v1.21.0 — 2026-11-06
 
 **From a K-Frame desk session (2026-11-05): K-Frame TGA fits every file to the show's format, Sony TGA from SWS and EIF keeps its length, and stills to K-Frame EIF.** MacHuna 2.10.0 pins it.
