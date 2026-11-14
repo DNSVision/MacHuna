@@ -103,6 +103,8 @@ change reaches MacHuna for Mac unless: the full suite passes (pytest and unittes
 change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
 version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
 
+**NEXT after the PC 2.11.1 brief: an HDR view in the player (Swift decision 79, agreed 2026-11-14), Mac 2.12.0.** Off / HLG / PQ beside Open… (amber when on) and in the Player menu; always starts Off, for every file; display only, by our own HDR-to-SDR maths in the ENGINE (so the PC has it with the pin); switchable during playback. Measure first: smooth 50 fps with it on, and the catch when switched while playing. Self-test: a known HLG frame previews to known SDR values (fail first).
+
 **PARKED (David, 2026-11-14: "park this until I've confirmed it"): K-Frame EIF numbers start at 1000, so the four digits never start with a 0.**
 Today an EIF is numbered 1-9999 (engine `validate_bespoke_ids`, BESPOKE_MODE_EIF) and written <NNNN>.eif, so 1 is
 0001.eif; the app seeds the first row with 1 (or the highest number + 1, `ConversionView.autofill`). To settle with
