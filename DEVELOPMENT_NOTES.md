@@ -103,6 +103,15 @@ change reaches MacHuna for Mac unless: the full suite passes (pytest and unittes
 change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
 version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
 
+**FOUND 2026-11-14 (HDR item 4b work), NOT FIXED, David to decide: TGA/PNG sequences to Kahuna SWS use BT.601
+colour maths.** `convert_tga_sequence`'s fill command (`cmd += ['-f', 'rawvideo', '-vcodec', 'v210', fill_raw]`,
+unchanged since v1.5.24 or earlier) states no colour matrix, so ffmpeg converts RGB with its SD default. Measured on pure
+red/green/blue frames: SWS red Y'CbCr 324/360/960, green 580/216/136, blue 164/960/440; BT.709 is 250/409/960,
+691/167/105, 127/960/471, which the SAME frames to K-Frame EIF give exactly, and a still to SWS gives within 2 codes
+(252/408/960). Saturated colours from a sequence have been shifted on a Kahuna; neutrals, whites and greys are right
+(why desk tests never showed it). The fix (state BT.709 and limited range on that command, as `convert_to_v210` does)
+changes every sequence-to-SWS output: the parity kit's sequence SWS cases will differ BY DESIGN. Fail-first test:
+pure colours through the route must give the BT.709 values. The HDR path for sequences states BT.709 itself.
 **Small, NEXT Mac release (seen by David testing 2.10.1, 2026-11-14): a harmless log line shown RED mid-conversion.** Converting an HLG clip to SWS, the bar showed "Source is labelled HDR (BT.2020): its colour values are kept exactly as they are" in red. `ConversionView` colours the bar red when `blocked` (problems / problem / besideIssue / eifTooLong) or a scan warning: not from the line's content. Suspect the row's own SWS appearing in the destination mid-write counts as a clash. Pre-existing (2.10.1 did not touch it). Reproduce, then fix with a self-test check. Goes with Swift decision 77 (the log behind the arrow, agreed 2026-11-14, roadmap, after the HDR work). **BUILT 2026-11-14 (Swift 4afdce1), ships with the next release.** **Small, for the next Mac release and the PC (found by the M1, 2026-11-06, in David's PC 2.10.0 checks):** the player's status line says "1 frames" for a one-frame file (a still to K-Frame EIF, decision 69). Mac: `MacHuna-Swift/Sources/MacHuna/PlayerView.swift:227`, `\(info.frames) frames`; the PC copies it. Fix: "1 frame" for one, "N frames" otherwise; the self-test reads the status for GREY.png's EIF (fail first). Not worth a release on its own; the PC ports it with the next parity.
 
 **Small, for the next engine release (found by the M1, 2026-10-16; not worth a release on its own):**
