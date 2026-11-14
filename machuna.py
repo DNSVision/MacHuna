@@ -1422,6 +1422,183 @@ def _keep_values_and_say(info: dict, log=print) -> bool:
     return _assume_709_and_say(info, log)
 
 
+# ── HDR: a user's own LUT (Swift decision 78, 2026-11-14) ────────────────────
+#
+# MacHuna ships no LUT. The user adds the .cube their broadcaster uses; it is
+# applied to the FILL only (ITU-R BT.2408: an SDR key is used directly). The
+# maths was settled on a broadcaster's real SDR clip, its HLG version made by
+# their own chain, and the BBC LUT that chain uses: the clip's Y'CbCr as
+# R'G'B', the LUT read with 0..1 = codes 0..1023 ("full range") in and out,
+# reproduced their HLG clip to a quarter of a code on average (the other
+# mappings tried were 9-17 codes off). "Video range" (0..1 = 64..940) is the
+# other choice, for LUTs made that way.
+
+_CICP_MATRIX = {1: 'bt709', 9: 'bt2020nc'}
+_CICP_TRANSFER = {1: 'bt709', 6: 'bt709', 14: 'bt709', 16: 'smpte2084', 18: 'arib-std-b67'}
+_CICP_PRIMARIES = {1: 'bt709', 9: 'bt2020'}
+_MATRIX_K = {'bt709': (0.2126, 0.0722), 'bt2020nc': (0.2627, 0.0593)}
+_TRANSFER_WORD = {'bt709': 'SDR', 'arib-std-b67': 'HLG', 'smpte2084': 'PQ'}
+
+
+def read_cube(path: str) -> dict:
+    """Read and check a 3D .cube LUT, and what its header says about itself.
+
+    Returns size, table (numpy, [b][g][r][rgb]), domain_min/max, title,
+    notice (copyright and licence lines, shown to the user), levels ('full',
+    'video' or None when the file does not say), does ('SDR → HLG' etc. or
+    None), input_matrix / output_matrix ('bt709' or 'bt2020nc'), and
+    output_transfer / output_primaries (to label a MOV; None if unknown).
+    A file MacHuna cannot use raises ValueError in plain words, before it
+    can be used: a LUT applied half-read would be wrong without saying so."""
+    import numpy as np
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError as e:
+        raise ValueError(f"Could not read the LUT file ({e.strerror}).") from None
+    size, rows, title, comments = None, [], '', []
+    dmin, dmax = [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('#'):
+            comments.append(line[1:].strip())
+            continue
+        word = line.split()[0].upper()
+        if word == 'LUT_1D_SIZE':
+            raise ValueError("This is a 1D LUT, which only changes brightness curves. "
+                             "MacHuna needs a 3D LUT (a .cube with a LUT_3D_SIZE line).")
+        try:
+            if word == 'LUT_3D_SIZE':
+                size = int(line.split()[1])
+            elif word == 'TITLE':
+                title = line[5:].strip().strip('"')
+            elif word == 'DOMAIN_MIN':
+                dmin = [float(v) for v in line.split()[1:4]]
+            elif word == 'DOMAIN_MAX':
+                dmax = [float(v) for v in line.split()[1:4]]
+            elif word == 'LUT_3D_INPUT_RANGE':
+                lo, hi = (float(v) for v in line.split()[1:3])
+                dmin, dmax = [lo] * 3, [hi] * 3
+            else:
+                vals = [float(v) for v in line.split()]
+                if len(vals) != 3:
+                    raise ValueError
+                rows.append(vals)
+        except (ValueError, IndexError):
+            raise ValueError(f"Line {n} of the LUT file is not something a .cube can hold: "
+                             f"\"{line[:40]}\". The file may be damaged.") from None
+    if size is None:
+        raise ValueError("This file has no LUT_3D_SIZE line, so it is not a 3D LUT MacHuna can use.")
+    if not 2 <= size <= 256:
+        raise ValueError(f"The LUT says its size is {size}; a 3D LUT is between 2 and 256.")
+    if len(rows) != size ** 3:
+        raise ValueError(f"A LUT of size {size} holds {size ** 3:,} entries, but this file has "
+                         f"{len(rows):,}. It may have been cut short when it was copied.")
+    table = np.array(rows, dtype=np.float64).reshape(size, size, size, 3)
+    if not np.isfinite(table).all() or any(hi <= lo for lo, hi in zip(dmin, dmax)):
+        raise ValueError("The LUT holds values MacHuna cannot use. The file may be damaged.")
+
+    def cicp(which):
+        for c in comments:
+            mt = re.match(rf'{which}\s+CICP\s*:\s*(\d+)\s+(\d+)\s+(\d+)', c, re.I)
+            if mt:
+                return tuple(int(v) for v in mt.groups())   # primaries, matrix, transfer
+        return None
+    cin, cout = cicp('INPUT'), cicp('OUTPUT')
+    in_matrix = _CICP_MATRIX.get(cin[1], 'bt709') if cin else 'bt709'
+    out_matrix = _CICP_MATRIX.get(cout[1], in_matrix) if cout else in_matrix
+    in_tf = _CICP_TRANSFER.get(cin[2]) if cin else None
+    out_tf = _CICP_TRANSFER.get(cout[2]) if cout else None
+    does = None
+    if in_tf and out_tf and in_tf != out_tf:
+        does = f"{_TRANSFER_WORD[in_tf]} → {_TRANSFER_WORD[out_tf]}"
+    else:
+        mt = re.search(r'\b(SDR|HLG|PQ)[ _-]*TO[ _-]*(SDR|HLG|PQ)\b', title, re.I)
+        if mt:
+            does = f"{mt.group(1).upper()} → {mt.group(2).upper()}"
+    said = ' '.join(comments).lower()
+    levels = ('full' if 'full range' in said else
+              'video' if any(w in said for w in ('legal range', 'narrow range', 'video range')) else None)
+    notice = ' '.join(c.split(':', 1)[1].strip() for c in comments
+                      if c.lower().startswith(('copyright', 'licence', 'license')) and ':' in c)
+    return {'size': size, 'table': table, 'domain_min': dmin, 'domain_max': dmax,
+            'title': title, 'notice': notice, 'levels': levels, 'does': does,
+            'input_matrix': in_matrix, 'output_matrix': out_matrix,
+            'output_transfer': out_tf,
+            'output_primaries': _CICP_PRIMARIES.get(cout[0]) if cout else None}
+
+
+def _cube_tetrahedral(table, rgb):
+    """rgb (N, 3) in 0..1 through table [b][g][r] by tetrahedral interpolation,
+    the method broadcast LUT boxes use; a value on a grid point comes out as
+    the table's own value. Outside 0..1 is clipped, as in any LUT."""
+    import numpy as np
+    n = table.shape[0]
+    x = np.clip(rgb, 0.0, 1.0) * (n - 1)
+    i = np.minimum(np.floor(x).astype(np.int64), n - 2)
+    f = x - i
+    r, g, b = i[:, 0], i[:, 1], i[:, 2]
+    fr, fg, fb = f[:, 0:1], f[:, 1:2], f[:, 2:3]
+
+    def at(dr, dg, db):
+        return table[b + db, g + dg, r + dr]
+    c000, c111 = at(0, 0, 0), at(1, 1, 1)
+    out = np.empty_like(rgb)
+    cases = (((fr >= fg) & (fg >= fb))[:, 0], (fr, fg, fb), (1, 0, 0), (1, 1, 0)), \
+            (((fr >= fb) & (fb > fg))[:, 0], (fr, fb, fg), (1, 0, 0), (1, 0, 1)), \
+            (((fb > fr) & (fr >= fg))[:, 0], (fb, fr, fg), (0, 0, 1), (1, 0, 1)), \
+            (((fg > fr) & (fr >= fb))[:, 0], (fg, fr, fb), (0, 1, 0), (1, 1, 0)), \
+            (((fg >= fb) & (fb > fr))[:, 0], (fg, fb, fr), (0, 1, 0), (0, 1, 1)), \
+            (((fb > fg) & (fg > fr))[:, 0], (fb, fg, fr), (0, 0, 1), (0, 1, 1))
+    done = np.zeros(len(rgb), dtype=bool)
+    for sel, (w1, w2, w3), p1, p2 in cases:
+        sel = sel & ~done
+        if not sel.any():
+            continue
+        done |= sel
+        a, c = at(*p1)[sel], at(*p2)[sel]
+        out[sel] = (c000[sel] + w1[sel] * (a - c000[sel]) + w2[sel] * (c - a)
+                    + w3[sel] * (c111[sel] - c))
+    return out
+
+
+def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
+    """A LUT applied to Y'CbCr fill values in 10-bit code units (floats,
+    any shape; 12-bit sources divided by 4). Decoded with the LUT's input
+    matrix, read at `levels` ('full': 0..1 = codes 0..1023; 'video': 0..1 =
+    64..940), encoded with its output matrix. Returns new (y, cb, cr) as
+    floats; rounding and clipping to the output's depth is the caller's.
+    Worked out once per distinct colour: graphics hold few."""
+    import numpy as np
+    if levels not in ('full', 'video'):
+        raise ValueError(f"levels must be 'full' or 'video', not {levels!r}")
+    shape = np.shape(y)
+    y, cb, cr = (np.asarray(v, dtype=np.float64).ravel() for v in (y, cb, cr))
+    keys = (np.rint(y * 16).astype(np.int64) << 28) | (np.rint(cb * 16).astype(np.int64) << 14) \
+        | np.rint(cr * 16).astype(np.int64)
+    keys, first, back = np.unique(keys, return_index=True, return_inverse=True)
+    y, cb, cr = y[first], cb[first], cr[first]
+
+    kr, kb = _MATRIX_K[cube['input_matrix']]
+    Y, Cb, Cr = (y - 64) / 876, (cb - 512) / 896, (cr - 512) / 896
+    R = Y + 2 * (1 - kr) * Cr
+    B = Y + 2 * (1 - kb) * Cb
+    G = (Y - kr * R - kb * B) / (1 - kr - kb)
+    rgb = np.stack([R, G, B], axis=1)
+    if levels == 'full':
+        rgb = (rgb * 876 + 64) / 1023
+    lo, hi = np.array(cube['domain_min']), np.array(cube['domain_max'])
+    out = _cube_tetrahedral(cube['table'], (rgb - lo) / (hi - lo))
+    if levels == 'full':
+        out = (out * 1023 - 64) / 876
+    kr, kb = _MATRIX_K[cube['output_matrix']]
+    R, G, B = out[:, 0], out[:, 1], out[:, 2]
+    Y = kr * R + (1 - kr - kb) * G + kb * B
+    res = (Y * 876 + 64, (B - Y) / (2 * (1 - kb)) * 896 + 512, (R - Y) / (2 * (1 - kr)) * 896 + 512)
+    return tuple(v[back].reshape(shape) for v in res)
+
+
 def _v210_plane_size(width: int, height: int) -> int:
     """Bytes in one v210 frame as ffmpeg writes it: each line padded to a
     multiple of 128 bytes (48 pixels). The old ((w+5)//6)*16 agreed only when

@@ -3171,6 +3171,144 @@ class TestUntaggedHdColour(unittest.TestCase):
             self.assertNotIn(note, text, f'{route}: a labelled clip was reported as unlabelled')
 
 
+class TestHdrLut(unittest.TestCase):
+    """Swift decision 78 (2026-11-14): a user's own .cube LUT, read and
+    checked, applied to the fill at the levels the user chose. A
+    broadcaster's real SDR/HLG pair settled the maths: R'G'B' as full-range
+    code values (0..1 = codes 0..1023) in AND out reproduces their HDR clip;
+    the other mappings are 9-17 codes off on average."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _cube(self, n, fn, header='', name='t.cube'):
+        lines = [header, f'LUT_3D_SIZE {n}'] if header else [f'LUT_3D_SIZE {n}']
+        for b in range(n):
+            for g in range(n):
+                for r in range(n):
+                    lines.append('%.6f %.6f %.6f' % fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+        p = os.path.join(self.tmp, name)
+        Path(p).write_text('\n'.join(lines) + '\n')
+        return p
+
+    BBC_LIKE = '\n'.join([
+        '#description:     Colour space conversion from bt709 to bt2020',
+        '#                 Convert SDR to HLG with highlight expansion',
+        '#                 Processes full range of signal with appropriate input and output scaling',
+        '#copyright:       BBC MMXIX',
+        '#licence:         Free for research and educational use, contact the BBC for commercial use',
+        '# INPUT CICP: 1 1 1',
+        '# OUTPUT CICP: 9 9 18',
+        'TITLE "COLOURSPACE->SDR_TO_HLG"'])
+
+    def test_a_cube_is_read_with_what_its_header_says(self):
+        p = self._cube(5, lambda r, g, b: (r, g, b), self.BBC_LIKE)
+        c = m.read_cube(p)
+        self.assertEqual(c['size'], 5)
+        self.assertEqual(c['levels'], 'full')
+        self.assertEqual(c['does'], 'SDR → HLG')
+        self.assertEqual(c['title'], 'COLOURSPACE->SDR_TO_HLG')
+        self.assertIn('BBC MMXIX', c['notice'])
+        self.assertIn('commercial use', c['notice'])
+        self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt2020nc'))
+        self.assertEqual(c['output_transfer'], 'arib-std-b67')
+
+    def test_a_plain_cube_suggests_nothing(self):
+        c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b)))
+        self.assertIsNone(c['levels'])
+        self.assertIsNone(c['does'])
+        self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt709'))
+
+    def test_broken_files_are_refused_in_plain_words(self):
+        good = Path(self._cube(3, lambda r, g, b: (r, g, b))).read_text().splitlines()
+        cases = {
+            'short': '\n'.join(good[:-1]),
+            'one-d': 'LUT_1D_SIZE 4\n0 0 0\n0.3 0.3 0.3\n0.6 0.6 0.6\n1 1 1\n',
+            'no-size': '\n'.join(good[1:]),
+            'words': '\n'.join(good[:-1] + ['red green blue']),
+        }
+        for name, text in cases.items():
+            p = os.path.join(self.tmp, name + '.cube')
+            Path(p).write_text(text)
+            with self.assertRaises(ValueError, msg=name) as cm:
+                m.read_cube(p)
+            self.assertNotIn('Traceback', str(cm.exception))
+            self.assertTrue(str(cm.exception).strip(), name)
+
+    def _codes(self):
+        # Real colours: random legal R'G'B' (and black, white, grey) as
+        # BT.709 Y'CbCr codes. A Y'CbCr triple with no RGB colour would be
+        # clipped by any LUT, which is a LUT's nature, not a fault.
+        import numpy as np
+        rng = np.random.default_rng(7)
+        rgb = np.concatenate([rng.random((4000, 3)), [[0, 0, 0], [1, 1, 1], [0.5, 0.5, 0.5]]])
+        kr, kb = 0.2126, 0.0722
+        R, G, B = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+        Y = kr * R + (1 - kr - kb) * G + kb * B
+        return (Y * 876 + 64, (B - Y) / (2 * (1 - kb)) * 896 + 512,
+                (R - Y) / (2 * (1 - kr)) * 896 + 512)
+
+    def test_an_identity_lut_changes_nothing_at_either_levels(self):
+        import numpy as np
+        c = m.read_cube(self._cube(17, lambda r, g, b: (r, g, b)))
+        y, cb, cr = self._codes()
+        for levels in ('full', 'video'):
+            oy, ocb, ocr = m.apply_cube_ycbcr(y, cb, cr, c, levels)
+            self.assertLess(max(np.abs(oy - y).max(), np.abs(ocb - cb).max(), np.abs(ocr - cr).max()),
+                            1e-6, levels)
+
+    def test_an_hdr_lut_writes_bt2020_values(self):
+        # The header says BT.709 in, BT.2020 out (an SDR to HLG LUT). With an
+        # identity table the R'G'B' is unchanged, so a saturated red must come
+        # out as the BT.2020 coding of that same red; grey is the same in both.
+        import numpy as np
+        hdr = '# INPUT CICP: 1 1 1\n# OUTPUT CICP: 9 9 18'
+        c = m.read_cube(self._cube(9, lambda r, g, b: (r, g, b), hdr))
+        R, G, B = 0.9, 0.1, 0.1
+        y709 = 0.2126 * R + 0.7152 * G + 0.0722 * B
+        cb709, cr709 = (B - y709) / (2 * (1 - 0.0722)), (R - y709) / (2 * (1 - 0.2126))
+        oy, ocb, ocr = m.apply_cube_ycbcr(np.array([y709 * 876 + 64]), np.array([cb709 * 896 + 512]),
+                                          np.array([cr709 * 896 + 512]), c, 'video')
+        y20 = 0.2627 * R + 0.6780 * G + 0.0593 * B
+        self.assertAlmostEqual(float(oy[0]), y20 * 876 + 64, places=4)
+        self.assertAlmostEqual(float(ocr[0]), (R - y20) / (2 * (1 - 0.2627)) * 896 + 512, places=4)
+        self.assertAlmostEqual(float(ocb[0]), (B - y20) / (2 * (1 - 0.0593)) * 896 + 512, places=4)
+
+    def test_the_levels_setting_decides_the_result(self):
+        # A LUT that halves every value, on a mid grey (Y 502, no colour):
+        # full range halves the code (251); video range halves the signal
+        # above black (64 + (502-64)/2 = 283).
+        import numpy as np
+        c = m.read_cube(self._cube(9, lambda r, g, b: (r / 2, g / 2, b / 2)))
+        one = lambda v: np.array([float(v)])
+        for levels, want in (('full', 251.0), ('video', 283.0)):
+            oy, ocb, ocr = m.apply_cube_ycbcr(one(502), one(512), one(512), c, levels)
+            self.assertAlmostEqual(float(oy[0]), want, places=6, msg=levels)
+            self.assertAlmostEqual(float(ocb[0]), 512.0, places=6)
+            self.assertAlmostEqual(float(ocr[0]), 512.0, places=6)
+
+    def test_a_grid_point_gives_the_table_value_exactly(self):
+        # A curve the interpolation could only get right by hitting the table.
+        import numpy as np
+        f = lambda r, g, b: (r ** 2, g ** 0.5, (r + b) / 2)
+        c = m.read_cube(self._cube(5, f))
+        # Grid point r=0.75, g=0.25, b=0.5 at full levels, as Y'CbCr (BT.709).
+        R, G, B = 0.75, 0.25, 0.5
+        kr, kb = 0.2126, 0.0722
+        Y = kr * R + (1 - kr - kb) * G + kb * B
+        code = lambda v: v * 1023
+        y = np.array([64 + 876 * ((code(Y) - 64) / 876)])
+        cb = np.array([512 + 896 * (B - Y) / (2 * (1 - kb)) * 1023 / 876])
+        cr = np.array([512 + 896 * (R - Y) / (2 * (1 - kr)) * 1023 / 876])
+        oy, ocb, ocr = m.apply_cube_ycbcr(y, cb, cr, c, 'full')
+        R2, G2, B2 = f(R, G, B)
+        Y2 = kr * R2 + (1 - kr - kb) * G2 + kb * B2
+        self.assertAlmostEqual(float(oy[0]), Y2 * 1023, places=4)
+        self.assertAlmostEqual(float(ocb[0]), 512 + 896 * (B2 - Y2) / (2 * (1 - kb)) * 1023 / 876, places=4)
+        self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
+
+
 class TestHdrSourceKeepsItsValues(unittest.TestCase):
     """2026-11-11 (a K-Frame user's report, re-measured): a clip labelled
     BT.2020 (HDR) had its colours converted to BT.709 values on the way to SWS
