@@ -3214,6 +3214,27 @@ class TestHdrLut(unittest.TestCase):
         self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt2020nc'))
         self.assertEqual(c['output_transfer'], 'arib-std-b67')
 
+    def test_a_cube_saved_by_windows_tools_is_read(self):
+        """Found 2026-11-14 writing the PC brief: Notepad and other Windows
+        tools save with a byte-order mark (UTF-8 BOM, or UTF-16), and a good
+        LUT so saved was refused as "may be damaged". Each encoding, with
+        Windows line endings too, must read exactly as the plain file does."""
+        plain = self._cube(3, lambda r, g, b: (r * 0.9, g * 0.8, b * 0.7), self.BBC_LIKE)
+        text = Path(plain).read_text(encoding='utf-8')
+        want = m.read_cube(plain)
+        for name, data in {
+                'utf8-bom': b'\xef\xbb\xbf' + text.encode('utf-8'),
+                'utf8-bom-crlf': b'\xef\xbb\xbf' + text.replace('\n', '\r\n').encode('utf-8'),
+                'utf16-le': text.encode('utf-16'),
+                'utf16-be': b'\xfe\xff' + text.encode('utf-16-be'),
+                'crlf': text.replace('\n', '\r\n').encode('utf-8')}.items():
+            p = os.path.join(self.tmp, name + '.cube')
+            Path(p).write_bytes(data)
+            got = m.read_cube(p)
+            self.assertTrue((got['table'] == want['table']).all(), name)
+            for k in ('size', 'levels', 'does', 'title', 'notice', 'output_transfer'):
+                self.assertEqual(got[k], want[k], f'{name}: {k}')
+
     def test_a_plain_cube_suggests_nothing(self):
         c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b)))
         self.assertIsNone(c['levels'])

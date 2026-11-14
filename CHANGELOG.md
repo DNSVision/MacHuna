@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.22.1 — 2026-11-14
+
+**A LUT saved by a Windows tool is read.** MacHuna 2.11.1 pins it.
+
+### Fixed
+- **`read_cube` reads a .cube saved with a byte-order mark** (UTF-8 with BOM, or UTF-16, as Notepad and other Windows tools save). Such a good LUT was refused as "may be damaged". Found while writing the PC 2.11 brief; refused safely before, never a wrong picture. Test `test_a_cube_saved_by_windows_tools_is_read` (failed first). Parity kit unchanged (72 of 72, with the new HDR cases).
+
 ## v1.22.0 — 2026-11-14
 
 **HDR: a user's own LUT on every route (Swift decision 78), and TGA/PNG sequences to SWS in BT.709.** MacHuna 2.11.0 pins it.

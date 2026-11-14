@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.22.0"
+VERSION = "1.22.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1467,9 +1467,13 @@ def read_cube(path: str) -> dict:
     can be used: a LUT applied half-read would be wrong without saying so."""
     import numpy as np
     try:
-        text = Path(path).read_text(encoding='utf-8', errors='replace')
+        raw = Path(path).read_bytes()
     except OSError as e:
         raise ValueError(f"Could not read the LUT file ({e.strerror}).") from None
+    # Notepad and other Windows tools save with a byte-order mark (UTF-8, or
+    # UTF-16); without this a good LUT so saved was refused as damaged.
+    text = raw.decode('utf-16' if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig',
+                      errors='replace')
     size, rows, title, comments = None, [], '', []
     dmin, dmax = [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]
     for n, raw in enumerate(text.splitlines(), 1):
