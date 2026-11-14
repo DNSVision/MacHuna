@@ -769,6 +769,17 @@ are what is left in `DNSVision/MacHuna-Swift`. None blocks anything.
     verified); wrong levels: mean 5.3, 43% over 2 codes, FAIL. **Their HDR render has the wipe shape
     baked in** (black where the card has gone, frames 1-23 and 72-83) while their SDR fill does not:
     those pixels hold different pictures, not different colours, and the check skips them (14%).
+  - **HDR ITEM 4 TEST STANDARD (agreed with David 2026-11-14: "we are messing with the conversion engine so
+    we need to be sure"; written BEFORE the route code).** One engine harness (`TestHdrLutEveryRoute`) runs every
+    source (clip, TGA sequence, still, SWS, EIF) to every output it can go to, each three ways: (1) no LUT = today
+    byte for byte (plus the parity kit); (2) identity LUT = no LUT (picture, key, sound); (3) a known LUT (halve
+    everything) = the result worked out independently from the no-LUT output by the maths, within 1-2 codes where
+    a format is 8-bit, key byte-identical; (4) an identity table that recodes BT.709 to BT.2020 leaves TGA/MOV
+    pictures the same (proves the BT.2020 decode) and moves SWS/EIF values to the BT.2020 coding; (5) MOV labelled
+    HLG/BT.2020, Stop stops, the log names the LUT, an already-HDR source is refused. Every check fails before its
+    route exists and is falsified by breaking the route; then suite, parity kit, self-test, and the broadcaster's
+    pair through every route that can take it. Sources in-gamut (smooth gradient + ramp key): test bars and the
+    self-test clips hold colours no RGB can, which any LUT clips.
   - **2026-11-14, HDR item 2 BUILT: clips to SWS and EIF with a LUT** (`convert_clip(..., lut=)`,
     `convert_clip_to_eif(..., lut=)`, lut = {'path', 'levels', 'name'}; `_lut_for` reads it and logs "HDR:
     <name> (SDR → HLG), full range, picture only (the key is untouched)"; `convert_to_v210(..., lut=)` runs
