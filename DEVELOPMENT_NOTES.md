@@ -103,7 +103,7 @@ change reaches MacHuna for Mac unless: the full suite passes (pytest and unittes
 change; the notarised build passes `--selftest` and `Scripts/stdin-race.py`; David tests it; David types the
 version. PC-motivated fixes must leave all 44 Mac cases identical or they do not ship.
 
-**NEXT RELEASE (David, 2026-11-14): K-Frame EIF numbers start at 1000, so the four digits never start with a 0.**
+**PARKED (David, 2026-11-14: "park this until I've confirmed it"): K-Frame EIF numbers start at 1000, so the four digits never start with a 0.**
 Today an EIF is numbered 1-9999 (engine `validate_bespoke_ids`, BESPOKE_MODE_EIF) and written <NNNN>.eif, so 1 is
 0001.eif; the app seeds the first row with 1 (or the highest number + 1, `ConversionView.autofill`). To settle with
 David before building: the range (1000-9999, or 1000-1999) and whether 0xxx is refused or only no longer the
