@@ -3309,6 +3309,152 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestHdrLutOnTga(unittest.TestCase):
+    """HDR item 4c (decision 78): every TGA route ends in a folder of TGAs,
+    and `_lut_tga_folder` puts the LUT on their colour: alpha untouched, the
+    header kept byte for byte (a compressed frame written back uncompressed,
+    the form both desks were proven with), and the picture exactly what the
+    maths says, worked out here in closed form."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.ff = m._get_ffmpeg_path('ffmpeg')
+        if not shutil.which('ffmpeg') and not os.path.exists(cls.ff):
+            raise unittest.SkipTest('ffmpeg not available')
+        cls.tmp = tempfile.mkdtemp()
+        q = lambda *a: None
+        clip = os.path.join(cls.tmp, 'GRAD.mov')
+        subprocess.run([cls.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'gradients=s=1920x1080:c0=0xC03030:c1=0x3060C0:x0=0:y0=0:x1=1919:y1=1079:r=25:d=0.08',
+                        '-vf', "format=yuva444p10le,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='X*255/W',"
+                               "setparams=range=tv:colorspace=bt709",
+                        '-c:v', 'prores_ks', '-profile:v', '4', clip], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(cls.tmp, 'sws'); os.makedirs(d)
+        m.convert_clip(clip, 1, d, video_standard='1080p25', include_audio=False, split_fat32=False, log=q)
+        sws = os.path.join(d, '1.SWS')
+        eif = m.convert_clip_to_eif(clip, cls.tmp, log=q, out_name='0001')
+        cls.folders = {}
+        def folder_of(base):
+            subs = [os.path.join(base, x) for x in os.listdir(base) if os.path.isdir(os.path.join(base, x))]
+            return subs[0] if subs else base
+        for tag, make in (
+                ('clip-kframe', lambda o: m._hula_convert_mov_to_tga(clip, o, m.HULA_TARGET_KFRAME_TGA, '1080p25', log=q)),
+                ('clip-sony', lambda o: m._hula_convert_mov_to_tga(clip, o, m.HULA_TARGET_SONY_TGA, '1080p25',
+                                                                    clip_name='GRAD', log=q)),
+                ('sws-sony', lambda o: m._hula_run_batch([sws], o, m.HULA_TARGET_SONY_TGA, '1080p25',
+                                                          clip_name='GRAD', log=q)),
+                ('eif-kframe', lambda o: m._hula_run_batch([eif], o, m.HULA_TARGET_KFRAME_TGA, '1080p25', log=q)),
+                ('rle', None), ('rle24', None)):
+            o = os.path.join(cls.tmp, tag); os.makedirs(o)
+            if make:
+                make(o)
+                cls.folders[tag] = folder_of(o)
+            else:
+                # As the bridge writes a clip's TGAs: ffmpeg's encoder, which
+                # compresses (RLE) by default.
+                subprocess.run([cls.ff, '-y', '-v', 'error', '-i', clip,
+                                '-pix_fmt', 'bgr24' if tag == 'rle24' else 'bgra',
+                                os.path.join(o, '%04d.tga')], check=True, stdin=subprocess.DEVNULL)
+                cls.folders[tag] = o
+        def cube(name, fn):
+            n = 9
+            lines = [f'LUT_3D_SIZE {n}']
+            for b in range(n):
+                for g in range(n):
+                    for r in range(n):
+                        lines.append('%.6f %.6f %.6f' % fn(r / (n - 1), g / (n - 1), b / (n - 1)))
+            p = os.path.join(cls.tmp, name + '.cube'); Path(p).write_text('\n'.join(lines) + '\n')
+            return m.read_cube(p)
+        cls.ident = cube('ident', lambda r, g, b: (r, g, b))
+        cls.half = cube('half', lambda r, g, b: (r / 2, g / 2, b / 2))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def setUp(self):
+        self.addCleanup(m.clear_stop)
+
+    def copy(self, tag):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        out = os.path.join(d, 'f')
+        shutil.copytree(self.folders[tag], out)
+        return out
+
+    @staticmethod
+    def pictures(folder):
+        import numpy as np
+        from PIL import Image
+        out = {}
+        for f in sorted(os.listdir(folder)):
+            if f.lower().endswith('.tga'):
+                with Image.open(os.path.join(folder, f)) as img:
+                    out[f] = (np.array(img.convert('RGBA')), Path(folder, f).read_bytes())
+        return out
+
+    def test_the_folders_hold_both_kinds_of_tga(self):
+        kinds = {Path(self.folders[t], f).read_bytes()[2] for t in self.folders
+                 for f in os.listdir(self.folders[t]) if f.endswith('.tga')}
+        self.assertEqual(kinds, {2, 10}, 'the test needs uncompressed and compressed TGAs')
+
+    def test_an_identity_lut_changes_no_pixel_and_keeps_the_header(self):
+        import numpy as np
+        for tag in self.folders:
+            with self.subTest(folder=tag):
+                before = self.pictures(self.folders[tag])
+                d = self.copy(tag)
+                self.assertGreater(m._lut_tga_folder(d, self.ident, 'full'), 0)
+                after = self.pictures(d)
+                self.assertEqual(set(before), set(after))
+                for f, (pix, raw) in before.items():
+                    apix, araw = after[f]
+                    self.assertTrue(np.array_equal(pix, apix), f'{f}: pixels changed')
+                    hl = 18 + raw[0]
+                    self.assertEqual(araw[:2] + araw[3:hl], raw[:2] + raw[3:hl], f'{f}: header changed')
+                    self.assertEqual(araw[2], 2)
+
+    def test_a_known_lut_gives_the_closed_form_and_never_touches_alpha(self):
+        # Halving at full levels: x = (r*876+64)/1023 becomes x/2, so
+        # r' = r/2 - 32/876, on each of R, G and B.
+        import numpy as np
+        for tag in self.folders:
+            with self.subTest(folder=tag):
+                before = self.pictures(self.folders[tag])
+                d = self.copy(tag)
+                m._lut_tga_folder(d, self.half, 'full')
+                after = self.pictures(d)
+                for f, (pix, _) in before.items():
+                    want = np.clip(np.rint((pix[..., :3] / 255.0 / 2 - 32 / 876) * 255), 0, 255)
+                    got = after[f][0]
+                    self.assertLessEqual(float(np.abs(got[..., :3] - want).max()), 1.0, f'{f}: picture')
+                    self.assertTrue(np.array_equal(got[..., 3], pix[..., 3]), f'{f}: alpha changed')
+
+    def test_a_tga_footer_is_kept(self):
+        d = self.copy('clip-kframe')
+        f = sorted(x for x in os.listdir(d) if x.endswith('.tga'))[0]
+        p = os.path.join(d, f)
+        raw = Path(p).read_bytes()
+        Path(p).write_bytes(raw + struct.pack('<II', 0, 0) + m._TGA_FOOTER)
+        m._lut_tga_folder(d, self.ident, 'full')
+        self.assertTrue(Path(p).read_bytes().endswith(struct.pack('<II', 0, 0) + m._TGA_FOOTER))
+
+    def test_a_tga_machuna_never_writes_is_refused(self):
+        d = self.copy('clip-kframe')
+        f = sorted(x for x in os.listdir(d) if x.endswith('.tga'))[0]
+        p = os.path.join(d, f)
+        raw = bytearray(Path(p).read_bytes()); raw[2] = 1      # colour-mapped
+        Path(p).write_bytes(bytes(raw))
+        with self.assertRaises(ValueError):
+            m._lut_tga_folder(d, self.ident, 'full')
+
+    def test_stop_stops_it(self):
+        d = self.copy('rle')
+        m.request_stop()
+        with self.assertRaises(m.ConversionStopped):
+            m._lut_tga_folder(d, self.ident, 'full')
+
+
 class TestSequenceToSwsIsBt709(unittest.TestCase):
     """Found 2026-11-14 (HDR work): a TGA/PNG sequence to Kahuna SWS stated no
     colour matrix, so ffmpeg converted RGB with SD's BT.601 (pure red Y'CbCr

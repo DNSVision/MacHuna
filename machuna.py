@@ -1691,6 +1691,96 @@ def _lut_ycbcr_422(Y, Cb, Cr, cube: dict, levels: str):
     return y2, cb2[:, 0::2], cr2[:, 0::2]
 
 
+def apply_cube_rgb(rgb, cube: dict, levels: str):
+    """A LUT on R'G'B' (floats 0..1, any shape ending in 3): what a TGA
+    holds. The LUT acts on R'G'B' itself, so no colour matrix comes into it;
+    read at `levels` as `apply_cube_ycbcr` reads its R'G'B'. Floats out."""
+    import numpy as np
+    if levels not in ('full', 'video'):
+        raise ValueError(f"levels must be 'full' or 'video', not {levels!r}")
+    rgb = np.asarray(rgb, dtype=np.float64)
+    shape = rgb.shape
+    flat = rgb.reshape(-1, 3)
+    keys, first, back = np.unique(np.rint(flat * 4080).astype(np.int64) @ np.array([1 << 26, 1 << 13, 1]),
+                                  return_index=True, return_inverse=True)
+    x = flat[first]
+    if levels == 'full':
+        x = (x * 876 + 64) / 1023
+    lo, hi = np.array(cube['domain_min']), np.array(cube['domain_max'])
+    out = _cube_tetrahedral(cube['table'], (x - lo) / (hi - lo))
+    if levels == 'full':
+        out = (out * 1023 - 64) / 876
+    return out[back.ravel()].reshape(shape)
+
+
+_TGA_FOOTER = b'TRUEVISION-XFILE.\x00'
+_LUT_TGA_NOTE = ("  HDR to TGA: the frames hold the LUT's R'G'B' (HDR). How a desk turns a TGA into "
+                 "its own colour has not yet been checked with HDR on a desk.")
+
+
+def _lut_tga_folder(folder: str, cube: dict, levels: str, log=print) -> int:
+    """A LUT on the colour of every TGA in `folder` (decision 78, item 4c),
+    alpha untouched. Every TGA route ends in such a folder, so this one step
+    serves them all. The header is kept byte for byte; a compressed (RLE)
+    frame is written back uncompressed, the form both desks were proven with
+    (K-Frame TGA and Sony TGA from an SWS), so only its type byte changes. A
+    TGA 2.0 footer with no extension area is kept; anything else MacHuna did
+    not write is refused rather than guessed. Stop is checked per frame.
+    Returns the number of frames changed."""
+    import numpy as np
+    from PIL import Image
+    names = sorted(f for f in os.listdir(folder) if f.lower().endswith('.tga'))
+    for name in names:
+        _check_stop()
+        path = os.path.join(folder, name)
+        raw = Path(path).read_bytes()
+        idlen, cmap, kind, bpp, desc = raw[0], raw[1], raw[2], raw[16], raw[17]
+        w, h = struct.unpack_from('<HH', raw, 12)
+        if cmap != 0 or kind not in (2, 10) or bpp not in (24, 32):
+            raise ValueError(f"{name}: a TGA MacHuna did not write (type {kind}, {bpp}-bit), so HDR "
+                             f"cannot be applied to it.")
+        tail = b''
+        if raw.endswith(_TGA_FOOTER):
+            ext_off, dev_off = struct.unpack_from('<II', raw, len(raw) - 26)
+            if ext_off or dev_off:
+                raise ValueError(f"{name}: its TGA footer points to extra areas MacHuna does not keep.")
+            tail = raw[-26:]
+        with Image.open(path) as img:
+            img.load()
+            pix = np.array(img.convert('RGBA' if bpp == 32 else 'RGB'))
+        if not desc & 0x20:                     # stored bottom row first
+            pix = pix[::-1]
+        rgb = apply_cube_rgb(pix[..., :3].astype(np.float64) / 255.0, cube, levels)
+        pix = pix.copy()
+        pix[..., :3] = np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+        order = [2, 1, 0, 3] if bpp == 32 else [2, 1, 0]      # TGA stores BGR(A)
+        body = np.ascontiguousarray(pix[..., order]).tobytes()
+        head = bytearray(raw[:18 + idlen])
+        head[2] = 2
+        tmp = path + '.lut'
+        Path(tmp).write_bytes(bytes(head) + body + tail)
+        os.replace(tmp, path)
+    return len(names)
+
+
+def lut_tga_folder(folder: str, lut, log=print) -> int:
+    """The bridge's LUT step for a finished TGA folder (decision 78, item 4c):
+    `lut` is {'path', 'levels', 'name'} or None. Said in the log, with the
+    note that HDR to TGA is not yet checked on a desk."""
+    lutc = _lut_for(lut, log)
+    if not lutc:
+        return 0
+    log(_LUT_TGA_NOTE)
+    return _lut_tga_folder(folder, *lutc, log=log)
+
+
+def lut_refuses(lut, source: str, kind: str) -> None:
+    """Before a row starts: the already-HDR refusal, for every route at once.
+    A clip labelled BT.2020 given a LUT that expects SDR raises ValueError."""
+    if lut and kind == 'clip':
+        _lut_for(lut, lambda *a: None, get_video_info(source), source)
+
+
 _LUT_422_NOTE = ("  HDR from an SWS or EIF: its colour is already halved (4:2:2), so fine colour "
                  "detail can differ slightly from an HDR version made from the original clip. "
                  "For the closest match, convert the original.")
