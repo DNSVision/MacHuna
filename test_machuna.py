@@ -3330,6 +3330,179 @@ class TestHdrLut(unittest.TestCase):
         self.assertAlmostEqual(float(ocr[0]), 512 + 896 * (R2 - Y2) / (2 * (1 - kr)) * 1023 / 876, places=4)
 
 
+class TestHdrLutSpeed(unittest.TestCase):
+    """HDR speed (2026-11-15). A 3 s camera-like clip took 169 s to an SWS
+    with a LUT on the M5 (1.3 s without), and as long on the PC: about a
+    second a frame, most of it in the tetrahedral step masking each of its six
+    cases over the whole frame. Now each point's case is found once, the
+    colours are grouped by one plain sort, and frames go through on threads
+    in order. The output must not move by a bit: the 2.11.x maths is kept
+    here as the reference."""
+
+    @staticmethod
+    def _reference_tetrahedral(table, rgb):
+        """`_cube_tetrahedral` as released in engine v1.22.0 / v1.22.1."""
+        n = table.shape[0]
+        x = np.clip(rgb, 0.0, 1.0) * (n - 1)
+        i = np.minimum(np.floor(x).astype(np.int64), n - 2)
+        f = x - i
+        r, g, b = i[:, 0], i[:, 1], i[:, 2]
+        fr, fg, fb = f[:, 0:1], f[:, 1:2], f[:, 2:3]
+
+        def at(dr, dg, db):
+            return table[b + db, g + dg, r + dr]
+        c000, c111 = at(0, 0, 0), at(1, 1, 1)
+        out = np.empty_like(rgb)
+        cases = (((fr >= fg) & (fg >= fb))[:, 0], (fr, fg, fb), (1, 0, 0), (1, 1, 0)), \
+                (((fr >= fb) & (fb > fg))[:, 0], (fr, fb, fg), (1, 0, 0), (1, 0, 1)), \
+                (((fb > fr) & (fr >= fg))[:, 0], (fb, fr, fg), (0, 0, 1), (1, 0, 1)), \
+                (((fg > fr) & (fr >= fb))[:, 0], (fg, fr, fb), (0, 1, 0), (1, 1, 0)), \
+                (((fg >= fb) & (fb > fr))[:, 0], (fg, fb, fr), (0, 1, 0), (0, 1, 1)), \
+                (((fb > fg) & (fg > fr))[:, 0], (fb, fg, fr), (0, 0, 1), (0, 1, 1))
+        done = np.zeros(len(rgb), dtype=bool)
+        for sel, (w1, w2, w3), p1, p2 in cases:
+            sel = sel & ~done
+            if not sel.any():
+                continue
+            done |= sel
+            a, c = at(*p1)[sel], at(*p2)[sel]
+            out[sel] = (c000[sel] + w1[sel] * (a - c000[sel]) + w2[sel] * (c - a)
+                        + w3[sel] * (c111[sel] - c))
+        return out
+
+    @staticmethod
+    def _table(n=17):
+        g = np.linspace(0, 1, n)
+        b, gg, r = np.meshgrid(g, g, g, indexing='ij')
+        return np.stack([r ** 0.8 * 0.9 + gg * 0.05, gg ** 1.3, (b + r * gg) / 2], axis=-1)
+
+    def _inputs(self, n):
+        rng = np.random.default_rng(11)
+        g = np.linspace(0, 1, n)
+        a = rng.random(30000)
+        return {'random': rng.random((300000, 3)),
+                'grid points': np.stack(np.meshgrid(g, g, g), -1).reshape(-1, 3),
+                'all three equal': np.repeat(rng.random((30000, 1)), 3, 1),
+                'two equal': np.concatenate([np.c_[a, a, rng.random(30000)], np.c_[a, rng.random(30000), a],
+                                             np.c_[rng.random(30000), a, a]]),
+                'outside 0..1': rng.random((30000, 3)) * 1.6 - 0.3,
+                'quarter steps': rng.integers(0, 4 * (n - 1) + 1, (100000, 3)) / (4 * (n - 1)),
+                '10-bit codes': rng.integers(0, 1024, (200000, 3)) / 1023}
+
+    def test_the_lut_maths_is_bit_for_bit_the_released_maths(self):
+        for n in (2, 17, 33):
+            table = self._table(n)
+            for name, rgb in self._inputs(n).items():
+                with self.subTest(size=n, inputs=name):
+                    want = self._reference_tetrahedral(table, rgb)
+                    for chunk in (1 << 16, 1000):
+                        got = m._cube_tetrahedral(table, rgb, chunk)
+                        self.assertTrue(np.array_equal(want.view(np.uint64), got.view(np.uint64)),
+                                        f"{int((want != got).sum())} values differ")
+
+    def test_colours_are_grouped_exactly_as_np_unique_groups_them(self):
+        rng = np.random.default_rng(5)
+        y, cb, cr = (rng.normal(500, 40, 200000), rng.normal(512, 20, 200000), rng.normal(512, 20, 200000))
+        keys = (np.rint(y * 16).astype(np.int64) << 28) | (np.rint(cb * 16).astype(np.int64) << 14) \
+            | np.rint(cr * 16).astype(np.int64)
+        for name, k in {'a frame': keys, 'few colours': rng.integers(0, 40, 100000) << 20,
+                        'many repeats': np.rint(y / 2).astype(np.int64), 'one': np.array([7]),
+                        'negative (np.unique)': np.array([-3, 4, -3, 4]),
+                        'too big to share (np.unique)': np.array([1 << 62, 3, 1 << 62])}.items():
+            with self.subTest(name):
+                _, first, back = np.unique(k, return_index=True, return_inverse=True)
+                got_first, got_back = m._first_of_each(k)
+                self.assertTrue(np.array_equal(first, got_first))
+                self.assertTrue(np.array_equal(back.ravel(), got_back))
+
+    def test_the_lookup_is_several_times_faster_than_before(self):
+        import time
+        table, rgb = self._table(33), np.random.default_rng(2).random((1_000_000, 3))
+        def best(fn):
+            times = []
+            for _ in range(3):
+                t = time.perf_counter(); fn(table, rgb); times.append(time.perf_counter() - t)
+            return min(times)
+        before, now = best(self._reference_tetrahedral), best(m._cube_tetrahedral)
+        self.assertLess(now * 3, before, f"{now:.3f} s now against {before:.3f} s before")
+
+    def test_a_frame_needs_far_less_memory_than_before(self):
+        import tracemalloc
+        rng = np.random.default_rng(1)
+        cube = {'table': self._table(33), 'domain_min': [0, 0, 0], 'domain_max': [1, 1, 1],
+                'input_matrix': 'bt709', 'output_matrix': 'bt2020nc'}
+        y, cb, cr = (rng.normal(500, 40, (1080, 1920)), rng.normal(512, 20, (1080, 1920)),
+                     rng.normal(512, 20, (1080, 1920)))
+        tracemalloc.start()
+        try:
+            m.apply_cube_ycbcr(y, cb, cr, cube, 'full')
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        # 879 MB before; about 370 MB now. Four frames at once must suit an 8 GB PC.
+        self.assertLess(peak, 500e6, f"{peak / 1e6:.0f} MB for one frame")
+
+    def test_frames_come_back_in_order_from_several_threads(self):
+        import threading, time, random
+        seen = set()
+        def work(i):
+            seen.add(threading.current_thread().name)
+            time.sleep(random.random() / 200)
+            return i * i
+        self.assertEqual(list(m._in_order(work, range(60), workers=4)), [i * i for i in range(60)])
+        self.assertGreater(len(seen), 1, "the frames all went through one thread")
+        self.assertEqual(list(m._in_order(work, range(5), workers=1)), [0, 1, 4, 9, 16])
+
+    def test_an_error_stops_new_frames_and_is_reported(self):
+        started = []
+        def items():
+            for i in range(100):
+                started.append(i)
+                yield i
+        def work(i):
+            if i == 5:
+                raise ValueError("frame 5 is bad")
+            return i
+        with self.assertRaisesRegex(ValueError, "frame 5"):
+            list(m._in_order(work, items(), workers=3))
+        self.assertLess(len(started), 12, "frames kept starting after the error")
+
+    def test_stop_ends_it_within_a_few_frames(self):
+        import time
+        done = []
+        def items():
+            for i in range(1000):
+                m._check_stop()
+                if i == 10:
+                    m._stop_requested.set()
+                yield i
+        def work(i):
+            time.sleep(0.005)
+            done.append(i)
+            return i
+        try:
+            with self.assertRaises(m.ConversionStopped):
+                for _ in m._in_order(work, items(), workers=4):
+                    pass
+        finally:
+            m._stop_requested.clear()
+        time.sleep(0.1)
+        self.assertLess(max(done), 20, "frames went on after Stop")
+
+    def test_every_lut_frame_loop_uses_the_threads(self):
+        """Structural guard: a new LUT loop written frame by frame would be
+        five times slower again, and nothing else would notice."""
+        import ast
+        tree = ast.parse(Path(m.__file__).read_text(encoding='utf-8'))
+        funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for name in ('_fill_through_lut', '_rgba_through_lut', '_lut_v210_file', '_lut_rgba_file',
+                     '_lut_tga_folder', 'convert_tga_seq_to_eif', 'convert_sws_to_eif'):
+            with self.subTest(name):
+                calls = {c.func.id for c in ast.walk(funcs[name])
+                         if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+                self.assertIn('_in_order', calls)
+
+
 class TestHdrLutOnMov(unittest.TestCase):
     """HDR item 4d (decision 78): QuickTime MOV from SWS, EIF and TGA
     sequences with a LUT. The picture is checked decoded, as any player reads

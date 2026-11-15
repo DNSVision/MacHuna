@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.22.1"
+VERSION = "1.22.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -1548,38 +1548,85 @@ def read_cube(path: str) -> dict:
             'output_primaries': _CICP_PRIMARIES.get(cout[0]) if cout else None}
 
 
-def _cube_tetrahedral(table, rgb):
+# Tetrahedral interpolation's six cases, in the order they are tried (the
+# first that holds wins, so ties fall as they always have): which of the
+# fractions (fr, fg, fb) is each weight, and the two corners between c000 and
+# c111 as (dr, dg, db).
+_TET_CASE_W = ((0, 1, 2), (0, 2, 1), (2, 0, 1), (1, 0, 2), (1, 2, 0), (2, 1, 0))
+_TET_CASE_P1 = ((1, 0, 0), (1, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 0), (0, 0, 1))
+_TET_CASE_P2 = ((1, 1, 0), (1, 0, 1), (1, 0, 1), (1, 1, 0), (0, 1, 1), (0, 1, 1))
+
+
+def _tet_case_of():
+    """The case for each answer to (fr >= fg, fg >= fb, fr >= fb), as 4/2/1:
+    the six tests are those three and their opposites, so their first match
+    is fixed by the three alone."""
+    import numpy as np
+    out = []
+    for code in range(8):
+        A, B, C = bool(code & 4), bool(code & 2), bool(code & 1)
+        tests = (A and B, C and not B, not C and A, not A and C, B and not C, not B and not A)
+        out.append(tests.index(True) if True in tests else 0)
+    return np.array(out)
+
+
+_TET_CASE_OF = _tet_case_of()
+
+
+def _cube_tetrahedral(table, rgb, chunk: int = 1 << 16):
     """rgb (N, 3) in 0..1 through table [b][g][r] by tetrahedral interpolation,
     the method broadcast LUT boxes use; a value on a grid point comes out as
-    the table's own value. Outside 0..1 is clipped, as in any LUT."""
+    the table's own value. Outside 0..1 is clipped, as in any LUT.
+
+    Each point's case is found once and its corners read from the flat table
+    in one pass, `chunk` points at a time (2026-11-15: about ten times faster
+    than masking each case in turn over the whole frame, in a fraction of the
+    memory, and bit for bit the same: the same sums in the same order)."""
     import numpy as np
     n = table.shape[0]
-    x = np.clip(rgb, 0.0, 1.0) * (n - 1)
-    i = np.minimum(np.floor(x).astype(np.int64), n - 2)
-    f = x - i
-    r, g, b = i[:, 0], i[:, 1], i[:, 2]
-    fr, fg, fb = f[:, 0:1], f[:, 1:2], f[:, 2:3]
-
-    def at(dr, dg, db):
-        return table[b + db, g + dg, r + dr]
-    c000, c111 = at(0, 0, 0), at(1, 1, 1)
-    out = np.empty_like(rgb)
-    cases = (((fr >= fg) & (fg >= fb))[:, 0], (fr, fg, fb), (1, 0, 0), (1, 1, 0)), \
-            (((fr >= fb) & (fb > fg))[:, 0], (fr, fb, fg), (1, 0, 0), (1, 0, 1)), \
-            (((fb > fr) & (fr >= fg))[:, 0], (fb, fr, fg), (0, 0, 1), (1, 0, 1)), \
-            (((fg > fr) & (fr >= fb))[:, 0], (fg, fr, fb), (0, 1, 0), (1, 1, 0)), \
-            (((fg >= fb) & (fb > fr))[:, 0], (fg, fb, fr), (0, 1, 0), (0, 1, 1)), \
-            (((fb > fg) & (fg > fr))[:, 0], (fb, fg, fr), (0, 0, 1), (0, 1, 1))
-    done = np.zeros(len(rgb), dtype=bool)
-    for sel, (w1, w2, w3), p1, p2 in cases:
-        sel = sel & ~done
-        if not sel.any():
-            continue
-        done |= sel
-        a, c = at(*p1)[sel], at(*p2)[sel]
-        out[sel] = (c000[sel] + w1[sel] * (a - c000[sel]) + w2[sel] * (c - a)
-                    + w3[sel] * (c111[sel] - c))
+    flat = table.reshape(-1, 3)
+    w_of = np.array(_TET_CASE_W)
+    step = lambda corners: np.array([db * n * n + dg * n + dr for dr, dg, db in corners])
+    p1, p2, far = step(_TET_CASE_P1), step(_TET_CASE_P2), n * n + n + 1
+    out = np.empty(np.shape(rgb), dtype=np.float64)
+    for s in range(0, len(rgb), chunk):
+        x = np.clip(rgb[s:s + chunk], 0.0, 1.0) * (n - 1)
+        i = np.minimum(np.floor(x).astype(np.int64), n - 2)
+        f = x - i
+        fr, fg, fb = f[:, 0], f[:, 1], f[:, 2]
+        case = _TET_CASE_OF[(fr >= fg).view(np.uint8) * 4 + (fg >= fb).view(np.uint8) * 2
+                            + (fr >= fb).view(np.uint8)]
+        base = (i[:, 2] * n + i[:, 1]) * n + i[:, 0]
+        w = np.take(f.ravel(), np.arange(0, 3 * len(f), 3)[:, None] + w_of[case])
+        c000, c111 = np.take(flat, base, axis=0), np.take(flat, base + far, axis=0)
+        a, c = np.take(flat, base + p1[case], axis=0), np.take(flat, base + p2[case], axis=0)
+        out[s:s + chunk] = c000 + w[:, 0:1] * (a - c000) + w[:, 1:2] * (c - a) + w[:, 2:3] * (c111 - c)
     return out
+
+
+def _first_of_each(keys):
+    """What np.unique(keys, return_index=True, return_inverse=True) gives
+    after the keys: where each distinct key first appears, and for every
+    element which distinct key it is (in ascending key order). About four
+    times faster for a frame: the element's position rides in the low bits
+    of one plain sort, so the first of each key sorts first. Keys that would
+    not fit beside the position go to np.unique itself."""
+    import numpy as np
+    keys = np.asarray(keys).ravel()
+    n = len(keys)
+    ib = max(1, (n - 1).bit_length())
+    if n == 0 or keys.min() < 0 or int(keys.max()) >= 1 << (64 - ib):
+        _, first, back = np.unique(keys, return_index=True, return_inverse=True)
+        return first, back.ravel()
+    comp = np.sort((keys.astype(np.uint64) << np.uint64(ib)) | np.arange(n, dtype=np.uint64))
+    pos = (comp & np.uint64((1 << ib) - 1)).astype(np.int64)
+    k = comp >> np.uint64(ib)
+    new = np.empty(n, dtype=bool)
+    new[0] = True
+    np.not_equal(k[1:], k[:-1], out=new[1:])
+    back = np.empty(n, dtype=np.int64)
+    back[pos] = np.cumsum(new) - 1
+    return pos[new], back
 
 
 def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
@@ -1596,7 +1643,7 @@ def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
     y, cb, cr = (np.asarray(v, dtype=np.float64).ravel() for v in (y, cb, cr))
     keys = (np.rint(y * 16).astype(np.int64) << 28) | (np.rint(cb * 16).astype(np.int64) << 14) \
         | np.rint(cr * 16).astype(np.int64)
-    keys, first, back = np.unique(keys, return_index=True, return_inverse=True)
+    first, back = _first_of_each(keys)
     y, cb, cr = y[first], cb[first], cr[first]
 
     kr, kb = _MATRIX_K[cube['input_matrix']]
@@ -1705,8 +1752,7 @@ def apply_cube_rgb(rgb, cube: dict, levels: str):
     rgb = np.asarray(rgb, dtype=np.float64)
     shape = rgb.shape
     flat = rgb.reshape(-1, 3)
-    keys, first, back = np.unique(np.rint(flat * 4080).astype(np.int64) @ np.array([1 << 26, 1 << 13, 1]),
-                                  return_index=True, return_inverse=True)
+    first, back = _first_of_each(np.rint(flat * 4080).astype(np.int64) @ np.array([1 << 26, 1 << 13, 1]))
     x = flat[first]
     if levels == 'full':
         x = (x * 876 + 64) / 1023
@@ -1714,7 +1760,43 @@ def apply_cube_rgb(rgb, cube: dict, levels: str):
     out = _cube_tetrahedral(cube['table'], (x - lo) / (hi - lo))
     if levels == 'full':
         out = (out * 1023 - 64) / 876
-    return out[back.ravel()].reshape(shape)
+    return out[back].reshape(shape)
+
+
+def _lut_workers() -> int:
+    """How many frames go through a LUT at once (2026-11-15). Measured on the
+    M5: four threads gave 2.2 times one thread's speed and more gave nothing,
+    because the work is bound by memory, not the processor. Each frame in
+    hand needs about 370 MB, so four keep an 8 GB PC comfortable."""
+    return max(1, min(4, (os.cpu_count() or 2) - 1))
+
+
+def _in_order(work, items, workers: int = None):
+    """work(item) for each of `items`, several at once on threads, the
+    results given back in the items' order. `items` is read here, on the
+    caller's thread, so a file or pipe is only ever read from one thread and
+    Stop is checked as each item is read; the caller writes each result, so
+    nothing is written from a thread. At most `workers` + 1 items are in hand.
+    Once the caller stops (Stop, or an error), nothing more starts and frames
+    already started are dropped as they finish. With one worker, plain map."""
+    workers = workers or _lut_workers()
+    if workers == 1:
+        for item in items:
+            yield work(item)
+        return
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(workers, thread_name_prefix='machuna-lut')
+    pending = deque()
+    try:
+        for item in items:
+            pending.append(pool.submit(work, item))
+            if len(pending) > workers:
+                yield pending.popleft().result()
+        while pending:
+            yield pending.popleft().result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 _TGA_FOOTER = b'TRUEVISION-XFILE.\x00'
@@ -1734,8 +1816,13 @@ def _lut_tga_folder(folder: str, cube: dict, levels: str, log=print) -> int:
     import numpy as np
     from PIL import Image
     names = sorted(f for f in os.listdir(folder) if f.lower().endswith('.tga'))
-    for name in names:
-        _check_stop()
+
+    def frames():
+        for name in names:
+            _check_stop()
+            yield name
+
+    def work(name):
         path = os.path.join(folder, name)
         raw = Path(path).read_bytes()
         idlen, cmap, kind, bpp, desc = raw[0], raw[1], raw[2], raw[16], raw[17]
@@ -1761,8 +1848,11 @@ def _lut_tga_folder(folder: str, cube: dict, levels: str, log=print) -> int:
         body = np.ascontiguousarray(pix[..., order]).tobytes()
         head = bytearray(raw[:18 + idlen])
         head[2] = 2
+        return path, bytes(head) + body + tail
+
+    for path, data in _in_order(work, frames()):
         tmp = path + '.lut'
-        Path(tmp).write_bytes(bytes(head) + body + tail)
+        Path(tmp).write_bytes(data)
         os.replace(tmp, path)
     return len(names)
 
@@ -1801,12 +1891,20 @@ def _lut_rgba_file(path: str, width: int, height: int, cube: dict, levels: str):
     frame = width * height * 4
     frames = os.path.getsize(path) // frame
     data = np.memmap(path, dtype=np.uint8, mode='r+')
-    try:
+
+    def read():
         for i in range(frames):
             _check_stop()
-            px = np.array(data[i * frame:(i + 1) * frame]).reshape(height, width, 4)
-            rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 255.0, cube, levels)
-            px[..., :3] = np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+            yield i, np.array(data[i * frame:(i + 1) * frame]).reshape(height, width, 4)
+
+    def work(item):
+        i, px = item
+        rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 255.0, cube, levels)
+        px[..., :3] = np.clip(np.rint(rgb * 255.0), 0, 255).astype(np.uint8)
+        return i, px
+
+    try:
+        for i, px in _in_order(work, read()):
             data[i * frame:(i + 1) * frame] = px.reshape(-1)
         data.flush()
     finally:
@@ -1824,16 +1922,24 @@ def _rgba_through_lut(cmd_decode: list, cmd_encode: list, width: int, height: in
     dec = _sp.Popen(cmd_decode, stdout=_sp.PIPE, stderr=_sp.DEVNULL, stdin=_sp.DEVNULL)
     enc = _sp.Popen(cmd_encode, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.PIPE)
     frame = width * height * 4 * 2
-    try:
+
+    def read():
         while True:
             _check_stop()
             buf = dec.stdout.read(frame)
             if len(buf) < frame:
-                break
-            px = np.frombuffer(buf, '<u2').reshape(height, width, 4).copy()
-            rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 65535.0, cube, levels)
-            px[..., :3] = np.clip(np.rint(rgb * 65535.0), 0, 65535).astype('<u2')
-            enc.stdin.write(px.tobytes())
+                return
+            yield buf
+
+    def work(buf):
+        px = np.frombuffer(buf, '<u2').reshape(height, width, 4).copy()
+        rgb = apply_cube_rgb(px[..., :3].astype(np.float64) / 65535.0, cube, levels)
+        px[..., :3] = np.clip(np.rint(rgb * 65535.0), 0, 65535).astype('<u2')
+        return px.tobytes()
+
+    try:
+        for out in _in_order(work, read()):
+            enc.stdin.write(out)
         enc.stdin.close()
         if dec.wait() != 0 or enc.wait() != 0:
             raise RuntimeError("The HDR step could not make this MOV"
@@ -1859,14 +1965,22 @@ def _lut_v210_file(path: str, width: int, height: int, cube: dict, levels: str):
     plane = _v210_plane_size(width, height)
     frames = os.path.getsize(path) // plane
     data = np.memmap(path, dtype='>u4', mode='r+')
-    try:
+
+    def read():
         for i in range(frames):
             _check_stop()
-            words = np.array(data[i * plane // 4:(i + 1) * plane // 4]).astype(np.uint32)
-            Y, Cb, Cr = (v.astype(np.float64) for v in _v210_unpack(words, width, height))
-            y2, cb2, cr2 = _lut_ycbcr_422(Y, Cb, Cr, cube, levels)
-            to10 = lambda v: np.clip(np.rint(v), 4, 1019).astype(np.uint32)
-            _v210_pack(words, to10(y2), to10(cb2), to10(cr2), width, height)
+            yield i, np.array(data[i * plane // 4:(i + 1) * plane // 4]).astype(np.uint32)
+
+    def work(item):
+        i, words = item
+        Y, Cb, Cr = (v.astype(np.float64) for v in _v210_unpack(words, width, height))
+        y2, cb2, cr2 = _lut_ycbcr_422(Y, Cb, Cr, cube, levels)
+        to10 = lambda v: np.clip(np.rint(v), 4, 1019).astype(np.uint32)
+        _v210_pack(words, to10(y2), to10(cb2), to10(cr2), width, height)
+        return i, words
+
+    try:
+        for i, words in _in_order(work, read()):
             data[i * plane // 4:(i + 1) * plane // 4] = words
         data.flush()
     finally:
@@ -1896,17 +2010,24 @@ def _fill_through_lut(cmd_decode: list, output_path: str, width: int, height: in
                      '-f', 'rawvideo', '-vcodec', 'v210', output_path],
                     stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.PIPE)
     frame = width * height * 3 * 2
-    try:
+
+    def read():
         while True:
             _check_stop()
             buf = dec.stdout.read(frame)
             if len(buf) < frame:
-                break
-            p = np.frombuffer(buf, '<u2').reshape(3, height, width).astype(np.float64) / 64
-            y, cb, cr = apply_cube_ycbcr(p[0], p[1], p[2], cube, levels)
-            out = np.stack([y, cb, cr])
-            out = np.clip(np.rint(out * 64), 4 * 64, 1019 * 64 + 63).astype('<u2')
-            enc.stdin.write(out.tobytes())
+                return
+            yield buf
+
+    def work(buf):
+        p = np.frombuffer(buf, '<u2').reshape(3, height, width).astype(np.float64) / 64
+        y, cb, cr = apply_cube_ycbcr(p[0], p[1], p[2], cube, levels)
+        out = np.stack([y, cb, cr])
+        return np.clip(np.rint(out * 64), 4 * 64, 1019 * 64 + 63).astype('<u2').tobytes()
+
+    try:
+        for out in _in_order(work, read()):
+            enc.stdin.write(out)
         enc.stdin.close()
         if dec.wait() != 0 or enc.wait() != 0:
             raise RuntimeError("The HDR step could not convert this clip"
@@ -3909,14 +4030,21 @@ def convert_tga_seq_to_eif(tga_files: list, dest_dir: str, clip_name: str,
                         img = img.resize((1920, 1080), Image.BILINEAR)
                 return np.array(img.convert('RGBA'))
 
-            for i, frame in enumerate(plan):
-                if cancel_event and cancel_event.is_set():
-                    raise _EifCancelled()
+            def frames():
+                for frame in plan:
+                    if cancel_event and cancel_event.is_set():
+                        raise _EifCancelled()
+                    yield frame
+
+            def encode(frame):
                 rgba = rgba_of(frame[0])
                 if len(frame) == 2:
                     # Woven (TFF): the bottom field's lines from the next TGA.
                     rgba[1::2] = rgba_of(frame[1])[1::2]
-                u0, u1, u2 = _encode_eif_frame_from_rgba(rgba, lut=lutc)
+                return _encode_eif_frame_from_rgba(rgba, lut=lutc)
+
+            # With a LUT, several frames at once (`_in_order`); without, one by one as ever.
+            for i, (u0, u1, u2) in enumerate(_in_order(encode, frames(), None if lutc else 1)):
                 out_fh.write(u0); out_fh.write(u1); out_fh.write(u2)
                 if (i + 1) % 10 == 0 or i + 1 == frame_count:
                     log(f"  Frame {i + 1}/{frame_count}")
@@ -4028,15 +4156,23 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
         with open_sws(sws_path) as sws_fh, _open_eif_output(dest_path) as out:
             out.write(header)
             out.write(clear * starts)
-            for n, i in enumerate(src_index):
-                if cancel_event and cancel_event.is_set():
-                    raise _EifCancelled()
-                sws_fh.seek(fill_off + i * h.plane_size)
-                fill_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+            def planes():
+                for i in src_index:
+                    if cancel_event and cancel_event.is_set():
+                        raise _EifCancelled()
+                    sws_fh.seek(fill_off + i * h.plane_size)
+                    fill = sws_fh.read(h.plane_size)
+                    key = None
+                    if h.has_key:
+                        sws_fh.seek(key_off + i * h.plane_size)
+                        key = sws_fh.read(h.plane_size)
+                    yield fill, key
+
+            def encode(item):
+                fill_yuv = _v210_plane_to_yuv(item[0], h.width, h.height, 1)[0]
                 key_yuv  = None
-                if h.has_key:
-                    sws_fh.seek(key_off + i * h.plane_size)
-                    key_yuv = _v210_plane_to_yuv(sws_fh.read(h.plane_size), h.width, h.height, 1)[0]
+                if item[1] is not None:
+                    key_yuv = _v210_plane_to_yuv(item[1], h.width, h.height, 1)[0]
 
                 if need_resize:
                     rgb   = _yuv_to_rgb8(fill_yuv)
@@ -4058,6 +4194,10 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
                         fill_yuv = np.stack([y2, np.repeat(cb2, 2, axis=1),
                                              np.repeat(cr2, 2, axis=1)], axis=-1)
                     u0, u1, u2 = _encode_eif_frame_from_yuv(fill_yuv, key_yuv)
+                return u0, u1, u2
+
+            # With a LUT, several frames at once (`_in_order`); without, one by one as ever.
+            for n, (u0, u1, u2) in enumerate(_in_order(encode, planes(), None if lutc else 1)):
                 out.write(u0); out.write(u1); out.write(u2)
                 if (n + 1) % 10 == 0 or n + 1 == out_count:
                     log(f"  Frame {n + 1}/{out_count}")

@@ -4,6 +4,17 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.22.2 — 2026-11-15
+
+**HDR is about ten times faster, with the same output to the bit.** MacHuna 2.11.2 pins it.
+
+### Fixed
+- **HDR took about a second a frame.** A 3 s camera-like clip to SWS took 169 s on the M5 with a LUT and 1.3 s without; the PC measured the same (104 s for a 3 s clip, 37 minutes for 60 s). The parity kit's clips are a fraction of a second, so start-up time hid it. Three changes, none of which moves a bit of the output:
+  - `_cube_tetrahedral` finds each point's case once (from three comparisons) and reads its corners from the flat table, a block of points at a time, instead of masking each of the six cases over the whole frame: about 9 times faster, and a frame's peak memory 879 MB to about 370 MB.
+  - `_first_of_each` groups a frame's colours with one plain sort, the position riding in the key's low bits, as `np.unique(return_index, return_inverse)` grouped them: about 4 times faster.
+  - `_in_order`: frames go through the LUT on up to four threads (`_lut_workers`), read and written on the caller's thread, in order; Stop is checked as each frame is read. In all seven LUT loops (`_fill_through_lut`, `_rgba_through_lut`, `_lut_v210_file`, `_lut_rgba_file`, `_lut_tga_folder`, and with a LUT only, `convert_tga_seq_to_eif` and `convert_sws_to_eif`). More threads gave nothing: the work is bound by memory.
+  `TestHdrLutSpeed`: the released maths kept as the reference, bit for bit on random, grid, tie, out-of-range and 10-bit inputs; grouping as np.unique; faster; under 500 MB a frame; in order; an error and Stop end it; every LUT loop threaded. The speed and memory tests failed on v1.22.1; six deliberate breaks were all caught. Parity kit 72 of 72 unchanged.
+
 ## v1.22.1 — 2026-11-14
 
 **A LUT saved by a Windows tool is read.** MacHuna 2.11.1 pins it.
