@@ -4190,6 +4190,133 @@ class TestHdrToSdrRefusals(unittest.TestCase):
         m.lut_refuses({'own': 'HLG', 'name': 'x'}, self._clip('PLAIN.mov', ''), 'clip')
 
 
+class TestClipToMovWithHdr(unittest.TestCase):
+    """Mac 2.12.0 (Swift decision 79, David 2026-11-16): a clip to QuickTime
+    MOV, which takes HDR both ways. Without a LUT it stays refused (a clip is
+    already a video file). With one, the clip keeps its own size, rate, key
+    and sound; only the colour changes, and the MOV is labelled as the LUT's
+    output says."""
+
+    W, H, N = 64, 36, 5
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(m.clear_stop)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+
+    def _clip(self, name, label, sound=True):
+        """A keyed ProRes 4444 clip, 25 fps: four colour bands (HLG white,
+        a mid grey, a saturated red, a dark blue) and a left-to-right key."""
+        import numpy as np, subprocess
+        px = np.zeros((self.H, self.W, 4), '<u2')
+        bands = [(0.75, 0.75, 0.75), (0.40, 0.40, 0.40), (0.70, 0.20, 0.15), (0.10, 0.15, 0.45)]
+        for i, c in enumerate(bands):
+            # R'G'B' 0..1 as codes 64..940, written as full-range 16-bit RGB
+            px[:, i * 16:(i + 1) * 16, :3] = np.rint(np.array(c) * 65535).astype('<u2')
+        px[..., 3] = np.rint(np.linspace(0, 65535, self.W)).astype('<u2')[None, :]
+        raw = os.path.join(self.tmp, name + '.rgba64')
+        Path(raw).write_bytes(px.tobytes() * self.N)
+        out = os.path.join(self.tmp, name)
+        cmd = [self.ff, '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-s', f'{self.W}x{self.H}',
+               '-r', '25', '-i', raw]
+        if sound:
+            cmd += ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=0.2']
+        cmd += ['-vf', 'setparams=' + label, '-c:v', 'prores_ks', '-profile:v', '4444',
+                '-pix_fmt', 'yuva444p10le'] + (['-c:a', 'pcm_s16le'] if sound else []) + ['-shortest', out]
+        subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
+        return out
+
+    HLG = 'color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc'
+    SDR = 'color_primaries=bt709:color_trc=bt709:colorspace=bt709'
+
+    def _frames(self, path):
+        import numpy as np, subprocess
+        raw = subprocess.run([self.ff, '-v', 'error', '-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'],
+                             capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
+        return np.frombuffer(raw, '<u2').reshape(-1, self.H, self.W, 4).astype(np.float64) / 65535
+
+    def _probe(self, path):
+        import json, subprocess
+        r = subprocess.run([m._get_ffmpeg_path('ffprobe'), '-v', 'error', '-show_streams', '-of', 'json', path],
+                           capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
+        return json.loads(r.stdout)['streams']
+
+    def test_machunas_own_hlg_to_sdr_keeps_everything_but_the_colour(self):
+        import numpy as np
+        src = self._clip('HLG.mov', self.HLG)
+        d = os.path.join(self.tmp, 'out')
+        lines = []
+        out = m.convert_clip_to_mov(src, d, 'GOAL', lut={'own': 'HLG', 'name': "MacHuna's own"},
+                                    log=lines.append)
+        self.assertEqual(out, os.path.join(d, 'GOAL.mov'))
+        v = [s for s in self._probe(out) if s['codec_type'] == 'video'][0]
+        self.assertEqual((v['width'], v['height'], v['r_frame_rate']), (self.W, self.H, '25/1'))
+        self.assertEqual((v.get('color_primaries'), v.get('color_transfer'), v.get('color_space')),
+                         ('bt709', 'bt709', 'bt709'))
+        self.assertTrue([s for s in self._probe(out) if s['codec_type'] == 'audio'], 'the clip lost its sound')
+        a, b = self._frames(src), self._frames(out)
+        self.assertEqual(len(a), len(b))
+        # The source decodes to the colours written (so a wrong BT.2020 matrix
+        # cannot hide by being wrong in the engine and in this test alike).
+        for i, c in enumerate([(0.75, 0.75, 0.75), (0.40, 0.40, 0.40), (0.70, 0.20, 0.15), (0.10, 0.15, 0.45)]):
+            self.assertLess(np.abs(a[0, 18, i * 16 + 8, :3] - np.array(c)).max() * 255, 1.0, f'band {i}')
+        want = m.machunas_own_to_sdr(a[..., :3], 'HLG')
+        self.assertLess(np.abs(b[..., :3] - want).max() * 255, 1.0, 'colour is not the maths')
+        self.assertLess(np.abs(b[..., 3] - a[..., 3]).max() * 255, 1.0, 'the key changed')
+        self.assertGreater(b[0, 0, 8, 0], 0.995, 'HLG 75% is not white')
+        self.assertTrue(any("MacHuna's own" in l for l in lines))
+
+    def test_a_file_lut_works_the_other_way_and_labels_the_mov_hdr(self):
+        n = 5
+        rows = ['# INPUT CICP: 1 1 1', '# OUTPUT CICP: 9 9 18', 'TITLE "SDR to HLG"', f'LUT_3D_SIZE {n}']
+        rows += ['%.6f %.6f %.6f' % (r / (n - 1) * 0.9, g / (n - 1) * 0.9, b / (n - 1) * 0.9)
+                 for b in range(n) for g in range(n) for r in range(n)]
+        cube = os.path.join(self.tmp, 's2h.cube')
+        Path(cube).write_text('\n'.join(rows) + '\n')
+        out = m.convert_clip_to_mov(self._clip('SDR.mov', self.SDR), os.path.join(self.tmp, 'o2'), 'UP',
+                                    lut={'path': cube, 'levels': 'full', 'name': 'up'}, log=lambda *a: None)
+        v = [s for s in self._probe(out) if s['codec_type'] == 'video'][0]
+        self.assertEqual((v.get('color_primaries'), v.get('color_transfer'), v.get('color_space')),
+                         ('bt2020', 'arib-std-b67', 'bt2020nc'))
+
+    def test_no_lut_and_the_wrong_clip_are_refused_with_nothing_written(self):
+        d = os.path.join(self.tmp, 'none')
+        with self.assertRaises(ValueError) as cm:
+            m.convert_clip_to_mov(self._clip('A.mov', self.SDR), d, 'A', lut=None, log=lambda *a: None)
+        self.assertIn('already a video file', str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            m.convert_clip_to_mov(self._clip('B.mov', self.SDR), d, 'B',
+                                  lut={'own': 'HLG', 'name': "MacHuna's own"}, log=lambda *a: None)
+        self.assertIn('already SDR', str(cm.exception))
+        self.assertFalse(os.path.exists(d) and os.listdir(d), 'something was written')
+
+    def test_clear_frames_no_sound_and_ignore_key(self):
+        import numpy as np
+        src = self._clip('C.mov', self.HLG, sound=False)
+        out = m.convert_clip_to_mov(src, os.path.join(self.tmp, 'o3'), 'C', lut={'own': 'HLG', 'name': 'x'},
+                                    clear_frames='both', log=lambda *a: None)
+        f = self._frames(out)
+        self.assertEqual(len(f), self.N + 2)
+        self.assertEqual(f[0, ..., 3].max(), 0.0, 'the first frame is not clear')
+        self.assertEqual(f[-1, ..., 3].max(), 0.0, 'the last frame is not clear')
+        self.assertFalse([s for s in self._probe(out) if s['codec_type'] == 'audio'])
+        out = m.convert_clip_to_mov(src, os.path.join(self.tmp, 'o4'), 'C', lut={'own': 'HLG', 'name': 'x'},
+                                    no_alpha=True, log=lambda *a: None)
+        v = [s for s in self._probe(out) if s['codec_type'] == 'video'][0]
+        self.assertTrue(v['pix_fmt'].startswith('yuv444p'), f"Ignore key kept an alpha channel: {v['pix_fmt']}")
+
+    def test_stop_stops_it(self):
+        src = self._clip('S.mov', self.HLG)
+        d = os.path.join(self.tmp, 'o5')
+        m.request_stop()
+        with self.assertRaises(m.ConversionStopped):
+            m.convert_clip_to_mov(src, d, 'S', lut={'own': 'HLG', 'name': 'x'}, log=lambda *a: None)
+        self.assertFalse(os.path.exists(os.path.join(d, 'S.mov')), 'a stopped MOV was left behind')
+
+
 class TestHdrLutOnClips(unittest.TestCase):
     """HDR item 2 (Swift decision 78): a clip to Kahuna SWS or K-Frame EIF
     with a LUT. The LUT changes the fill only, after every other step, so

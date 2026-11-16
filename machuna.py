@@ -1778,7 +1778,7 @@ def _lut_for(lut, log=print, info: dict = None, source: str = ''):
     wants = _TRANSFER_WORD.get(cube.get('input_transfer'))
     has = _clip_transfer(info) if info else None
     if wants in ('HLG', 'PQ') and has == 'SDR':
-        raise ValueError(f"{clip} is already SDR (labelled SDR), and {name} expects {wants}. "
+        raise ValueError(f"{clip} is already SDR, and {name} expects {wants}. "
                          f"Nothing was converted.")
     if wants in ('HLG', 'PQ') and has in ('HLG', 'PQ') and has != wants:
         raise ValueError(f"{clip} is labelled {has}, and {name} expects {wants}. Nothing was converted.")
@@ -7072,6 +7072,72 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
     return out_path
 
 
+def convert_clip_to_mov(input_path: str, dest_dir: str, out_name: str, lut: dict,
+                        include_audio: bool = True, sound_file: str = None,
+                        clear_frames: str = None, no_alpha: bool = False, log=print) -> str:
+    """A clip to a ProRes 4444 MOV through an HDR LUT or MacHuna's own HDR to
+    SDR (Mac 2.12.0, Swift decision 79). Only the colour changes: the clip
+    keeps its size, rate, frames (an interlaced clip stays as it is), key and
+    sound; the MOV is labelled as the LUT's output says. Without a LUT it is
+    refused: a clip is already a video file. Written beside its final name
+    and moved in only when whole, so Stop or a failure leaves nothing."""
+    if not lut:
+        raise ValueError(f"{os.path.basename(input_path)} is already a video file. QuickTime MOV "
+                         f"output from a clip is for HDR conversion: choose HDR first.")
+    info = get_video_info(input_path)
+    lutc = _lut_for(lut, log, info, input_path)       # the refusals, before anything is written
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    W, H, fps = info['width'], info['height'], info.get('fps', 25.0)
+    keyed = info.get('has_alpha', False) and not no_alpha
+    sound = sound_file or (input_path if include_audio and info.get('has_audio') else None)
+    starts, ends = _clear_counts(clear_frames)
+    vf = [_UNTAGGED_HD_AS_709] if _assume_709_and_say(info, log) else []
+    if starts or ends:
+        vf.append(f"format=rgba64le,tpad=start={starts}:stop={ends}:start_mode=add:stop_mode=add:"
+                  f"color=black{'@0' if keyed else ''}")
+        log(f"  Adding {'clear' if keyed else 'black'} frame(s): {starts} at the start, {ends} at the end")
+    log(f"  Clip to MOV: {os.path.basename(input_path)}, {W}x{H} at {fps:g}fps, colour only")
+    os.makedirs(dest_dir, exist_ok=True)
+    out_path = os.path.join(dest_dir, f"{out_name}.mov")
+    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    with tempfile.TemporaryDirectory() as tmp:
+        sound_in = []
+        if sound:
+            pcm = _sound_file_pcm24(sound, tmp, log)
+            if starts:
+                _pad_file(pcm, b'\0' * (_samples_per_frame(fps) * starts * 8), b'')
+            sound_in = ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2',
+                        '-i', pcm, '-map', '0:v', '-map', '1:a']
+        dec = ([ffmpeg, '-y', '-v', 'error', '-i', input_path, '-map', '0:v:0']
+               + (['-vf', ','.join(vf)] if vf else [])
+               + ['-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'])
+        try:
+            _rgba_through_lut(dec, _lut_mov_encode(W, H, fps, sound_in, bool(sound), no_alpha,
+                                                   lutc[0], part), W, H, *lutc)
+            os.replace(part, out_path)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+    log(f"  Done → {out_path}")
+    return out_path
+
+
+def _lut_mov_encode(W: int, H: int, fps: float, sound_in: list, has_sound: bool,
+                    no_alpha: bool, cube: dict, out_path: str) -> list:
+    """The ProRes 4444 encode for frames that came through a LUT as 16-bit
+    RGBA on its input, labelled as the LUT's output says. One place for the
+    sequence and clip routes, so the two cannot drift apart."""
+    primaries, trc, matrix = _lut_colour(cube)
+    return ([_get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le',
+             '-s', f'{W}x{H}', '-framerate', _fps_expr(fps), '-i', '-'] + sound_in
+            + ['-vf', f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
+            + ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', _prores_pix_fmt(no_alpha),
+               '-color_primaries', primaries, '-color_trc', trc, '-colorspace', matrix,
+               '-r', _fps_expr(fps)]
+            + (['-c:a', 'pcm_s24le', '-ar', str(EAF_SAMPLE_RATE)] if has_sound else [])
+            + [out_path])
+
+
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
                            fps: float, vf: str = None, out_fps: float = None,
                            log=print, sound_file: str = None,
@@ -7122,17 +7188,9 @@ def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
             # labelled as the LUT's output says.
             with Image.open(tga_files[0]) as im:
                 W, H = im.size
-            primaries, trc, matrix = _lut_colour(lutc[0])
             dec = ([ffmpeg, '-y', '-v', 'error'] + frames_in + (['-vf', vf] if vf else [])
                    + ['-r', _fps_expr(out_fps), '-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'])
-            enc = ([ffmpeg, '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le',
-                    '-s', f'{W}x{H}', '-framerate', _fps_expr(out_fps), '-i', '-'] + sound_in
-                   + ['-vf', f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
-                   + ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', _prores_pix_fmt(no_alpha),
-                      '-color_primaries', primaries, '-color_trc', trc, '-colorspace', matrix,
-                      '-r', _fps_expr(out_fps)]
-                   + (['-c:a', 'pcm_s24le', '-ar', str(EAF_SAMPLE_RATE)] if sound_file else [])
-                   + [out_path])
+            enc = _lut_mov_encode(W, H, out_fps, sound_in, bool(sound_file), no_alpha, lutc[0], out_path)
             _rgba_through_lut(dec, enc, W, H, *lutc)
             log(f"  Done → {out_path}")
             return out_path
