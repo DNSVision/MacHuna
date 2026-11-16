@@ -4028,6 +4028,168 @@ class TestHdrLutEveryRoute(unittest.TestCase):
         self.assertEqual(os.listdir(d), [], 'something was written')
 
 
+class TestMachunasOwnHdrToSdr(unittest.TestCase):
+    """Mac 2.12.0, Swift decision 79 (2026-11-16): HDR to SDR with no LUT,
+    "MacHuna's own". Measured against a broadcaster's SDR original and their
+    own HLG render of it (the BBC LUT): HLG inverse OETF as scene light,
+    HLG 75% = SDR white, BT.2020 to BT.709, each channel clipped, then the
+    curve 1/2.297, which gives back the BBC LUT's greys exactly. PQ is
+    brought to HLG's scene light by BT.2100's inverse OOTF (1000 cd/m2), so
+    the same picture in PQ or HLG comes out the same. Exact maths per
+    colour, never a table (tables bend saturated colours)."""
+
+    A, B, C = 0.17883277, 0.28466892, 0.55991073
+
+    def _hlg(self, scene):
+        import numpy as np
+        e = np.asarray(scene, dtype=np.float64)
+        return np.where(e <= 1 / 12, np.sqrt(3 * e), self.A * np.log(np.maximum(12 * e - self.B, 1e-12)) + self.C)
+
+    def _pq(self, nits):
+        import numpy as np
+        m1, m2, c1, c2, c3 = 0.1593017578125, 78.84375, 0.8359375, 18.8515625, 18.6875
+        y = np.power(np.asarray(nits, dtype=np.float64) / 10000, m1)
+        return np.power((c1 + c2 * y) / (1 + c3 * y), m2)
+
+    def test_greys_come_back_exactly_and_white_is_white(self):
+        import numpy as np
+        v = np.linspace(0, 1, 21)
+        e75 = (np.exp((0.75 - self.C) / self.A) + self.B) / 12
+        hlg = self._hlg(e75 * v ** 2.297)
+        out = m.machunas_own_to_sdr(np.repeat(hlg[:, None], 3, 1), 'HLG')
+        np.testing.assert_allclose(out[:, 0], v, atol=1e-9)
+        np.testing.assert_allclose(out, np.repeat(v[:, None], 3, 1), atol=1e-9)
+        self.assertAlmostEqual(float(m.machunas_own_to_sdr(np.array([[0.75] * 3]), 'HLG')[0, 0]), 1.0, 9)
+
+    def test_pq_and_hlg_of_the_same_picture_agree(self):
+        import numpy as np
+        rng = np.random.default_rng(3)
+        scene = rng.uniform(0, 0.4, (2000, 3))            # BT.2020 scene light, up to above white
+        hlg = self._hlg(scene)
+        ys = scene @ np.array([0.2627, 0.6780, 0.0593])
+        nits = 1000 * np.power(np.maximum(ys, 1e-12), 0.2)[:, None] * scene   # BT.2100 OOTF, 1000 cd/m2
+        a = m.machunas_own_to_sdr(hlg, 'HLG')
+        b = m.machunas_own_to_sdr(self._pq(nits), 'PQ')
+        np.testing.assert_allclose(a, b, atol=1e-6)
+        # HLG 75% (reference white) is 1000 * E^1.2 = 203.15 cd/m2: that much PQ is white.
+        e75 = (np.exp((0.75 - self.C) / self.A) + self.B) / 12
+        white = self._pq(np.array([[1000 * e75 ** 1.2] * 3]))
+        self.assertAlmostEqual(float(m.machunas_own_to_sdr(white, 'PQ')[0, 0]), 1.0, 6)
+
+    def test_out_of_gamut_and_highlights_stay_in_range(self):
+        import numpy as np
+        rng = np.random.default_rng(4)
+        out = m.machunas_own_to_sdr(rng.uniform(-0.1, 1.1, (5000, 3)), 'HLG')
+        self.assertTrue(np.isfinite(out).all())
+        self.assertGreaterEqual(out.min(), 0.0)
+        self.assertLessEqual(out.max(), 1.0)
+
+    def test_it_is_a_lut_to_every_route_and_says_what_it_does(self):
+        lines = []
+        cube, levels = m._lut_for({'own': 'HLG', 'name': "MacHuna's own"}, lines.append)
+        self.assertEqual(cube['does'], 'HLG → SDR')
+        self.assertEqual((cube['input_matrix'], cube['output_matrix']), ('bt2020nc', 'bt709'))
+        self.assertEqual(m._lut_colour(cube), ('bt709', 'bt709', 'bt709'))
+        self.assertIn("MacHuna's own (HLG → SDR)", lines[0])
+        self.assertEqual(m._lut_for({'own': 'PQ', 'name': "MacHuna's own"}, lambda *a: None)[0]['does'],
+                         'PQ → SDR')
+        with self.assertRaises(ValueError):
+            m._lut_for({'own': 'SDR'}, lambda *a: None)
+
+    def test_applied_through_a_route_it_is_the_exact_maths(self):
+        # Through the same two functions every route uses, on saturated
+        # colours too: exact, not interpolated.
+        import numpy as np
+        cube, levels = m._lut_for({'own': 'HLG', 'name': 'x'}, lambda *a: None)
+        rng = np.random.default_rng(5)
+        rgb = rng.integers(0, 256, (20000, 3)) / 255
+        np.testing.assert_allclose(m.apply_cube_rgb(rgb, cube, levels),
+                                   m.machunas_own_to_sdr(rgb, 'HLG'), atol=1e-12)
+        y = rng.integers(64, 941, 5000).astype(float)
+        cb = rng.integers(64, 961, 5000).astype(float)
+        cr = rng.integers(64, 961, 5000).astype(float)
+        Y, Cb, Cr = m.apply_cube_ycbcr(y, cb, cr, cube, levels)
+        kr, kb = 0.2627, 0.0593
+        Yn, Cbn, Crn = (y - 64) / 876, (cb - 512) / 896, (cr - 512) / 896
+        R = Yn + 2 * (1 - kr) * Crn; B = Yn + 2 * (1 - kb) * Cbn; G = (Yn - kr * R - kb * B) / (1 - kr - kb)
+        o = m.machunas_own_to_sdr(np.stack([R, G, B], 1), 'HLG')
+        kr, kb = 0.2126, 0.0722
+        Yo = kr * o[:, 0] + (1 - kr - kb) * o[:, 1] + kb * o[:, 2]
+        np.testing.assert_allclose(Y, Yo * 876 + 64, atol=1e-9)
+        np.testing.assert_allclose(Cr, (o[:, 0] - Yo) / (2 * (1 - kr)) * 896 + 512, atol=1e-9)
+
+
+class TestHdrToSdrRefusals(unittest.TestCase):
+    """Mac 2.12.0 (Swift decision 79): the mirror of decision 78's refusal.
+    A clip labelled SDR given anything that expects HDR (MacHuna's own or an
+    HDR to SDR LUT) is refused before anything is written; so is a clip
+    labelled PQ given HLG's, and the other way round. An unlabelled clip
+    stays the user's call."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+        n = 5
+        lines = ['# INPUT CICP: 9 9 18', '# OUTPUT CICP: 1 1 1', 'TITLE "HLG to SDR"', f'LUT_3D_SIZE {n}']
+        for b in range(n):
+            for g in range(n):
+                for r in range(n):
+                    lines.append('%.6f %.6f %.6f' % (r / (n - 1), g / (n - 1), b / (n - 1)))
+        p = os.path.join(self.tmp, 'h2s.cube')
+        Path(p).write_text('\n'.join(lines) + '\n')
+        self.file_lut = {'path': p, 'levels': 'full', 'name': 'Their HLG to SDR'}
+
+    def _clip(self, name, tags):
+        import subprocess
+        out = os.path.join(self.tmp, name)
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'smptehdbars=s=1920x1080:r=25:d=0.08',
+                        *(['-vf', 'setparams=' + tags] if tags else []),
+                        '-c:v', 'prores_ks', '-profile:v', '3', out], check=True, stdin=subprocess.DEVNULL)
+        want = {'color_primaries=bt709': 'bt709', 'color_trc=arib': 'arib-std-b67',
+                'color_trc=smpte2084': 'smpte2084', '': 'unknown'}
+        info = m.get_video_info(out)
+        self.assertEqual(info['color_transfer'],
+                         next(v for k, v in want.items() if k in tags or not k), f'{name} not labelled as meant')
+        return out
+
+    # As a filter, or ffmpeg leaves a MOV's transfer unlabelled.
+    SDR = 'color_primaries=bt709:color_trc=bt709:colorspace=bt709'
+    HLG = 'color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc'
+    PQ = 'color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc'
+
+    def _refused(self, clip, lut, words):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        for fn in (lambda: m.lut_refuses(lut, clip, 'clip'),
+                   lambda: m.convert_clip(clip, 1, d, video_standard='1080p25', include_audio=False,
+                                          split_fat32=False, log=lambda *a: None, lut=lut),
+                   lambda: m.convert_clip_to_eif(clip, d, log=lambda *a: None, out_name='0001', lut=lut)):
+            with self.assertRaises(ValueError) as cm:
+                fn()
+            for w in words:
+                self.assertIn(w, str(cm.exception))
+        self.assertEqual(os.listdir(d), [], 'something was written')
+
+    def test_an_sdr_clip_is_refused_by_anything_that_expects_hdr(self):
+        sdr = self._clip('SDR.mov', self.SDR)
+        self._refused(sdr, {'own': 'HLG', 'name': "MacHuna's own"}, ['SDR.mov', 'already SDR', 'expects HLG'])
+        self._refused(sdr, self.file_lut, ['already SDR', 'Their HLG to SDR', 'expects HLG'])
+
+    def test_a_pq_clip_is_refused_by_hlgs_and_the_other_way_round(self):
+        self._refused(self._clip('PQ.mov', self.PQ), {'own': 'HLG', 'name': "MacHuna's own"},
+                      ['labelled PQ', 'expects HLG'])
+        self._refused(self._clip('HLG.mov', self.HLG), {'own': 'PQ', 'name': "MacHuna's own"},
+                      ['labelled HLG', 'expects PQ'])
+
+    def test_the_right_clip_and_an_unlabelled_one_are_not_refused(self):
+        m.lut_refuses({'own': 'HLG', 'name': 'x'}, self._clip('HLG2.mov', self.HLG), 'clip')
+        m.lut_refuses(self.file_lut, self._clip('HLG3.mov', self.HLG), 'clip')
+        m.lut_refuses({'own': 'PQ', 'name': 'x'}, self._clip('PQ2.mov', self.PQ), 'clip')
+        m.lut_refuses({'own': 'HLG', 'name': 'x'}, self._clip('PLAIN.mov', ''), 'clip')
+
+
 class TestHdrLutOnClips(unittest.TestCase):
     """HDR item 2 (Swift decision 78): a clip to Kahuna SWS or K-Frame EIF
     with a LUT. The LUT changes the fill only, after every other step, so

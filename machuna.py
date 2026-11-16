@@ -798,6 +798,8 @@ def get_video_info(input_path: str) -> dict:
 
             # Colour matrix label, as written in the file ('unknown' if none)
             info['color_space'] = stream.get('color_space') or 'unknown'
+            # and its transfer (SDR, HLG or PQ), for the HDR refusals
+            info['color_transfer'] = stream.get('color_transfer') or 'unknown'
 
             # Interlace detection
             field_order = stream.get('field_order', 'progressive')
@@ -1655,7 +1657,7 @@ def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
     if levels == 'full':
         rgb = (rgb * 876 + 64) / 1023
     lo, hi = np.array(cube['domain_min']), np.array(cube['domain_max'])
-    out = _cube_tetrahedral(cube['table'], (rgb - lo) / (hi - lo))
+    out = _cube_lookup(cube, (rgb - lo) / (hi - lo))
     if levels == 'full':
         out = (out * 1023 - 64) / 876
     kr, kb = _MATRIX_K[cube['output_matrix']]
@@ -1665,25 +1667,128 @@ def apply_cube_ycbcr(y, cb, cr, cube: dict, levels: str):
     return tuple(v[back].reshape(shape) for v in res)
 
 
+def _cube_lookup(cube: dict, rgb):
+    """A LUT's answer for R'G'B' in its own 0..1 domain: MacHuna's own maths
+    worked out exactly, or a file's table by tetrahedral interpolation."""
+    if cube.get('maths'):
+        return cube['maths'](rgb)
+    return _cube_tetrahedral(cube['table'], rgb)
+
+
+# ── HDR to SDR with no LUT: "MacHuna's own" (Swift decision 79, 2026-11-16) ──
+#
+# Measured against a broadcaster's SDR original and their own HLG render of it
+# (the BBC LUT): scene light by HLG's inverse OETF, HLG 75% (BT.2408 reference
+# white) as SDR white, BT.2020 to BT.709 primaries, each channel clipped, then
+# the curve 1/2.297, which gives back the BBC LUT's greys exactly. Their real
+# clip came back 1.6 levels (of 255) out on average; the textbook route is
+# about 4.5. An approximation, said so to the user: a matching HDR to SDR LUT
+# is always better. PQ is brought to HLG's scene light by BT.2100's inverse
+# OOTF at 1000 cd/m2, so one picture in PQ or HLG comes out the same.
+_OWN_TRANSFER = {'HLG': 'arib-std-b67', 'PQ': 'smpte2084'}
+# BT.2020 to BT.709 linear, from the two standards' primaries and D65 to 12
+# places: each row sums to 1, so greys stay exactly grey.
+_M2020_TO_709 = ((1.660491002108, -0.587641138789, -0.072849863320),
+                 (-0.124550474522, 1.132899897126, -0.008349422604),
+                 (-0.018150763355, -0.100578898008, 1.118729661363))
+_HLG_A, _HLG_B, _HLG_C = 0.17883277, 0.28466892, 0.55991073
+_OWN_CURVE = 2.297
+
+
+def _hlg_scene(e):
+    import numpy as np
+    e = np.clip(e, 0.0, 1.0)
+    return np.where(e <= 0.5, e * e / 3, (np.exp((e - _HLG_C) / _HLG_A) + _HLG_B) / 12)
+
+
+def _pq_scene(e):
+    """PQ signal to the scene light HLG would carry for the same picture."""
+    import numpy as np
+    m1, m2, c1, c2, c3 = 0.1593017578125, 78.84375, 0.8359375, 18.8515625, 18.6875
+    p = np.power(np.clip(e, 0.0, 1.0), 1 / m2)
+    fd = np.power(np.maximum(p - c1, 0) / (c2 - c3 * p), 1 / m1) * 10.0     # display light, 1 = 1000 cd/m2
+    yd = fd @ np.array([0.2627, 0.6780, 0.0593])
+    return fd * np.power(np.maximum(yd, 1e-12), (1 - 1.2) / 1.2)[..., None]
+
+
+def machunas_own_to_sdr(rgb, transfer: str):
+    """MacHuna's own HDR to SDR: BT.2100 HLG or PQ R'G'B' (0..1 = codes
+    64..940, BT.2020) to SDR BT.709 R'G'B' (same scale), for each colour as
+    given, exactly. Shared by conversion and the player's HDR view."""
+    import numpy as np
+    if transfer not in _OWN_TRANSFER:
+        raise ValueError(f"MacHuna's own conversion is from HLG or PQ, not {transfer!r}.")
+    rgb = np.asarray(rgb, dtype=np.float64)
+    scene = _hlg_scene(rgb) if transfer == 'HLG' else _pq_scene(rgb)
+    white = float(_hlg_scene(np.array(0.75)))
+    lin = np.clip((scene / white) @ np.array(_M2020_TO_709).T, 0.0, 1.0)
+    return np.power(lin, 1 / _OWN_CURVE)
+
+
+def _own_cube(transfer: str) -> dict:
+    """MacHuna's own, as the dict a read .cube gives, so every route takes
+    it unchanged. Its domain is video levels (0..1 = 64..940) in and out."""
+    if transfer not in _OWN_TRANSFER:
+        raise ValueError(f"MacHuna's own conversion is from HLG or PQ, not {transfer!r}.")
+    return {'size': 0, 'table': None, 'maths': lambda x: machunas_own_to_sdr(x, transfer),
+            'domain_min': [0.0, 0.0, 0.0], 'domain_max': [1.0, 1.0, 1.0],
+            'title': f"MacHuna's own {transfer} to SDR", 'notice': '', 'levels': 'video',
+            'does': f'{transfer} → SDR', 'input_matrix': 'bt2020nc', 'output_matrix': 'bt709',
+            'input_transfer': _OWN_TRANSFER[transfer], 'output_transfer': 'bt709',
+            'output_primaries': 'bt709'}
+
+
+_SDR_TRANSFERS = ('bt709', 'smpte170m', 'bt470bg', 'bt470m', 'gamma22', 'gamma28', 'iec61966-2-1',
+                  'bt2020-10', 'bt2020-12')
+
+
+def _clip_transfer(info: dict):
+    """What a clip's transfer label says it is: 'SDR', 'HLG', 'PQ', or None
+    if it has none. A matrix label alone does not count: ffmpeg writes one
+    on clips that say nothing else."""
+    tf = info.get('color_transfer', 'unknown')
+    if tf in ('arib-std-b67', 'smpte2084'):
+        return _TRANSFER_WORD[tf]
+    return 'SDR' if tf in _SDR_TRANSFERS else None
+
+
 def _lut_for(lut, log=print, info: dict = None, source: str = ''):
     """The route's chosen LUT, `lut` = {'path', 'levels', 'name'} from the
-    app's preset, read and checked, and said in the log by name; None when
-    there is none. Returns (cube, levels) for the route.
+    app's preset, or {'own': 'HLG' | 'PQ', 'name'} for MacHuna's own HDR to
+    SDR (decision 79), read and checked, and said in the log by name; None
+    when there is none. Returns (cube, levels) for the route.
 
-    info: the source's `get_video_info`, when it has a colour label. A source
-    labelled BT.2020 (already HDR) given a LUT that expects SDR is refused,
-    before anything is written: converting it twice would ruin it."""
+    info: the source's `get_video_info`, when it has a colour label. Refused
+    before anything is written, as converting would ruin the picture: a
+    clip labelled BT.2020 (already HDR) given a LUT that expects SDR
+    (decision 78); a clip labelled SDR given one that expects HLG or PQ; a
+    clip labelled PQ given one that expects HLG, and the other way round."""
     if not lut:
         return None
-    cube = read_cube(lut['path'])
-    name = lut.get('name') or os.path.basename(lut['path'])
+    if lut.get('own'):
+        cube, levels = _own_cube(lut['own']), 'video'
+        name = lut.get('name') or "MacHuna's own"
+    else:
+        cube, levels = read_cube(lut['path']), lut['levels']
+        name = lut.get('name') or os.path.basename(lut['path'])
+    clip = os.path.basename(source) or 'This clip'
     if info and _is_hdr_labelled(info) and cube.get('input_transfer') == 'bt709':
-        raise ValueError(f"{os.path.basename(source) or 'This clip'} is already HDR (labelled BT.2020), "
+        raise ValueError(f"{clip} is already HDR (labelled BT.2020), "
                          f"and {name} expects SDR. Nothing was converted.")
-    log(f"  HDR: {lut.get('name') or os.path.basename(lut['path'])}"
-        f"{' (' + cube['does'] + ')' if cube['does'] else ''}, "
-        f"{'full' if lut['levels'] == 'full' else 'video'} range, picture only (the key is untouched)")
-    return cube, lut['levels']
+    wants = _TRANSFER_WORD.get(cube.get('input_transfer'))
+    has = _clip_transfer(info) if info else None
+    if wants in ('HLG', 'PQ') and has == 'SDR':
+        raise ValueError(f"{clip} is already SDR (labelled SDR), and {name} expects {wants}. "
+                         f"Nothing was converted.")
+    if wants in ('HLG', 'PQ') and has in ('HLG', 'PQ') and has != wants:
+        raise ValueError(f"{clip} is labelled {has}, and {name} expects {wants}. Nothing was converted.")
+    if lut.get('own'):
+        log(f"  HDR: {name} ({cube['does']}), MacHuna's own calculation, picture only (the key is untouched)")
+    else:
+        log(f"  HDR: {name}"
+            f"{' (' + cube['does'] + ')' if cube['does'] else ''}, "
+            f"{'full' if levels == 'full' else 'video'} range, picture only (the key is untouched)")
+    return cube, levels
 
 
 def _v210_layout(width: int, height: int):
@@ -1757,7 +1862,7 @@ def apply_cube_rgb(rgb, cube: dict, levels: str):
     if levels == 'full':
         x = (x * 876 + 64) / 1023
     lo, hi = np.array(cube['domain_min']), np.array(cube['domain_max'])
-    out = _cube_tetrahedral(cube['table'], (x - lo) / (hi - lo))
+    out = _cube_lookup(cube, (x - lo) / (hi - lo))
     if levels == 'full':
         out = (out * 1023 - 64) / 876
     return out[back].reshape(shape)
