@@ -8575,6 +8575,138 @@ class TestSeparateKey(unittest.TestCase):
         self.assertIn('320×180 and the key is 240×180', str(e.exception))
 
 
+class TestKeySlip(unittest.TestCase):
+    """Mac 2.12.0 item 5, key slip: a separate key out of sync with its fill
+    is shifted -10..+10 whole frames. The fill never moves (its frames, length
+    and sound). A key moved later (+N) leaves the first N frames with no key
+    (black: fully see-through); moved earlier (-N), the last N. Key frames
+    past the fill are dropped. Offset 0 is exactly today's merge. A one-frame
+    key, held for every frame, has nothing to slip. Each key frame here is a
+    different flat grey, so a shift cannot hide."""
+
+    N = 6
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix='keyslip_')
+        ffmpeg = m._get_ffmpeg_path('ffmpeg')
+        N = cls.N
+        quiet = lambda *a: None
+
+        def run(*args):
+            subprocess.run([ffmpeg, '-v', 'error', '-y'] + list(args), check=True,
+                           stdin=subprocess.DEVNULL)
+        cls.p = {}
+        cls.p['clip'] = os.path.join(cls.tmp, 'FILL.mov')
+        run('-f', 'lavfi', '-i', f'testsrc2=s=320x180:r=25,trim=end_frame={N}', '-f', 'lavfi', '-i',
+            f'sine=f=440:d={N / 25}:sample_rate=48000', '-c:v', 'prores_ks', '-profile:v', '3',
+            '-pix_fmt', 'yuv422p10le', '-c:a', 'pcm_s24le', '-shortest', cls.p['clip'])
+        fd = os.path.join(cls.tmp, 'FILLSEQ'); os.makedirs(fd)
+        for n in range(N):
+            Image.new('RGB', (320, 180), (200, 40 * n, 30)).save(os.path.join(fd, f'F_{n + 1:04d}.tga'))
+        cls.p['seq'] = sorted(os.path.join(fd, f) for f in os.listdir(fd))
+        big = os.path.join(cls.tmp, 'BIG.mov')
+        run('-f', 'lavfi', '-i', f'testsrc2=s=320x180:r=50,trim=end_frame={N}',
+            '-c:v', 'prores_ks', '-profile:v', '3', '-pix_fmt', 'yuv422p10le', big)
+        d = os.path.join(cls.tmp, 'sws'); os.makedirs(d)
+        cls.p['sws'] = m.convert_clip(big, 1, d, video_standard='1080p50', log=quiet)
+        cls.greys = [30 + 40 * n for n in range(N)]
+        for name, size in (('key', (320, 180)), ('key1080', (1920, 1080))):
+            kd = os.path.join(cls.tmp, name); os.makedirs(kd)
+            for n, g in enumerate(cls.greys):
+                Image.new('RGB', size, (g, g, g)).save(os.path.join(kd, f'K_{n + 1:04d}.tga'))
+            cls.p[name] = sorted(os.path.join(kd, f) for f in os.listdir(kd))
+        cls.p['still'] = os.path.join(cls.tmp, 'STILL.png')
+        Image.new('RGB', (320, 180), (128, 128, 128)).save(cls.p['still'])
+        # The same key as a video clip (Y'CbCr at video levels, where black is
+        # a different number from a TGA's).
+        cls.p['keyclip'] = os.path.join(cls.tmp, 'KEY.mov')
+        run('-framerate', '25', '-i', os.path.join(cls.tmp, 'key', 'K_%04d.tga'), '-c:v', 'prores_ks',
+            '-profile:v', '3', '-pix_fmt', 'yuv422p10le', cls.p['keyclip'])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _merge(self, kind, offset, key='key', still=False):
+        fill = self.p[kind] if kind != 'seq' else self.p['seq'][0]
+        files = self.p['seq'] if kind == 'seq' else None
+        k = self.p[key]
+        kw = {} if offset is None else {'key_offset': offset}
+        if key == 'keyclip':
+            return m.merge_separate_key(kind, fill, files, k, None, tempfile.mkdtemp(dir=self.tmp),
+                                        log=lambda *a: None, **kw)
+        return m.merge_separate_key(kind, fill, files, self.p['still'] if still else k[0],
+                                    None if still else k, tempfile.mkdtemp(dir=self.tmp),
+                                    log=lambda *a: None, **kw)
+
+    def _keys(self, kind, merged):
+        """The merged key, frame by frame, as one number each (the frames are flat)."""
+        if kind == 'sws':
+            h = m.SWSHeader(merged['path'])
+            with m.open_sws(merged['path']) as f:
+                f.seek(h.data_offset)
+                fill = f.read(h.plane_size * h.frame_count)
+                key = f.read(h.plane_size * h.frame_count)
+            ys = [int(round(float(m._v210_plane_to_yuv(key[i * h.plane_size:(i + 1) * h.plane_size],
+                                                         h.width, h.height, 1)[0][540, 960, 0])))
+                  for i in range(h.frame_count)]
+            return ys, fill
+        if kind == 'seq':
+            alphas = [int(np.asarray(Image.open(f).convert('RGBA'))[90, 160, 3]) for f in merged['files']]
+            fill = b''.join(np.asarray(Image.open(f).convert('RGB')).tobytes() for f in merged['files'])
+            return alphas, fill
+        raw = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', merged['path'],
+                              '-vf', 'alphaextract,format=gray', '-f', 'rawvideo', '-'],
+                             capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
+        frames = np.frombuffer(raw, np.uint8).reshape(-1, 180, 320)
+        fill = subprocess.run([m._get_ffmpeg_path('ffmpeg'), '-v', 'error', '-i', merged['path'],
+                               '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+                              capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
+        return [int(f[90, 160]) for f in frames], fill
+
+    def test_later_and_earlier_on_every_fill(self):
+        for kind, key, black in (('clip', 'key', 0), ('seq', 'key', 0), ('sws', 'key1080', 64),
+                                 ('clip', 'keyclip', 0), ('seq', 'keyclip', 0)):
+            with self.subTest(f'{kind} with {key}'):
+                k0, fill0 = self._keys(kind, self._merge(kind, 0, key))
+                k2, fill2 = self._keys(kind, self._merge(kind, 2, key))
+                km, fillm = self._keys(kind, self._merge(kind, -2, key))
+                self.assertEqual(len(k0), self.N)
+                self.assertEqual(len(set(k0)), self.N, f'the key frames are not told apart: {k0}')
+                self.assertEqual(k2, [black, black] + k0[:-2], 'moved later')
+                self.assertEqual(km, k0[2:] + [black, black], 'moved earlier')
+                self.assertEqual(fill2, fill0, 'the fill moved')
+                self.assertEqual(fillm, fill0, 'the fill moved')
+
+    def test_offset_zero_is_todays_merge(self):
+        for kind, key in (('clip', 'key'), ('seq', 'key'), ('sws', 'key1080')):
+            with self.subTest(kind):
+                self.assertEqual(self._keys(kind, self._merge(kind, None, key)),
+                                 self._keys(kind, self._merge(kind, 0, key)))
+
+    def test_a_one_frame_key_has_nothing_to_slip(self):
+        self.assertEqual(self._keys('clip', self._merge('clip', 3, still=True)),
+                         self._keys('clip', self._merge('clip', 0, still=True)))
+
+    def test_more_than_ten_frames_is_refused(self):
+        for bad in (11, -11):
+            with self.assertRaises(ValueError) as cm:
+                self._merge('clip', bad)
+            self.assertIn('10', str(cm.exception))
+
+    def test_save_key_saves_the_slipped_key(self):
+        a = os.path.join(self.tmp, 'SAVED0'); b = os.path.join(self.tmp, 'SAVED2')
+        quiet = lambda *x: None
+        m.save_key('sequence', self.p['seq'][0], self.p['seq'], a, 'K', key_path=self.p['key'][0],
+                   key_files=self.p['key'], log=quiet)
+        m.save_key('sequence', self.p['seq'][0], self.p['seq'], b, 'K', key_path=self.p['key'][0],
+                   key_files=self.p['key'], log=quiet, key_offset=2)
+        g = lambda d: [int(np.asarray(Image.open(os.path.join(d, f)).convert('L'))[90, 160])
+                       for f in sorted(os.listdir(d))]
+        self.assertEqual(g(b), [0, 0] + g(a)[:-2])
+
+
 class TestStripOwnKey(unittest.TestCase):
     """Decision 68.3, Remove Key: a fill's own key taken away before
     converting, so the ordinary routes see a file that never had one.

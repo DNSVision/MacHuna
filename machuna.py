@@ -2848,9 +2848,44 @@ def _eif_with_key(path: str, keys, work_dir: str, log=print) -> str:
     return out
 
 
+_KEY_SLIP_MOST = 10
+
+
+def _slip_key(key_path: str, key_files: Optional[list], offset: int, frames: int,
+              work_dir: str, log=print):
+    """Key slip (Mac 2.12.0, David 2026-11-15): the key moved `offset` whole
+    frames against its fill, as a lossless copy of exactly `frames` frames.
+    Later (+N): the first N frames have no key (black, fully see-through) and
+    the key's last N frames are dropped; earlier (-N): its first N dropped and
+    the last N black. The key's own picture format and colour labels are kept
+    (FFV1): a lossy copy was measurably off (ProRes, up to 7 of 876, decision
+    70). Returns (key_path, None) for the merge to read as a clip."""
+    offset = int(offset)
+    if abs(offset) > _KEY_SLIP_MOST:
+        raise ValueError(f"A key can be slipped up to {_KEY_SLIP_MOST} frames either way.")
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    tmp = os.path.join(work_dir, 'slip-inputs')
+    os.makedirs(tmp, exist_ok=True)
+    args = _key_input_args(key_path, key_files, tmp)
+    n = abs(offset)
+    if offset > 0:
+        vf = f'tpad=start={n}:start_mode=add:color=black,trim=end_frame={frames}'
+    else:
+        vf = (f'trim=start_frame={n},setpts=PTS-STARTPTS,'
+              f'tpad=stop={n}:stop_mode=add:color=black,trim=end_frame={frames}')
+    labels = [] if key_files or Path(key_path).suffix.lower() in _STILL_EXTS \
+        else _colour_label_args(_first_video_stream(key_path))
+    out = os.path.join(work_dir, 'SLIPPED_KEY.mkv')
+    _run_ffmpeg([ffmpeg, '-y'] + args + ['-vf', vf, '-frames:v', str(frames), '-fps_mode', 'passthrough',
+                                         '-c:v', 'ffv1', '-level', '3'] + labels + [out], check=True)
+    log(f"  Key slipped {offset:+d} frame{'s' if n != 1 else ''} "
+        f"({'later' if offset > 0 else 'earlier'}); the fill does not move")
+    return out, None
+
+
 def merge_separate_key(kind: str, path: str, files: Optional[list],
                        key_path: str, key_files: Optional[list], work_dir: str,
-                       log=print) -> dict:
+                       log=print, key_offset: int = 0) -> dict:
     """The fill with the key merged in, written into `work_dir`, for the
     ordinary routes to convert. Returns {'path', 'files'} in the fill's terms:
     a sequence comes back as frames of the same names (keyed TGAs, or 16-bit
@@ -2862,9 +2897,17 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
     key_path = key_path or key_files[0]
     fill_info = (_desk_frames_info(kind, path) if kind in _DESK_KINDS
                  else separate_key_info(path, files))
-    problem = separate_key_problem(fill_info, separate_key_info(key_path, key_files))
+    key_info = separate_key_info(key_path, key_files)
+    problem = separate_key_problem(fill_info, key_info)
     if problem:
         raise ValueError(problem)
+    # Key slip (Mac 2.12.0): the key alone, shifted against the fill, before
+    # the merge as ever. Offset 0 never comes here, so today's merge stands.
+    if key_offset and key_info['frames'] > 1:
+        key_path, key_files = _slip_key(key_path, key_files, key_offset, fill_info['frames'],
+                                        work_dir, log)
+    elif abs(int(key_offset)) > _KEY_SLIP_MOST:
+        raise ValueError(f"A key can be slipped up to {_KEY_SLIP_MOST} frames either way.")
     if kind in _DESK_KINDS:
         keys = _key_y10(key_path, key_files, fill_info['frames'],
                         fill_info['width'], fill_info['height'])
@@ -3053,7 +3096,7 @@ def strip_own_key(kind: str, path: str, files: Optional[list], work_dir: str,
 
 def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
              key_path: Optional[str] = None, key_files: Optional[list] = None,
-             log=print, _lossless: bool = False) -> dict:
+             log=print, _lossless: bool = False, key_offset: int = 0) -> dict:
     """The key a row will use, saved on its own as grey pictures (white
     solid, black clear): the form `merge_separate_key` reads a key in, so a
     saved key can be changed elsewhere and brought back (decision 68.3, Save
@@ -3070,7 +3113,8 @@ def save_key(kind: str, path: str, files: Optional[list], out: str, base: str,
     work = tempfile.mkdtemp(prefix='machuna-key-')
     try:
         if key_path:
-            merged = merge_separate_key(kind, path, files, key_path, key_files, work, log=log)
+            merged = merge_separate_key(kind, path, files, key_path, key_files, work, log=log,
+                                        key_offset=key_offset)
             path, files = merged['path'], merged['files']
         ffmpeg = _get_ffmpeg_path('ffmpeg')
         if kind in _DESK_KINDS:
