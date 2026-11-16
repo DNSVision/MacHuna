@@ -4473,7 +4473,9 @@ def convert_eif_to_eif(eif_path: str, dest_dir: str, out_name: str, log=print,
     struct.pack_into('<I', head, 0x06C, count)
     struct.pack_into('<I', head, 0x080, (h.video_start + count * frame) & 0xFFFFFFFF)
     dest_path = os.path.join(dest_dir, out_name + '.eif')
-    if os.path.realpath(dest_path) == os.path.realpath(eif_path):
+    # Asked of the disk, not compared as text: the Mac's and Windows' disks
+    # ignore case, so CASE.EIF to number 'case' is the same file.
+    if os.path.exists(dest_path) and os.path.samefile(dest_path, eif_path):
         # Found by the 2.12.0 review: written over itself, the source's .eaf
         # went as 'stale' before it was copied, and both files were lost.
         raise ValueError(f"{os.path.basename(eif_path)} would be written over itself: choose another "

@@ -4656,6 +4656,22 @@ class TestEifToEif(unittest.TestCase):
         self.assertIn('itself', str(cm.exception))
         self.assertEqual((Path(self.src).read_bytes(), Path(m.eaf_path_for(self.src)).read_bytes()), before)
 
+    def test_written_over_itself_by_another_case_is_refused(self):
+        # The Mac's disk (and Windows') ignores case: 0915.EIF converted to
+        # number 0915 is written to 0915.eif, the same file. A guard comparing
+        # the names as text let it through (found while writing the PC notes).
+        d = tempfile.mkdtemp(dir=self.tmp)
+        upper = os.path.join(d, 'CASE.EIF')
+        shutil.copyfile(self.src, upper)
+        shutil.copyfile(m.eaf_path_for(self.src), os.path.join(d, 'CASE.eaf'))
+        if not os.path.exists(os.path.join(d, 'case.eif')):
+            self.skipTest('this disk tells case apart')
+        before = Path(upper).read_bytes(), Path(d, 'CASE.eaf').read_bytes()
+        with self.assertRaises(ValueError) as cm:
+            m.convert_eif_to_eif(upper, d, out_name='case', description='renamed', log=lambda *a: None)
+        self.assertIn('itself', str(cm.exception))
+        self.assertEqual((Path(upper).read_bytes(), Path(d, 'CASE.eaf').read_bytes()), before)
+
     def test_nothing_to_change_writes_nothing(self):
         d = os.path.join(self.tmp, 'same')
         os.makedirs(d)
