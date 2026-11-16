@@ -4458,6 +4458,86 @@ class TestSameFormatMov(unittest.TestCase):
         self.assertFalse(os.path.exists(d) and os.listdir(d))
 
 
+class TestClipToMovKeepsTheClip(unittest.TestCase):
+    """Found by the 2.12.0 review (2026-11-16): a clip to MOV through HDR lost
+    its interlace flag, pixel shape and timecode and gained a key; through the
+    re-encode route (clear frames, Ignore key) it lost its interlace flag. A
+    MOV made from a clip must keep everything but what changed."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ff, self.fp = m._get_ffmpeg_path('ffmpeg'), m._get_ffmpeg_path('ffprobe')
+        self.src = os.path.join(self.tmp, 'SD.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=720x576:r=25:d=0.2',
+                        '-vf', 'setsar=64/45,setfield=tff,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc',
+                        '-c:v', 'prores_ks', '-profile:v', '3', '-flags', '+ildct+ilme', '-field_order', 'tt',
+                        '-timecode', '10:00:00:00', self.src], check=True, stdin=subprocess.DEVNULL)
+
+    def _probe(self, path):
+        import json
+        r = subprocess.run([self.fp, '-v', 'error', '-show_streams', '-show_format', '-of', 'json', path],
+                           capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL)
+        j = json.loads(r.stdout)
+        v = [s for s in j['streams'] if s['codec_type'] == 'video'][0]
+        tc = (v.get('tags', {}).get('timecode') or j.get('format', {}).get('tags', {}).get('timecode')
+              or next((s.get('tags', {}).get('timecode') for s in j['streams'] if s['codec_type'] == 'data'), None))
+        return v.get('field_order'), v.get('sample_aspect_ratio'), v['pix_fmt'], tc
+
+    def _check(self, out, what):
+        order, sar, pix, tc = self._probe(out)
+        self.assertIn(order, ('tt', 'tb'), f'{what}: the interlace flag was lost ({order})')
+        self.assertEqual(sar, '64:45', f'{what}: the pixel shape was lost')
+        self.assertEqual(tc, '10:00:00:00', f'{what}: the timecode was lost')
+        self.assertFalse(pix.startswith('yuva'), f'{what}: a keyless clip gained a key ({pix})')
+
+    def test_through_hdr(self):
+        self._check(m.convert_clip_to_mov(self.src, os.path.join(self.tmp, 'a'), 'A',
+                                          lut={'own': 'HLG', 'name': 'x'}, log=lambda *a: None), 'HDR')
+
+    def test_through_the_re_encode(self):
+        self._check(m.convert_clip_to_mov(self.src, os.path.join(self.tmp, 'b'), 'B', lut=None,
+                                          clear_frames='start', log=lambda *a: None), 'clear frame')
+
+    def test_written_in_the_hidden_folder_not_as_a_dot_file(self):
+        # iCloud hides a file named with a dot and the flag survives the
+        # rename (2.5.6); the MOV routes wrote '.NAME.machuna-part.mov'. Each
+        # route must write inside '.machuna-partial', under a plain name.
+        from unittest import mock
+        moved = []
+        real = os.replace
+        def spy(a, b, *args, **kw):
+            moved.append(a)
+            return real(a, b, *args, **kw)
+        with mock.patch.object(m.os, 'replace', spy):
+            for i, kw in enumerate(({'lut': {'own': 'HLG', 'name': 'x'}}, {'lut': None, 'clear_frames': 'start'},
+                                    {'lut': None, 'sound_file': self.wav()})):
+                m.convert_clip_to_mov(self.src, os.path.join(self.tmp, f'p{i}'), f'P{i}', log=lambda *a: None, **kw)
+        self.assertEqual(len(moved), 3, moved)
+        for a in moved:
+            self.assertEqual(os.path.basename(os.path.dirname(a)), '.machuna-partial', a)
+            self.assertFalse(os.path.basename(a).startswith('.'), a)
+
+    def wav(self):
+        w = os.path.join(self.tmp, 'S.wav')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'sine=d=0.2', w],
+                       check=True, stdin=subprocess.DEVNULL)
+        return w
+
+
+class TestTwentyTwentyTenBitIsNotSdr(unittest.TestCase):
+    """Found by the review: broadcast HEVC HLG often says transfer 'bt2020-10'
+    (HLG only in an SEI), which was taken as SDR and refused by MacHuna's own
+    HLG to SDR. It says nothing about HLG or SDR: unknown, the user's call."""
+
+    def test_bt2020_10_and_12_are_unknown(self):
+        for tf in ('bt2020-10', 'bt2020-12'):
+            self.assertIsNone(m._clip_transfer({'color_space': 'bt2020nc', 'color_transfer': tf}))
+        self.assertEqual(m._clip_transfer({'color_transfer': 'bt709'}), 'SDR')
+
+
 class TestEifToEif(unittest.TestCase):
     """Swift decision 80 (2.12.0): an EIF to K-Frame EIF when something
     changes, only what changed redone. Every picture word is copied byte for
@@ -4564,6 +4644,17 @@ class TestEifToEif(unittest.TestCase):
         self.assertFalse(np.array_equal(w1 & 0xFFFFF, w0 & 0xFFFFF), 'the picture did not change')
         y = (w1 >> 10) & 0x3FF
         self.assertTrue(((y >= 4) & (y <= 1019)).all())
+
+    def test_written_over_itself_is_refused_and_both_files_kept(self):
+        # Found by the review: EIF to EIF into its own folder under its own
+        # name deleted the source .eif and .eaf (the app refuses it first).
+        d = os.path.dirname(self.src)
+        before = Path(self.src).read_bytes(), Path(m.eaf_path_for(self.src)).read_bytes()
+        with self.assertRaises(ValueError) as cm:
+            m.convert_eif_to_eif(self.src, d, out_name=Path(self.src).stem, description='renamed',
+                                 log=lambda *a: None)
+        self.assertIn('itself', str(cm.exception))
+        self.assertEqual((Path(self.src).read_bytes(), Path(m.eaf_path_for(self.src)).read_bytes()), before)
 
     def test_nothing_to_change_writes_nothing(self):
         d = os.path.join(self.tmp, 'same')
@@ -8688,6 +8779,12 @@ class TestKeySlip(unittest.TestCase):
     def test_a_one_frame_key_has_nothing_to_slip(self):
         self.assertEqual(self._keys('clip', self._merge('clip', 3, still=True)),
                          self._keys('clip', self._merge('clip', 0, still=True)))
+
+    def test_no_offset_given_is_none(self):
+        self.assertEqual(self._keys('clip', self._merge('clip', None)), self._keys('clip', self._merge('clip', 0)))
+        merged = m.merge_separate_key('clip', self.p['clip'], None, self.p['key'][0], self.p['key'],
+                                      tempfile.mkdtemp(dir=self.tmp), log=lambda *a: None, key_offset=None)
+        self.assertTrue(os.path.exists(merged['path']))
 
     def test_more_than_ten_frames_is_refused(self):
         for bad in (11, -11):

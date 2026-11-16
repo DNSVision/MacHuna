@@ -1788,8 +1788,9 @@ def hdr_view_table(lut: dict, out_path: str, decoded_as: str = 'rgb', floored: b
     return out_path
 
 
-_SDR_TRANSFERS = ('bt709', 'smpte170m', 'bt470bg', 'bt470m', 'gamma22', 'gamma28', 'iec61966-2-1',
-                  'bt2020-10', 'bt2020-12')
+# Not 'bt2020-10'/'bt2020-12': broadcast HEVC HLG often says that, with HLG only in
+# an SEI, and was refused as SDR (the 2.12.0 review); it says neither, so unknown.
+_SDR_TRANSFERS = ('bt709', 'smpte170m', 'bt470bg', 'bt470m', 'gamma22', 'gamma28', 'iec61966-2-1')
 
 
 def _clip_transfer(info: dict):
@@ -2876,8 +2877,9 @@ def _slip_key(key_path: str, key_files: Optional[list], offset: int, frames: int
     labels = [] if key_files or Path(key_path).suffix.lower() in _STILL_EXTS \
         else _colour_label_args(_first_video_stream(key_path))
     out = os.path.join(work_dir, 'SLIPPED_KEY.mkv')
-    _run_ffmpeg([ffmpeg, '-y'] + args + ['-vf', vf, '-frames:v', str(frames), '-fps_mode', 'passthrough',
-                                         '-c:v', 'ffv1', '-level', '3'] + labels + [out], check=True)
+    _run_ffmpeg([ffmpeg, '-y'] + args + ['-map', '0:v:0', '-an', '-sn', '-vf', vf, '-frames:v', str(frames),
+                                         '-fps_mode', 'passthrough', '-c:v', 'ffv1', '-level', '3']
+                + labels + [out], check=True)
     log(f"  Key slipped {offset:+d} frame{'s' if n != 1 else ''} "
         f"({'later' if offset > 0 else 'earlier'}); the fill does not move")
     return out, None
@@ -2897,6 +2899,7 @@ def merge_separate_key(kind: str, path: str, files: Optional[list],
     key_path = key_path or key_files[0]
     fill_info = (_desk_frames_info(kind, path) if kind in _DESK_KINDS
                  else separate_key_info(path, files))
+    key_offset = int(key_offset or 0)
     key_info = separate_key_info(key_path, key_files)
     problem = separate_key_problem(fill_info, key_info)
     if problem:
@@ -4470,6 +4473,11 @@ def convert_eif_to_eif(eif_path: str, dest_dir: str, out_name: str, log=print,
     struct.pack_into('<I', head, 0x06C, count)
     struct.pack_into('<I', head, 0x080, (h.video_start + count * frame) & 0xFFFFFFFF)
     dest_path = os.path.join(dest_dir, out_name + '.eif')
+    if os.path.realpath(dest_path) == os.path.realpath(eif_path):
+        # Found by the 2.12.0 review: written over itself, the source's .eaf
+        # went as 'stale' before it was copied, and both files were lost.
+        raise ValueError(f"{os.path.basename(eif_path)} would be written over itself: choose another "
+                         f"number or folder. Nothing was written.")
     clear = _clear_eif_frame(True) if starts or ends else b''
 
     def units():
@@ -7313,7 +7321,7 @@ def convert_clip_to_mov(input_path: str, dest_dir: str, out_name: str, lut: dict
     log(f"  Clip to MOV: {os.path.basename(input_path)}, {W}x{H} at {fps:g}fps, colour only")
     os.makedirs(dest_dir, exist_ok=True)
     out_path = os.path.join(dest_dir, f"{out_name}.mov")
-    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    part = _mov_part_path(dest_dir, out_name)
     with tempfile.TemporaryDirectory() as tmp:
         sound_in = []
         if sound:
@@ -7326,14 +7334,58 @@ def convert_clip_to_mov(input_path: str, dest_dir: str, out_name: str, lut: dict
                + (['-vf', ','.join(vf)] if vf else [])
                + ['-f', 'rawvideo', '-pix_fmt', 'rgba64le', '-'])
         try:
-            _rgba_through_lut(dec, _lut_mov_encode(W, H, fps, sound_in, bool(sound), no_alpha,
-                                                   lutc[0], part), W, H, *lutc)
+            # A keyless clip stays keyless (it gained a solid key: the review).
+            _rgba_through_lut(dec, _lut_mov_encode(W, H, fps, sound_in, bool(sound), not keyed,
+                                                   lutc[0], part, keep=_clip_keep_args(input_path)),
+                              W, H, *lutc)
             os.replace(part, out_path)
         finally:
             if os.path.exists(part):
                 os.remove(part)
     log(f"  Done → {out_path}")
     return out_path
+
+
+def _clip_keep_args(path: str):
+    """What a MOV made from a clip must keep (the 2.12.0 review): its field
+    order, pixel shape and timecode. Returns (filters, encoder arguments)."""
+    import json
+    s = _first_video_stream(path)
+    order = s.get('field_order', 'progressive')
+    vf, args = [], []
+    if order in ('tt', 'tb'):
+        vf.append('setfield=tff'); args += ['-flags', '+ildct', '-field_order', 'tt']
+    elif order in ('bb', 'bt'):
+        vf.append('setfield=bff'); args += ['-flags', '+ildct', '-field_order', 'bb']
+    sar = s.get('sample_aspect_ratio') or ''
+    if sar and sar not in ('0:1', '1:1', 'N/A'):
+        vf.append('setsar=' + sar.replace(':', '/'))
+    tc = (s.get('tags') or {}).get('timecode')
+    if not tc:
+        out = subprocess.run([_get_ffmpeg_path('ffprobe'), '-v', 'quiet', '-print_format', 'json',
+                              '-show_format', '-show_streams', path], capture_output=True, text=True,
+                             encoding='utf-8', stdin=subprocess.DEVNULL)
+        try:
+            j = json.loads(out.stdout or '{}')
+        except ValueError:
+            j = {}
+        tc = ((j.get('format') or {}).get('tags') or {}).get('timecode') or next(
+            ((st.get('tags') or {}).get('timecode') for st in j.get('streams', [])
+             if (st.get('tags') or {}).get('timecode')), None)
+    if tc:
+        args += ['-timecode', tc]
+    return vf, args
+
+
+def _mov_part_path(dest_dir: str, out_name: str) -> str:
+    """Where a MOV is written before it is finished: in the same hidden
+    folder as an unfinished EIF (`_eif_partial_path`), the FOLDER dot-named,
+    not the file, because iCloud flags a dot-named file hidden and the flag
+    survives the rename (2.5.6). Found by the 2.12.0 review: the MOV routes
+    wrote '.NAME.machuna-part.mov' beside the output."""
+    folder = os.path.join(dest_dir, _EIF_PARTIAL_DIR)
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, f"{out_name}.machuna-part.mov")
 
 
 def _mov_place(part: str, out_path: str):
@@ -7347,7 +7399,7 @@ def _mov_with_new_sound(input_path: str, info: dict, dest_dir: str, out_name: st
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     os.makedirs(dest_dir, exist_ok=True)
     out_path = os.path.join(dest_dir, f"{out_name}.mov")
-    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    part = _mov_part_path(dest_dir, out_name)
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [ffmpeg, '-y', '-v', 'error', '-i', input_path]
         if sound_file:
@@ -7380,7 +7432,7 @@ def _mov_reencoded(input_path: str, info: dict, dest_dir: str, out_name: str,
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     os.makedirs(dest_dir, exist_ok=True)
     out_path = os.path.join(dest_dir, f"{out_name}.mov")
-    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    part = _mov_part_path(dest_dir, out_name)
     fps = info.get('fps', 25.0)
     keyed = info.get('has_alpha', False) and not no_alpha
     starts, ends = _clear_counts(clear_frames)
@@ -7399,6 +7451,9 @@ def _mov_reencoded(input_path: str, info: dict, dest_dir: str, out_name: str,
     if tags:
         vf.append('setparams=' + ':'.join(f'{o}={v}' for o, v in tags))
     enc_tags = [x for o, v in tags for x in ('-' + o, v)]
+    keep_vf, keep_args = _clip_keep_args(input_path)
+    vf += keep_vf
+    enc_tags += keep_args
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [ffmpeg, '-y', '-v', 'error', '-i', input_path]
         if sound:
@@ -7426,19 +7481,23 @@ def _mov_reencoded(input_path: str, info: dict, dest_dir: str, out_name: str,
 
 
 def _lut_mov_encode(W: int, H: int, fps: float, sound_in: list, has_sound: bool,
-                    no_alpha: bool, cube: dict, out_path: str) -> list:
+                    no_alpha: bool, cube: dict, out_path: str, keep=None) -> list:
     """The ProRes 4444 encode for frames that came through a LUT as 16-bit
     RGBA on its input, labelled as the LUT's output says. One place for the
     sequence and clip routes, so the two cannot drift apart."""
     primaries, trc, matrix = _lut_colour(cube)
+    # `keep`: a clip's (filters, encoder arguments) from `_clip_keep_args`;
+    # None for a sequence, whose arguments are exactly as they always were.
+    keep_vf, keep_args = keep or ([], [])
     return ([_get_ffmpeg_path('ffmpeg'), '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba64le',
              '-s', f'{W}x{H}', '-framerate', _fps_expr(fps), '-i', '-'] + sound_in
-            + ['-vf', f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
+            + ['-vf', ','.join([f'setparams=color_primaries={primaries}:color_trc={trc}:colorspace={matrix}']
+                               + keep_vf)]
             + ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', _prores_pix_fmt(no_alpha),
                '-color_primaries', primaries, '-color_trc', trc, '-colorspace', matrix,
                '-r', _fps_expr(fps)]
             + (['-c:a', 'pcm_s24le', '-ar', str(EAF_SAMPLE_RATE)] if has_sound else [])
-            + [out_path])
+            + keep_args + [out_path])
 
 
 def convert_tga_seq_to_mov(tga_files: list, dest_dir: str, out_name: str,
