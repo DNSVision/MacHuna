@@ -4190,6 +4190,84 @@ class TestHdrToSdrRefusals(unittest.TestCase):
         m.lut_refuses({'own': 'HLG', 'name': 'x'}, self._clip('PLAIN.mov', ''), 'clip')
 
 
+class TestHdrViewTable(unittest.TestCase):
+    """Mac 2.12.0, Swift decision 79: the player's HDR view. Player frames
+    reach Swift as 8-bit RGBA, so the engine works out every one of the
+    16,777,216 colours once and Swift looks each pixel up as it is shown.
+    The table is built for how the frame was DECODED: TGA/PNG frames are
+    R'G'B' already; a MOV is decoded by ffmpeg with its own label; SWS and
+    EIF by the engine with BT.709 and rounding down (`_yuv_to_rgb8`), so for
+    those the table undoes that decode and reads the values as BT.2020."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _table(self, lut, **kw):
+        import numpy as np
+        p = os.path.join(self.tmp, 't.rgba')
+        m.hdr_view_table(lut, p, **kw)
+        t = np.fromfile(p, np.uint8)
+        self.assertEqual(t.size, 256 ** 3 * 4)
+        return t.reshape(-1, 4)
+
+    @staticmethod
+    def _idx(rgb8):
+        import numpy as np
+        rgb8 = np.asarray(rgb8, np.int64)
+        return (rgb8[..., 0] << 16) | (rgb8[..., 1] << 8) | rgb8[..., 2]
+
+    def test_rgb_frames_get_the_exact_maths(self):
+        import numpy as np, time
+        t0 = time.time()
+        t = self._table({'own': 'HLG', 'name': 'x'}, decoded_as='rgb')
+        self.assertLess(time.time() - t0, 20, 'too slow to build when the view is switched on')
+        self.assertTrue((t[:, 3] == 255).all())
+        rng = np.random.default_rng(6)
+        rgb8 = rng.integers(0, 256, (50000, 3))
+        want = np.clip(np.rint(m.machunas_own_to_sdr(rgb8 / 255, 'HLG') * 255), 0, 255)
+        np.testing.assert_array_equal(t[self._idx(rgb8), :3], want)
+        self.assertEqual(int(t[self._idx([191, 191, 191]), 0]),
+                         int(np.rint(m.machunas_own_to_sdr(np.array([[191 / 255] * 3]), 'HLG')[0, 0] * 255)))
+
+    def test_an_sws_or_eif_frame_is_read_as_bt2020(self):
+        # A saturated HLG colour as an SWS holds it (BT.2020 Y'CbCr, 10-bit),
+        # decoded as the player does (BT.709, rounded down), then looked up.
+        import numpy as np
+        rgb = np.array([[0.70, 0.20, 0.15], [0.15, 0.60, 0.20], [0.20, 0.25, 0.70], [0.5, 0.5, 0.5]])
+        kr, kb = 0.2627, 0.0593
+        Y = kr * rgb[:, 0] + (1 - kr - kb) * rgb[:, 1] + kb * rgb[:, 2]
+        yuv = np.stack([Y * 876 + 64, (rgb[:, 2] - Y) / (2 * (1 - kb)) * 896 + 512,
+                        (rgb[:, 0] - Y) / (2 * (1 - kr)) * 896 + 512], -1)[None]
+        shown = m._yuv_to_rgb8(np.rint(yuv))[0]
+        want = m.machunas_own_to_sdr(rgb, 'HLG') * 255
+        right = self._table({'own': 'HLG', 'name': 'x'}, decoded_as='bt709', floored=True)[self._idx(shown), :3]
+        naive = self._table({'own': 'HLG', 'name': 'x'}, decoded_as='rgb')[self._idx(shown), :3]
+        self.assertLess(np.abs(right - want).max(), 3.0, f'{right} vs {want}')
+        # Measured: read as BT.709 these colours are 7.5 levels out; the
+        # re-decode brings them within 3.
+        self.assertGreater(np.abs(naive - want).max(), 5.0, 'the re-decode makes no difference: test is blind')
+
+    def test_pq_and_a_users_lut(self):
+        import numpy as np
+        t = self._table({'own': 'PQ', 'name': 'x'}, decoded_as='rgb')
+        rng = np.random.default_rng(7)
+        rgb8 = rng.integers(0, 256, (20000, 3))
+        want = np.clip(np.rint(m.machunas_own_to_sdr(rgb8 / 255, 'PQ') * 255), 0, 255)
+        np.testing.assert_array_equal(t[self._idx(rgb8), :3], want)
+        n = 9
+        rows = ['# INPUT CICP: 9 9 18', '# OUTPUT CICP: 1 1 1', 'TITLE "HLG to SDR"', f'LUT_3D_SIZE {n}']
+        rows += ['%.6f %.6f %.6f' % (r / (n - 1) * 0.5, g / (n - 1) * 0.8, b / (n - 1))
+                 for b in range(n) for g in range(n) for r in range(n)]
+        p = os.path.join(self.tmp, 'h2s.cube')
+        Path(p).write_text('\n'.join(rows) + '\n')
+        lut = {'path': p, 'levels': 'full', 'name': 'theirs'}
+        t = self._table(lut, decoded_as='rgb')
+        cube, levels = m._lut_for(lut, lambda *a: None)
+        want = np.clip(np.rint(m.apply_cube_rgb(rgb8 / 255, cube, levels) * 255), 0, 255)
+        np.testing.assert_array_equal(t[self._idx(rgb8), :3], want)
+
+
 class TestClipToMovWithHdr(unittest.TestCase):
     """Mac 2.12.0 (Swift decision 79, David 2026-11-16): a clip to QuickTime
     MOV, which takes HDR both ways. Without a LUT it stays refused (a clip is

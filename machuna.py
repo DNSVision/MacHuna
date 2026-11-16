@@ -1738,6 +1738,55 @@ def _own_cube(transfer: str) -> dict:
             'output_primaries': 'bt709'}
 
 
+_VIEW_DECODES = {'rgb': None, 'bt2020': None, 'bt709': 'bt709', 'bt601': 'bt601'}
+_MATRIX_K_601 = (0.299, 0.114)
+
+
+def hdr_view_table(lut: dict, out_path: str, decoded_as: str = 'rgb', floored: bool = False,
+                   log=print) -> str:
+    """The player's HDR view (Swift decision 79): for every 8-bit R'G'B' a
+    player frame can hold, the SDR colour to show, written to `out_path` as
+    16,777,216 RGBA entries (A 255), entry R<<16 | G<<8 | B. Swift maps the
+    file and looks each pixel of the fill up as it is shown. `lut`: MacHuna's
+    own {'own': 'HLG'|'PQ'} or the user's HDR to SDR {'path','levels','name'},
+    the same maths conversion uses.
+
+    `decoded_as`: how the frame was decoded to RGB. 'rgb' (TGA, PNG) and
+    'bt2020' (a MOV ffmpeg decoded by its BT.2020 label) are the picture's
+    own R'G'B'. 'bt709' / 'bt601' (SWS and EIF, which the engine decodes
+    with BT.709; an unlabelled MOV ffmpeg decodes as BT.601) are put back to
+    Y'CbCr with that matrix and read again as BT.2020, folded into the table
+    so it costs nothing per frame. `floored`: the decoder rounded down
+    (`_yuv_to_rgb8`), so each value stands for the middle of its step."""
+    import numpy as np
+    if decoded_as not in _VIEW_DECODES:
+        raise ValueError(f"decoded_as must be one of {sorted(_VIEW_DECODES)}, not {decoded_as!r}")
+    cube, levels = _lut_for(lut, log)
+    codes = (np.arange(256) + (0.5 if floored else 0.0)) / 255.0
+    matrix = _VIEW_DECODES[decoded_as]
+    g, b = np.meshgrid(codes, codes, indexing='ij')
+    g, b = g.ravel(), b.ravel()
+    out = np.empty((256, 65536, 4), np.uint8)
+    out[..., 3] = 255
+    for r in range(256):
+        _check_stop()
+        rgb = np.stack([np.full(g.size, codes[r]), g, b], -1)
+        if matrix:
+            kr, kb = _MATRIX_K['bt709'] if matrix == 'bt709' else _MATRIX_K_601
+            Y = kr * rgb[:, 0] + (1 - kr - kb) * rgb[:, 1] + kb * rgb[:, 2]
+            Cb, Cr = (rgb[:, 2] - Y) / (2 * (1 - kb)), (rgb[:, 0] - Y) / (2 * (1 - kr))
+            kr, kb = _MATRIX_K['bt2020nc']
+            R, B = Y + 2 * (1 - kr) * Cr, Y + 2 * (1 - kb) * Cb
+            rgb = np.stack([R, (Y - kr * R - kb * B) / (1 - kr - kb), B], -1)
+        res = apply_cube_rgb(rgb, cube, levels)
+        out[r, :, :3] = np.clip(np.rint(res * 255.0), 0, 255).astype(np.uint8)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    part = out_path + '.part'
+    out.tofile(part)
+    os.replace(part, out_path)
+    return out_path
+
+
 _SDR_TRANSFERS = ('bt709', 'smpte170m', 'bt470bg', 'bt470m', 'gamma22', 'gamma28', 'iec61966-2-1',
                   'bt2020-10', 'bt2020-12')
 
