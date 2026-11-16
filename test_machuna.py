@@ -4364,7 +4364,7 @@ class TestClipToMovWithHdr(unittest.TestCase):
         d = os.path.join(self.tmp, 'none')
         with self.assertRaises(ValueError) as cm:
             m.convert_clip_to_mov(self._clip('A.mov', self.SDR), d, 'A', lut=None, log=lambda *a: None)
-        self.assertIn('already a video file', str(cm.exception))
+        self.assertIn('nothing to change', str(cm.exception))      # decision 80
         with self.assertRaises(ValueError) as cm:
             m.convert_clip_to_mov(self._clip('B.mov', self.SDR), d, 'B',
                                   lut={'own': 'HLG', 'name': "MacHuna's own"}, log=lambda *a: None)
@@ -4393,6 +4393,197 @@ class TestClipToMovWithHdr(unittest.TestCase):
         with self.assertRaises(m.ConversionStopped):
             m.convert_clip_to_mov(src, d, 'S', lut={'own': 'HLG', 'name': 'x'}, log=lambda *a: None)
         self.assertFalse(os.path.exists(os.path.join(d, 'S.mov')), 'a stopped MOV was left behind')
+
+
+class TestSameFormatMov(unittest.TestCase):
+    """Swift decision 80 (2.12.0): a clip to QuickTime MOV when something
+    changes, with only what changed redone. Sound alone: the picture is
+    copied, not re-encoded, so it decodes identically. Clear frames or Ignore
+    key alone: re-encoded, keeping the clip's colour label."""
+
+    def setUp(self):
+        self.mov = TestClipToMovWithHdr('test_stop_stops_it')
+        self.mov.setUp()
+        self.addCleanup(self.mov.doCleanups)
+        self.tmp = self.mov.tmp
+
+    def _wav(self):
+        import subprocess
+        out = os.path.join(self.tmp, 'other.wav')
+        subprocess.run([self.mov.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'sine=frequency=880:sample_rate=48000:duration=0.3', out],
+                       check=True, stdin=subprocess.DEVNULL)
+        return out
+
+    def _audio(self, path):
+        return [s for s in self.mov._probe(path) if s['codec_type'] == 'audio']
+
+    def test_sound_only_copies_the_picture(self):
+        import numpy as np
+        src = self.mov._clip('S.mov', self.mov.HLG)
+        lines = []
+        out = m.convert_clip_to_mov(src, os.path.join(self.tmp, 'o1'), 'S', lut=None,
+                                    sound_file=self._wav(), log=lines.append)
+        np.testing.assert_array_equal(self.mov._frames(out), self.mov._frames(src))
+        v = [s for s in self.mov._probe(out) if s['codec_type'] == 'video'][0]
+        self.assertEqual(v.get('color_transfer'), 'arib-std-b67', 'the label was lost')
+        self.assertTrue(self._audio(out))
+        self.assertTrue(any('picture copied' in l for l in lines), lines)
+
+    def test_sound_removed_copies_the_picture(self):
+        import numpy as np
+        src = self.mov._clip('R.mov', self.mov.HLG)
+        out = m.convert_clip_to_mov(src, os.path.join(self.tmp, 'o2'), 'R', lut=None,
+                                    include_audio=False, log=lambda *a: None)
+        np.testing.assert_array_equal(self.mov._frames(out), self.mov._frames(src))
+        self.assertFalse(self._audio(out), 'the sound was not removed')
+
+    def test_clear_frames_alone_keep_the_label(self):
+        src = self.mov._clip('C.mov', self.mov.HLG)
+        out = m.convert_clip_to_mov(src, os.path.join(self.tmp, 'o3'), 'C', lut=None,
+                                    clear_frames='start', log=lambda *a: None)
+        f = self.mov._frames(out)
+        self.assertEqual(len(f), self.mov.N + 1)
+        self.assertEqual(f[0, ..., 3].max(), 0.0)
+        v = [s for s in self.mov._probe(out) if s['codec_type'] == 'video'][0]
+        self.assertEqual((v.get('color_primaries'), v.get('color_transfer'), v.get('color_space')),
+                         ('bt2020', 'arib-std-b67', 'bt2020nc'))
+
+    def test_a_clip_with_no_sound_and_nothing_else_is_nothing_to_change(self):
+        src = self.mov._clip('N.mov', self.mov.SDR, sound=False)
+        d = os.path.join(self.tmp, 'o4')
+        with self.assertRaises(ValueError) as cm:
+            m.convert_clip_to_mov(src, d, 'N', lut=None, include_audio=False, log=lambda *a: None)
+        self.assertIn('nothing to change', str(cm.exception))
+        self.assertFalse(os.path.exists(d) and os.listdir(d))
+
+
+class TestEifToEif(unittest.TestCase):
+    """Swift decision 80 (2.12.0): an EIF to K-Frame EIF when something
+    changes, only what changed redone. Every picture word is copied byte for
+    byte unless HDR or clear frames change the picture; the header is the
+    SOURCE's own with only the description (0x004), the .eaf flag (0x060),
+    the frame count (0x06C) and the video end (0x080) changed, so a K-Frame's
+    own header bytes survive. Nothing changing is refused, nothing written."""
+
+    def setUp(self):
+        if not shutil.which('ffmpeg') and not os.path.exists(m._get_ffmpeg_path('ffmpeg')):
+            self.skipTest('ffmpeg not available')
+        import subprocess
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(m.clear_stop)
+        self.ff = m._get_ffmpeg_path('ffmpeg')
+        clip = os.path.join(self.tmp, 'src.mov')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'gradients=s=1920x1080:c0=0xC03030:c1=0x3060C0:r=25:d=0.12',
+                        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=0.12',
+                        '-vf', 'format=yuva444p10le,geq=lum=lum(X\\,Y):cb=cb(X\\,Y):cr=cr(X\\,Y):a=X*255/W',
+                        '-c:v', 'prores_ks', '-profile:v', '4', '-c:a', 'pcm_s16le', '-shortest', clip],
+                       check=True, stdin=subprocess.DEVNULL)
+        src_dir = os.path.join(self.tmp, 'src')
+        os.makedirs(src_dir)
+        self.src = m.convert_clip_to_eif(clip, src_dir, log=lambda *a: None, out_name='0001')
+        # A K-Frame's own byte in the header (its thumbnail area) must survive.
+        with open(self.src, 'r+b') as f:
+            f.seek(0x8E4); f.write(b'KFRAME')
+        self.h = m.EIFHeader(self.src)
+        self.wav = os.path.join(self.tmp, 'other.wav')
+        subprocess.run([self.ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'sine=frequency=880:sample_rate=48000:duration=0.5', self.wav],
+                       check=True, stdin=subprocess.DEVNULL)
+
+    def _parts(self, path):
+        b = Path(path).read_bytes()
+        h = m.EIFHeader(path)
+        frames = h.frame_count * 3 * m._EIF_UNIT_BYTES
+        return b[:h.video_start], b[h.video_start:h.video_start + frames], b[h.video_start + frames:]
+
+    def _go(self, tag, **kw):
+        d = os.path.join(self.tmp, tag)
+        os.makedirs(d)
+        return m.convert_eif_to_eif(self.src, d, out_name='0002', log=lambda *a: None, **kw)
+
+    def test_a_new_sound_keeps_every_picture_word(self):
+        out = self._go('sound', sound_file=self.wav)
+        head0, pic0, tail0 = self._parts(self.src)
+        head1, pic1, tail1 = self._parts(out)
+        self.assertEqual(pic1, pic0, 'the picture changed')
+        self.assertEqual(tail1, tail0)
+        self.assertEqual(head1, head0, 'the header changed though only the sound did')
+        new = m._read_eaf_words(m.eaf_path_for(out), lambda *a: None)
+        old = m._read_eaf_words(m.eaf_path_for(self.src), lambda *a: None)
+        self.assertIsNotNone(new)
+        self.assertEqual(len(new), len(old), 'the sound is not fitted to the picture')
+        self.assertFalse((new == old).all(), 'the old sound was kept')
+
+    def test_a_new_description_changes_only_its_bytes_and_copies_the_eaf(self):
+        out = self._go('desc', description='Home goal')
+        head0, pic0, _ = self._parts(self.src)
+        head1, pic1, _ = self._parts(out)
+        self.assertEqual(pic1, pic0)
+        self.assertEqual(m.EIFHeader(out).clip_name, 'HOME GOAL')
+        self.assertEqual(head1[:0x004] + head1[0x024:], head0[:0x004] + head0[0x024:],
+                         'header bytes other than the description changed')
+        self.assertEqual(head1[0x8E4:0x8EA], b'KFRAME')
+        self.assertEqual(Path(m.eaf_path_for(out)).read_bytes(), Path(m.eaf_path_for(self.src)).read_bytes())
+
+    def test_sound_removed(self):
+        out = self._go('mute', include_audio=False)
+        head1, pic1, _ = self._parts(out)
+        self.assertEqual(pic1, self._parts(self.src)[1])
+        self.assertFalse(os.path.exists(m.eaf_path_for(out)))
+        self.assertEqual(struct.unpack_from('<I', head1, 0x060)[0] & 0x04, 0, 'still says it has an .eaf')
+
+    def test_clear_frames_add_black_keyed_off_frames_and_delay_the_sound(self):
+        import numpy as np
+        out = self._go('clear', clear_frames='both')
+        h = m.EIFHeader(out)
+        self.assertEqual(h.frame_count, self.h.frame_count + 2)
+        _, pic0, _ = self._parts(self.src)
+        _, pic1, _ = self._parts(out)
+        frame = 3 * m._EIF_UNIT_BYTES
+        self.assertEqual(pic1[:frame], m._clear_eif_frame(True))
+        self.assertEqual(pic1[-frame:], m._clear_eif_frame(True))
+        self.assertEqual(pic1[frame:-frame], pic0)
+        self.assertEqual(h.video_end, (h.video_start + h.frame_count * frame) & 0xFFFFFFFF)
+        new = m._read_eaf_words(m.eaf_path_for(out), lambda *a: None)
+        old = m._read_eaf_words(m.eaf_path_for(self.src), lambda *a: None)
+        spf = m._samples_per_frame(h.fps)
+        self.assertTrue((new[:spf] == 0).all(), 'no silence in front')
+        np.testing.assert_array_equal(new[spf:spf + len(old)], old)
+
+    def test_hdr_changes_the_picture_and_never_the_key(self):
+        import numpy as np
+        out = self._go('hdr', lut={'own': 'HLG', 'name': "MacHuna's own"})
+        _, pic0, _ = self._parts(self.src)
+        _, pic1, _ = self._parts(out)
+        w0 = np.frombuffer(pic0, '<u4'); w1 = np.frombuffer(pic1, '<u4')
+        self.assertEqual(len(w0), len(w1))
+        np.testing.assert_array_equal(w1 >> 20, w0 >> 20)            # the key
+        self.assertFalse(np.array_equal(w1 & 0xFFFFF, w0 & 0xFFFFF), 'the picture did not change')
+        y = (w1 >> 10) & 0x3FF
+        self.assertTrue(((y >= 4) & (y <= 1019)).all())
+
+    def test_nothing_to_change_writes_nothing(self):
+        d = os.path.join(self.tmp, 'same')
+        os.makedirs(d)
+        with self.assertRaises(ValueError) as cm:
+            m.convert_eif_to_eif(self.src, d, out_name='0003', log=lambda *a: None)
+        self.assertIn('nothing to change', str(cm.exception))
+        self.assertEqual(os.listdir(d), [])
+
+    def test_stop_leaves_nothing(self):
+        d = os.path.join(self.tmp, 'stop')
+        os.makedirs(d)
+        m.request_stop()
+        res = None
+        try:
+            res = m.convert_eif_to_eif(self.src, d, out_name='0004', log=lambda *a: None, sound_file=self.wav)
+        except m.ConversionStopped:
+            pass
+        self.assertIsNone(res)
+        self.assertFalse([n for n in os.listdir(d) if not n.startswith('.')], 'a stopped EIF was left')
 
 
 class TestHdrLutOnClips(unittest.TestCase):

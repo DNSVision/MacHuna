@@ -800,6 +800,7 @@ def get_video_info(input_path: str) -> dict:
             info['color_space'] = stream.get('color_space') or 'unknown'
             # and its transfer (SDR, HLG or PQ), for the HDR refusals
             info['color_transfer'] = stream.get('color_transfer') or 'unknown'
+            info['color_primaries'] = stream.get('color_primaries') or 'unknown'
 
             # Interlace detection
             field_order = stream.get('field_order', 'progressive')
@@ -4368,6 +4369,113 @@ def convert_sws_to_eif(sws_path: str, dest_dir: str,
     return dest_path
 
 
+def convert_eif_to_eif(eif_path: str, dest_dir: str, out_name: str, log=print,
+                       cancel_event=None, include_audio: bool = True, sound_file: str = None,
+                       clear_frames: str = None, description: str = None,
+                       lut: dict = None, key_changed: bool = False) -> str:
+    """A K-Frame EIF to a K-Frame EIF when something changes (Swift decision
+    80, 2.12.0), redoing only what changed. A user wanted to add a sound to an
+    EIF; EIF to EIF had been gone since v1.6.2, when it silently wrote nothing.
+
+    Every picture word is copied byte for byte unless HDR (`lut`, the same
+    4:2:2 step as SWS to EIF, the key never touched) or clear frames change
+    the picture. The header is the SOURCE's own, with only what changes
+    rewritten: the description (0x004), the .eaf flag (bit 2 of 0x060), the
+    frame count (0x06C) and the video end (0x080); a K-Frame's own header bytes
+    and the file's tail survive. The sound: a chosen sound fitted to the
+    picture, else the source's .eaf (copied byte for byte, or delayed a frame
+    behind a clear frame at the start), else none. Nothing changing is refused:
+    nothing is written. Atomic, as every EIF write (decision L)."""
+    h = EIFHeader(eif_path)
+    log(f"  EIF {os.path.basename(eif_path)}: {h.frame_count} frame(s) @ {h.fps:g}fps")
+    src_eaf = eaf_path_for(eif_path)
+    own_sound = os.path.exists(src_eaf)
+    typed = (description or '').strip()
+    new_name = _eif_description(typed, h.clip_name) if typed else None
+    starts, ends = _clear_counts(clear_frames)
+    keeps_sound = sound_file is None and (include_audio == own_sound or not own_sound)
+    # `key_changed`: the bridge merged in or removed a key (`eif_path` is then
+    # its own new EIF), which is a change even with nothing else.
+    if (not lut and not starts and not ends and keeps_sound and not key_changed
+            and (new_name is None or new_name == h.clip_name)):
+        raise ValueError(f"{os.path.basename(eif_path)}: nothing to change. It is already a "
+                         f"K-Frame EIF and no setting changes it, so nothing was written.")
+    chosen = _sound_file_stereo24(sound_file, log) if sound_file else None
+    lutc = _lut_for(lut, log)
+    if lutc:
+        log(_LUT_422_NOTE)
+    fps = 25.0 if abs(h.fps - 25.0) <= abs(h.fps - 50.0) else 50.0
+    frame = 3 * _EIF_UNIT_BYTES
+    count = h.frame_count + starts + ends
+    with open(eif_path, 'rb') as f:
+        head = bytearray(f.read(h.video_start))
+        f.seek(h.video_start + h.frame_count * frame)
+        tail = f.read()
+    # Sound: chosen, else the source's own (bytes kept unless delayed), else none.
+    copy_eaf = chosen is None and include_audio and own_sound and not starts and not ends
+    stereo = chosen if chosen is not None else (
+        _read_eaf_words(src_eaf, log) if include_audio and own_sound and not copy_eaf else None)
+    stereo = _delay_sound(stereo, fps, clear_frames)
+    has_audio = stereo is not None or copy_eaf
+    if new_name is not None:
+        head[0x004:0x024] = bytes(32)
+        name_b = new_name.encode('ascii', errors='replace')[:31]
+        head[0x004:0x004 + len(name_b)] = name_b
+    flags = struct.unpack_from('<I', head, 0x060)[0]
+    struct.pack_into('<I', head, 0x060, (flags | 0x04) if has_audio else (flags & ~0x04))
+    struct.pack_into('<I', head, 0x06C, count)
+    struct.pack_into('<I', head, 0x080, (h.video_start + count * frame) & 0xFFFFFFFF)
+    dest_path = os.path.join(dest_dir, out_name + '.eif')
+    clear = _clear_eif_frame(True) if starts or ends else b''
+
+    def units():
+        with open(eif_path, 'rb') as f:
+            f.seek(h.video_start)
+            for _ in range(h.frame_count):
+                if cancel_event and cancel_event.is_set():
+                    raise _EifCancelled()
+                _check_stop()
+                yield f.read(frame)
+
+    def through_lut(raw):
+        w = np.frombuffer(raw, '<u4').reshape(3 * 360, 1920)
+        K, Y, C = (w >> 20) & 0x3FF, (w >> 10) & 0x3FF, w & 0x3FF
+        y2, cb2, cr2 = _lut_ycbcr_422(Y.astype(np.float64), C[:, 0::2].astype(np.float64),
+                                      C[:, 1::2].astype(np.float64), *lutc)
+        to10 = lambda v: np.clip(np.rint(v), 4, 1019).astype(np.uint32)
+        C2 = np.empty_like(C)
+        C2[:, 0::2], C2[:, 1::2] = to10(cb2), to10(cr2)
+        return ((K << 20) | (to10(y2) << 10) | C2).astype('<u4').tobytes()
+
+    try:
+        # A write test before any work, as the other EIF routes (FAT limit).
+        _build_eif_header('X', count, fps, dest_dir=dest_dir)
+        with _open_eif_output(dest_path) as out:
+            out.write(bytes(head))
+            out.write(clear * starts)
+            for n, raw in enumerate(_in_order(through_lut, units()) if lutc else units()):
+                out.write(raw)
+                if (n + 1) % 10 == 0 or n + 1 == h.frame_count:
+                    log(f"  Frame {n + 1}/{h.frame_count}" + (" (through HDR)" if lutc else " (copied)"))
+            out.write(clear * ends)
+            out.write(tail)
+        _commit_eif(dest_path, stereo, count, fps, log)
+        if copy_eaf:
+            try:
+                shutil.copyfile(src_eaf, eaf_path_for(dest_path))
+            except BaseException:
+                _drop(dest_path)
+                raise
+            log(f"  Audio → {os.path.basename(eaf_path_for(dest_path))} (the source's own, copied)")
+    except BaseException as e:
+        _abandon_eif(dest_path, e, log)
+        if isinstance(e, (_EifCancelled, ConversionStopped)):
+            return None
+        raise
+    log(f"  Done → {dest_path}")
+    return dest_path
+
+
 def _eif_frame_to_v210be(u0: bytes, u1: bytes, u2: bytes):
     """Convert 3 EIF units to v210 BE (fill, key) for one 1920×1080 frame."""
     ROWS, WIDTH, G = 360, 1920, 320  # G = 1920/6 v210 groups per row
@@ -7123,17 +7231,30 @@ def _hula_convert_eif_to_mov(eif_path: str, dest_parent: str,
 
 def convert_clip_to_mov(input_path: str, dest_dir: str, out_name: str, lut: dict,
                         include_audio: bool = True, sound_file: str = None,
-                        clear_frames: str = None, no_alpha: bool = False, log=print) -> str:
+                        clear_frames: str = None, no_alpha: bool = False,
+                        key_changed: bool = False, log=print) -> str:
     """A clip to a ProRes 4444 MOV through an HDR LUT or MacHuna's own HDR to
     SDR (Mac 2.12.0, Swift decision 79). Only the colour changes: the clip
     keeps its size, rate, frames (an interlaced clip stays as it is), key and
     sound; the MOV is labelled as the LUT's output says. Without a LUT it is
     refused: a clip is already a video file. Written beside its final name
     and moved in only when whole, so Stop or a failure leaves nothing."""
-    if not lut:
-        raise ValueError(f"{os.path.basename(input_path)} is already a video file. QuickTime MOV "
-                         f"output from a clip is for HDR conversion: choose HDR first.")
     info = get_video_info(input_path)
+    # Decision 80 (2.12.0): a clip to MOV when something changes, only that
+    # redone. `key_changed`: the bridge merged in or removed a key, so this
+    # file is not the user's own any more.
+    starts0, ends0 = _clear_counts(clear_frames)
+    sound_same = sound_file is None and (include_audio or not info.get('has_audio'))
+    alpha_same = not (no_alpha and info.get('has_alpha'))
+    if not lut and not starts0 and not ends0 and sound_same and alpha_same and not key_changed:
+        raise ValueError(f"{os.path.basename(input_path)}: nothing to change. It is already a "
+                         f"QuickTime MOV and no setting changes it, so nothing was written.")
+    if not lut and not starts0 and not ends0 and alpha_same and not key_changed:
+        return _mov_with_new_sound(input_path, info, dest_dir, out_name, include_audio,
+                                   sound_file, log)
+    if not lut:
+        return _mov_reencoded(input_path, info, dest_dir, out_name, include_audio, sound_file,
+                              clear_frames, no_alpha, log)
     lutc = _lut_for(lut, log, info, input_path)       # the refusals, before anything is written
     ffmpeg = _get_ffmpeg_path('ffmpeg')
     W, H, fps = info['width'], info['height'], info.get('fps', 25.0)
@@ -7164,6 +7285,95 @@ def convert_clip_to_mov(input_path: str, dest_dir: str, out_name: str, lut: dict
             _rgba_through_lut(dec, _lut_mov_encode(W, H, fps, sound_in, bool(sound), no_alpha,
                                                    lutc[0], part), W, H, *lutc)
             os.replace(part, out_path)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+    log(f"  Done → {out_path}")
+    return out_path
+
+
+def _mov_place(part: str, out_path: str):
+    os.replace(part, out_path)
+
+
+def _mov_with_new_sound(input_path: str, info: dict, dest_dir: str, out_name: str,
+                        include_audio: bool, sound_file: str, log=print) -> str:
+    """Decision 80: only the sound changes, so the picture is COPIED, not
+    re-encoded (no generation loss), with the chosen sound, or none."""
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    os.makedirs(dest_dir, exist_ok=True)
+    out_path = os.path.join(dest_dir, f"{out_name}.mov")
+    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [ffmpeg, '-y', '-v', 'error', '-i', input_path]
+        if sound_file:
+            pcm = _sound_file_pcm24(sound_file, tmp, log)
+            cmd += ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2', '-i', pcm,
+                    '-map', '0:v:0', '-map', '1:a', '-c:a', 'pcm_s24le']
+        else:
+            cmd += ['-map', '0:v:0', '-an']
+        cmd += ['-c:v', 'copy', part]
+        log(f"  Clip to MOV: {os.path.basename(input_path)}, picture copied, "
+            + (f"sound: {os.path.basename(sound_file)}" if sound_file else "sound removed"))
+        try:
+            _check_stop()
+            _run_ffmpeg(cmd, check=True)
+            _check_stop()
+            _mov_place(part, out_path)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+    log(f"  Done → {out_path}")
+    return out_path
+
+
+def _mov_reencoded(input_path: str, info: dict, dest_dir: str, out_name: str,
+                   include_audio: bool, sound_file: str, clear_frames: str,
+                   no_alpha: bool, log=print) -> str:
+    """Decision 80: clear frames, Ignore key or a key change without HDR: the
+    picture re-encoded as ProRes 4444 at its own size and rate, keeping its
+    colour label; the sound as chosen."""
+    ffmpeg = _get_ffmpeg_path('ffmpeg')
+    os.makedirs(dest_dir, exist_ok=True)
+    out_path = os.path.join(dest_dir, f"{out_name}.mov")
+    part = os.path.join(dest_dir, f".{out_name}.machuna-part.mov")
+    fps = info.get('fps', 25.0)
+    keyed = info.get('has_alpha', False) and not no_alpha
+    starts, ends = _clear_counts(clear_frames)
+    sound = sound_file or (input_path if include_audio and info.get('has_audio') else None)
+    vf = []
+    if starts or ends:
+        vf.append(f"tpad=start={starts}:stop={ends}:start_mode=add:stop_mode=add:"
+                  f"color=black{'@0' if keyed else ''}")
+        log(f"  Adding {'clear' if keyed else 'black'} frame(s): {starts} at the start, {ends} at the end")
+    # The clip's own colour label, all three parts: set on the encoder alone,
+    # ffmpeg kept only the matrix (the same as decision 78's MOV, 2026-11-14).
+    tags = [(opt, info.get(field)) for opt, field in (('color_primaries', 'color_primaries'),
+                                                      ('color_trc', 'color_transfer'),
+                                                      ('colorspace', 'color_space'))
+            if info.get(field) not in (None, '', 'unknown', 'unspecified', 'reserved')]
+    if tags:
+        vf.append('setparams=' + ':'.join(f'{o}={v}' for o, v in tags))
+    enc_tags = [x for o, v in tags for x in ('-' + o, v)]
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [ffmpeg, '-y', '-v', 'error', '-i', input_path]
+        if sound:
+            pcm = _sound_file_pcm24(sound, tmp, log)
+            if starts:
+                _pad_file(pcm, b'\0' * (_samples_per_frame(fps) * starts * 8), b'')
+            cmd += ['-f', 's32le', '-ar', str(EAF_SAMPLE_RATE), '-ac', '2', '-i', pcm,
+                    '-map', '0:v:0', '-map', '1:a', '-c:a', 'pcm_s24le']
+        else:
+            cmd += ['-map', '0:v:0', '-an']
+        if vf:
+            cmd += ['-vf', ','.join(vf)]
+        cmd += ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', _prores_pix_fmt(not keyed)] + enc_tags + [part]
+        log(f"  Clip to MOV: {os.path.basename(input_path)}, picture re-encoded, colour label kept")
+        try:
+            _check_stop()
+            _run_ffmpeg(cmd, check=True)
+            _check_stop()
+            _mov_place(part, out_path)
         finally:
             if os.path.exists(part):
                 os.remove(part)
