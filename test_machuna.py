@@ -9794,16 +9794,32 @@ class TestRossTga(unittest.TestCase):
             with self.subTest(src=s):
                 self.assertEqual(m.ross_clip_name(t(s)), t(s), 'a tidied name always passes')
 
+    # TWO entries (David, 2026-11-23): a Ross contact says a Carbonite reads
+    # from _001 and skips _000; the Carbonite manual says the same, the Acuity
+    # manual (and a Vision, tested) says frame 0. The Carbonite+ test could
+    # not tell a skipped first frame from none. Acuity / Vision: _0000;
+    # Carbonite: _001, three digits, all four past 999 frames.
+    ROSS = {'acuity': ('Acuity / Vision TGA', lambda n, i: f'{n}_{i:04d}.tga'),
+            'carbonite': ('Carbonite TGA', lambda n, i: f'{n}_{i + 1:03d}.tga')}
+
+    def _targets(self):
+        return {k: (getattr(m, 'HULA_TARGET_' + k.upper() + '_TGA'), name)
+                for k, (_, name) in self.ROSS.items()}
+
     def test_the_target_and_its_frame_names(self):
-        self.assertEqual(m.HULA_TARGET_ROSS_TGA, 'Ross TGA')
-        self.assertIn(m.HULA_TARGET_ROSS_TGA, m._HULA_TGA_TARGETS)
-        self.assertEqual(m.tga_frame_name(m.HULA_TARGET_ROSS_TGA, 'Goal Wipe', 0), 'Goal Wipe_0000.tga')
+        self.assertEqual(m.HULA_TARGET_ACUITY_TGA, 'Acuity / Vision TGA')
+        self.assertEqual(m.HULA_TARGET_CARBONITE_TGA, 'Carbonite TGA')
+        for t in (m.HULA_TARGET_ACUITY_TGA, m.HULA_TARGET_CARBONITE_TGA):
+            self.assertIn(t, m._HULA_TGA_TARGETS)
+            self.assertTrue(m.tga_named(t))
+        self.assertEqual(m.tga_frame_name(m.HULA_TARGET_ACUITY_TGA, 'Goal Wipe', 0), 'Goal Wipe_0000.tga')
+        self.assertEqual(m.tga_start_number(m.HULA_TARGET_CARBONITE_TGA), 1)
         self.assertEqual(m.tga_frame_name(m.HULA_TARGET_SONY_TGA, 'GOAL', 0), 'GOAL0000.tga')
         self.assertEqual(m.tga_frame_name(m.HULA_TARGET_KFRAME_TGA, None, 0), '0001.tga')
 
-    def _ross(self, src, std, name='Goal Wipe', **kw):
+    def _ross(self, src, std, name='Goal Wipe', target=None, **kw):
         d = tempfile.mkdtemp(dir=self.tmp)
-        m._hula_run_batch([src], d, m.HULA_TARGET_ROSS_TGA, standard=std,
+        m._hula_run_batch([src], d, target or m.HULA_TARGET_ACUITY_TGA, standard=std,
                           clip_name=name, log=lambda *a: None, **kw)
         return d
 
@@ -9817,17 +9833,18 @@ class TestRossTga(unittest.TestCase):
     def _frames(folder):
         return sorted(n for n in os.listdir(folder) if n.endswith('.tga'))
 
-    def test_every_route_writes_ross_names_from_0000_with_sonys_frames(self):
-        for src in (self.sws, self.eif, self.mov):
+    def test_every_route_writes_ross_names_with_sonys_frames(self):
+        for key, (target, want) in self._targets().items():
+          for src in (self.sws, self.eif, self.mov):
             for std in ('1080p50', '1080i50'):
-                with self.subTest(src=Path(src).suffix, std=std):
-                    out = self._ross(src, std)
+                with self.subTest(target=key, src=Path(src).suffix, std=std):
+                    out = self._ross(src, std, target=target, clear_frames='both')
                     self.assertEqual(os.listdir(out), ['Goal Wipe'])
                     folder = os.path.join(out, 'Goal Wipe')
                     names = self._frames(folder)
-                    self.assertEqual(names, [f'Goal Wipe_{i:04d}.tga' for i in range(len(names))])
+                    self.assertEqual(names, [want('Goal Wipe', i) for i in range(len(names))])
                     self.assertGreater(len(names), 0)
-                    sony = self._sony(src, std)
+                    sony = self._sony(src, std, clear_frames='both')
                     self.assertEqual(
                         [open(os.path.join(folder, n), 'rb').read() for n in names],
                         [open(os.path.join(sony, n), 'rb').read() for n in self._frames(sony)],
@@ -9844,20 +9861,42 @@ class TestRossTga(unittest.TestCase):
         d = os.path.join(self.tmp, 'sws25'); os.makedirs(d)
         m.convert_clip(p25, 1, d, video_standard='1080p25', include_audio=False,
                        split_fat32=False, log=lambda *a: None)
-        out = self._ross(os.path.join(d, '1.SWS'), '1080p50', name='Rate', keep_duration=True)
-        self.assertEqual(self._frames(os.path.join(out, 'Rate')),
-                         [f'Rate_{i:04d}.tga' for i in range(6)])
-        clip = tempfile.mkdtemp(dir=self.tmp)
-        m._hula_convert_mov_to_tga(p25, clip, m.HULA_TARGET_ROSS_TGA, '1080p50',
-                                   clip_name='Rate', log=lambda *a: None, keep_duration=True)
-        self.assertEqual(self._frames(os.path.join(clip, 'Rate')),
-                         [f'Rate_{i:04d}.tga' for i in range(6)])
+        for key, (target, want) in self._targets().items():
+            with self.subTest(target=key):
+                out = self._ross(os.path.join(d, '1.SWS'), '1080p50', name='Rate', target=target,
+                                 keep_duration=True)
+                self.assertEqual(self._frames(os.path.join(out, 'Rate')), [want('Rate', i) for i in range(6)])
+                clip = tempfile.mkdtemp(dir=self.tmp)
+                m._hula_convert_mov_to_tga(p25, clip, target, '1080p50',
+                                           clip_name='Rate', log=lambda *a: None, keep_duration=True)
+                m.tga_finish_names(os.path.join(clip, 'Rate'), target, 'Rate')
+                self.assertEqual(self._frames(os.path.join(clip, 'Rate')), [want('Rate', i) for i in range(6)])
+
+    def test_carbonite_widens_to_four_digits_only_past_999(self):
+        # Every frame the same width, as Ross's rules ask, and in order.
+        for count, want in ((999, lambda i: f'W_{i:03d}.tga'), (1000, lambda i: f'W_{i:04d}.tga')):
+            with self.subTest(count=count):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                for i in range(1, count + 1):
+                    open(os.path.join(d, m.tga_frame_name(m.HULA_TARGET_CARBONITE_TGA, 'W', i - 1)), 'w').write(str(i))
+                m.tga_finish_names(d, m.HULA_TARGET_CARBONITE_TGA, 'W')
+                names = self._frames(d)
+                self.assertEqual(names, sorted(want(i) for i in range(1, count + 1)))
+                self.assertEqual(open(os.path.join(d, want(count))).read(), str(count))
+                # Finishing twice changes nothing; Acuity is never renamed.
+                m.tga_finish_names(d, m.HULA_TARGET_CARBONITE_TGA, 'W')
+                self.assertEqual(self._frames(d), names)
+        d = tempfile.mkdtemp(dir=self.tmp)
+        open(os.path.join(d, 'W_0000.tga'), 'w').close()
+        m.tga_finish_names(d, m.HULA_TARGET_ACUITY_TGA, 'W')
+        self.assertEqual(self._frames(d), ['W_0000.tga'])
 
     def test_a_bad_name_writes_nothing(self):
         for src in (self.sws, self.eif, self.mov):
             for name in ('_Goal', 'A' * 33, ''):
                 with self.subTest(src=Path(src).suffix, name=name):
-                    self.assertEqual(os.listdir(self._ross(src, '1080p50', name=name)), [])
+                    for target, _ in self._targets().values():
+                        self.assertEqual(os.listdir(self._ross(src, '1080p50', name=name, target=target)), [])
 
 
 class TestRossNamesAreChecked(unittest.TestCase):

@@ -6255,8 +6255,13 @@ def unverified_output_note(output_name):
 HULA_TARGET_QUICKTIME_MOV = "QuickTime MOV"
 HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # confirmed on a live K-Frame, 2026-10-07
 HULA_TARGET_SONY_TGA    = "Sony TGA"
-HULA_TARGET_ROSS_TGA    = "Ross TGA"   # Swift decision 85: Sony's frames, Ross naming
-_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA, HULA_TARGET_ROSS_TGA}
+# Swift decision 85: Sony's frames, Ross naming, TWO entries (David, 2026-11-23):
+# the Acuity manual (and a Vision, tested) wants frame 0; the Carbonite manual,
+# and a Ross contact, say a Carbonite reads from _001 and skips _000.
+HULA_TARGET_ACUITY_TGA    = "Acuity / Vision TGA"   # Name_0000.tga
+HULA_TARGET_CARBONITE_TGA = "Carbonite TGA"         # Name_001.tga
+_ROSS_TGA_TARGETS = (HULA_TARGET_ACUITY_TGA, HULA_TARGET_CARBONITE_TGA)
+_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA, *_ROSS_TGA_TARGETS}
 
 # Header field offsets for SWS read side (Hula uses read only)
 _HULA_OFF_STD_CODE = 0x188
@@ -6418,24 +6423,27 @@ def tga_clip_name(target: str, name):
     """The checked clip name for a named TGA target (Sony, Ross), else None."""
     if target == HULA_TARGET_SONY_TGA:
         return sony_clip_name(name)
-    if target == HULA_TARGET_ROSS_TGA:
+    if target in _ROSS_TGA_TARGETS:
         return ross_clip_name(name)
     return None
 
 
 def tga_named(target: str) -> bool:
     """Sony and Ross TGA: a folder named after the clip, frames from 0."""
-    return target in (HULA_TARGET_SONY_TGA, HULA_TARGET_ROSS_TGA)
+    return target == HULA_TARGET_SONY_TGA or target in _ROSS_TGA_TARGETS
 
 
 def tga_start_number(target: str) -> int:
-    return 0 if tga_named(target) else 1
+    """Sony and Acuity / Vision from 0; K-Frame and Carbonite from 1."""
+    return 0 if target in (HULA_TARGET_SONY_TGA, HULA_TARGET_ACUITY_TGA) else 1
 
 
 def tga_frame_pattern(target: str, cn) -> str:
     """The ffmpeg pattern for a target's frames: Sony `GOAL%04d.tga`, Ross
-    `Goal_%04d.tga`, K-Frame `%04d.tga`."""
-    if target == HULA_TARGET_ROSS_TGA:
+    `Goal_%04d.tga`, K-Frame `%04d.tga`. Carbonite is written with four
+    digits too while its frames are worked on (sorting by name stays in
+    order), and `tga_finish_names` makes them three at the end."""
+    if target in _ROSS_TGA_TARGETS:
         return f"{cn}_%04d.tga"
     if target == HULA_TARGET_SONY_TGA:
         return f"{cn}%04d.tga"
@@ -6443,8 +6451,26 @@ def tga_frame_pattern(target: str, cn) -> str:
 
 
 def tga_frame_name(target: str, cn, i: int) -> str:
-    """The i-th frame's file name (i from 0)."""
+    """The i-th frame's file name (i from 0), as written while worked on."""
     return tga_frame_pattern(target, cn) % (i + tga_start_number(target))
+
+
+def tga_finish_names(folder: str, target: str, cn) -> None:
+    """The last step of every Carbonite TGA route, after clear frames: its
+    frames go from `Name_0001` to the Carbonite manual's `Name_001`, three
+    digits, unless the clip runs past 999 frames, when all keep four (every
+    frame the same width). Nothing else is renamed; running it twice is
+    harmless."""
+    if target != HULA_TARGET_CARBONITE_TGA or not folder or not os.path.isdir(folder):
+        return
+    cn = tga_clip_name(target, cn)
+    rx = re.compile(re.escape(cn) + r'_(\d{4,})\.tga$')
+    frames = [(int(mm.group(1)), n) for n in os.listdir(folder)
+              if (mm := rx.match(n)) and not n.startswith('.')]
+    if not frames or max(k for k, _ in frames) > 999:
+        return
+    for k, n in sorted(frames):
+        os.replace(os.path.join(folder, n), os.path.join(folder, f"{cn}_{k:03d}.tga"))
 
 
 def _hula_convert_tga(sws_path: str, dest_parent: str,
@@ -7823,6 +7849,8 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
             if out and clear_frames:
                 # Decision 54: every TGA route, padded the same way afterwards.
                 add_clear_tga_frames(out, clear_frames, log=log)
+            if out:
+                tga_finish_names(out, target, cn)
             ok += 1
         except Exception as e:
             log(f"  ERROR: {e}")
