@@ -10346,6 +10346,23 @@ class TestSonyScz(unittest.TestCase):
                                  m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE])
         self.assertEqual(m.bespoke_output_name('Goal Sting', m.BESPOKE_MODE_SCZ), 'Goal Sting.scz')
 
+    def test_an_archive_too_big_for_the_disk_says_so_and_leaves_nothing(self):
+        """A FAT32 stick holds no file over 4 GB: the write fails part way
+        (EFBIG), and the user is told why in plain words, nothing left."""
+        import errno, zipfile
+        from unittest import mock
+        dest = os.path.join(self.tmp, 'Huge.scz')
+        clip = {'name': 'Huge', 'folder': '', 'memo': '', 'tags': [], 'frames': self.frames,
+                'sound': None, 'frame_rate': 5000}
+        real = zipfile.ZipFile.writestr
+
+        def full(zf, info, data, *a, **k):
+            raise OSError(errno.EFBIG, 'File too large')
+        with mock.patch.object(zipfile.ZipFile, 'writestr', full), \
+                self.assertRaisesRegex(ValueError, '4 GB'):
+            m.write_scz(dest, [clip], log=lambda *a: None)
+        self.assertFalse([n for n in os.listdir(self.tmp) if n.startswith('Huge')])
+
     def test_solid_key_for_ignore_key_on_tga_outputs(self):
         d = os.path.join(self.tmp, 'solid'); os.makedirs(d)
         for p in self.frames:

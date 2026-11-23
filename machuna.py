@@ -7999,6 +7999,12 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
                     f"{', with sound' if c.get('sound') else ''}, into {c.get('folder') or SCZ_DEFAULT_FOLDER}")
             z.writestr(entry("LogicalMaterials.json"), json.dumps({"logical": logical}))
         os.replace(tmp, dest_path)
+    except OSError as e:
+        import errno
+        if e.errno == errno.EFBIG:
+            raise ValueError("This archive is over 4 GB, which a FAT32 memory stick cannot hold. "
+                             "Write it to an exFAT stick, or use One per clip.") from None
+        raise
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
