@@ -6255,7 +6255,8 @@ def unverified_output_note(output_name):
 HULA_TARGET_QUICKTIME_MOV = "QuickTime MOV"
 HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # confirmed on a live K-Frame, 2026-10-07
 HULA_TARGET_SONY_TGA    = "Sony TGA"
-_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA}
+HULA_TARGET_ROSS_TGA    = "Ross TGA"   # Swift decision 85: Sony's frames, Ross naming
+_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA, HULA_TARGET_ROSS_TGA}
 
 # Header field offsets for SWS read side (Hula uses read only)
 _HULA_OFF_STD_CODE = 0x188
@@ -6383,11 +6384,74 @@ def sony_clip_name(name) -> str:
     return v.upper()
 
 
+ROSS_NAME_MAX = 32       # Ross's own limit (Acuity/Vision docs)
+ROSS_NAME_SHOWN = 12     # a Vision's menus show 12 or fewer (a note, not a limit)
+_ROSS_NAME_OK = re.compile(r'[A-Za-z0-9 _-]+')
+
+
+def ross_clip_name(name) -> str:
+    """A Ross clip name (Swift decision 85, David 2026-11-22): letters, digits,
+    spaces, dashes and underscores, 1-32 characters, not starting with an
+    underscore (Carbonite), case kept. It names the folder and every frame
+    (`Goal Wipe/Goal Wipe_0000.tga`), and a Ross desk links a WAV only by the
+    same name, so a bad name is refused rather than quietly changed."""
+    v = (name or '').strip()
+    if not v or len(v) > ROSS_NAME_MAX or not _ROSS_NAME_OK.fullmatch(v) or v[0] == '_':
+        raise ValueError(f"Ross clip names are 1-{ROSS_NAME_MAX} letters, digits, spaces, "
+                         f"dashes or underscores, not starting with an underscore - "
+                         f"{v!r} is not one")
+    return v
+
+
+def ross_tidy_name(source_name) -> str:
+    """A Ross clip name made from a source's name, for the app's default: accents
+    dropped, each run of anything else made one underscore, no underscore or
+    space at the start, cut to 32. Always passes ross_clip_name."""
+    import unicodedata
+    v = unicodedata.normalize('NFKD', str(source_name or '')).encode('ascii', 'ignore').decode()
+    v = re.sub(r'[^A-Za-z0-9 _-]+', '_', v).lstrip(' _')
+    v = v[:ROSS_NAME_MAX].rstrip(' _')
+    return v or 'CLIP'
+
+
+def tga_clip_name(target: str, name):
+    """The checked clip name for a named TGA target (Sony, Ross), else None."""
+    if target == HULA_TARGET_SONY_TGA:
+        return sony_clip_name(name)
+    if target == HULA_TARGET_ROSS_TGA:
+        return ross_clip_name(name)
+    return None
+
+
+def tga_named(target: str) -> bool:
+    """Sony and Ross TGA: a folder named after the clip, frames from 0."""
+    return target in (HULA_TARGET_SONY_TGA, HULA_TARGET_ROSS_TGA)
+
+
+def tga_start_number(target: str) -> int:
+    return 0 if tga_named(target) else 1
+
+
+def tga_frame_pattern(target: str, cn) -> str:
+    """The ffmpeg pattern for a target's frames: Sony `GOAL%04d.tga`, Ross
+    `Goal_%04d.tga`, K-Frame `%04d.tga`."""
+    if target == HULA_TARGET_ROSS_TGA:
+        return f"{cn}_%04d.tga"
+    if target == HULA_TARGET_SONY_TGA:
+        return f"{cn}%04d.tga"
+    return '%04d.tga'
+
+
+def tga_frame_name(target: str, cn, i: int) -> str:
+    """The i-th frame's file name (i from 0)."""
+    return tga_frame_pattern(target, cn) % (i + tga_start_number(target))
+
+
 def _hula_convert_tga(sws_path: str, dest_parent: str,
                       target: str, clip_name: str = 'WIPE', log=print):
     """Convert one SWS to a TGA sequence subfolder."""
     stem     = Path(sws_path).stem
-    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    cn       = tga_clip_name(target, clip_name)
     folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
@@ -6412,10 +6476,7 @@ def _hula_convert_tga(sws_path: str, dest_parent: str,
                 Image.fromarray(rgb[:, :, 2], 'L'),
                 Image.fromarray(alpha, 'L'),
             ])
-            if target == HULA_TARGET_KFRAME_TGA:
-                filename = f"{i + 1:04d}.tga"
-            else:  # Sony TGA
-                filename = f"{cn}{i:04d}.tga"
+            filename = tga_frame_name(target, cn, i)
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == header.frame_count:
                 log(f"  Frame {i + 1}/{header.frame_count}")
@@ -6431,7 +6492,7 @@ def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
         target = HULA_TARGET_KFRAME_TGA
     h    = EIFHeader(eif_path)
     stem = Path(eif_path).stem
-    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    cn       = tga_clip_name(target, clip_name)
     folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
@@ -6444,7 +6505,7 @@ def _hula_convert_eif_to_tga(eif_path: str, dest_parent: str,
             u1 = f.read(_EIF_UNIT_BYTES)
             u2 = f.read(_EIF_UNIT_BYTES)
             rgba_img = _decode_eif_frame_rgba(u0, u1, u2)
-            filename = f"{cn}{i:04d}.tga" if target == HULA_TARGET_SONY_TGA else f"{i + 1:04d}.tga"
+            filename = tga_frame_name(target, cn, i)
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == h.frame_count:
                 log(f"  Frame {i + 1}/{h.frame_count}")
@@ -6466,7 +6527,7 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
             f"interlaced output requires a 50fps source."
         )
     stem      = Path(eif_path).stem
-    cn        = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    cn        = tga_clip_name(target, clip_name)
     folder    = cn or stem
     dest_dir  = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
@@ -6492,7 +6553,7 @@ def _hula_convert_eif_to_tga_interlaced(eif_path: str, dest_parent: str,
                 out[0::2] = a[0::2]; out[1::2] = b[1::2]
             else:  # BFF
                 out[1::2] = a[1::2]; out[0::2] = b[0::2]
-            filename = f"{cn}{i:04d}.tga" if target == HULA_TARGET_SONY_TGA else f"{i + 1:04d}.tga"
+            filename = tga_frame_name(target, cn, i)
             Image.fromarray(out, 'RGBA').save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == out_count:
                 log(f"  Frame {i + 1}/{out_count}")
@@ -6511,7 +6572,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
     K-Frame TGA confirmed on a live K-Frame, 2026-10-07.
     """
     stem     = Path(sws_path).stem
-    cn       = sony_clip_name(clip_name) if target == HULA_TARGET_SONY_TGA else None
+    cn       = tga_clip_name(target, clip_name)
     folder   = cn or stem
     dest_dir = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
@@ -6564,10 +6625,7 @@ def _hula_convert_tga_interlaced(sws_path: str, dest_parent: str,
                 Image.fromarray(rgb_out[:, :, 2], 'L'),
                 Image.fromarray(alpha_out, 'L'),
             ])
-            if target == HULA_TARGET_KFRAME_TGA:
-                filename = f"{i + 1:04d}.tga"
-            else:
-                filename = f"{cn}{i:04d}.tga"
+            filename = tga_frame_name(target, cn, i)
             rgba_img.save(os.path.join(dest_dir, filename), format='TGA')
             if (i + 1) % 10 == 0 or i + 1 == out_count:
                 log(f"  Frame {i + 1}/{out_count}")
@@ -6617,8 +6675,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     Sony TGA at 1080p50 played at twice the speed (David, 2026-10-29).
     """
     stem      = Path(mov_path).stem
-    is_sony   = target == HULA_TARGET_SONY_TGA
-    cn        = sony_clip_name(clip_name) if is_sony else None
+    cn        = tga_clip_name(target, clip_name)
     folder    = cn or stem
     dest_dir  = os.path.join(dest_parent, folder)
     os.makedirs(dest_dir, exist_ok=True)
@@ -6682,18 +6739,13 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
     if not interlaced:
         # Progressive: extract frames directly to dest with correct naming.
         vf_tga = ['-vf', ','.join(vf + ['format=bgra'])]
-        if is_sony:
-            pattern = os.path.join(dest_dir, f"{cn}%04d.tga")
-            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0'] + vf_tga + [
-                   '-start_number', '0', pattern]
-        else:
-            pattern = os.path.join(dest_dir, '%04d.tga')
-            cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0'] + vf_tga + [
-                   '-start_number', '1', pattern]
+        pattern = os.path.join(dest_dir, tga_frame_pattern(target, cn))
+        cmd = [ffmpeg, '-y', '-i', mov_path, '-vsync', '0'] + vf_tga + [
+               '-start_number', str(tga_start_number(target)), pattern]
         log(f"  Extracting {os.path.basename(mov_path)} → TGA ({standard})...")
         _run_ffmpeg(cmd, check=True)
         if pick_from:
-            _retime_tga_folder(dest_dir, pattern, 0 if is_sony else 1,
+            _retime_tga_folder(dest_dir, pattern, tga_start_number(target),
                                pick_from, target_fps, log)
         count = len(list(Path(dest_dir).glob('*.tga')))
         log(f"  Done → {dest_dir}  ({count} TGA files)")
@@ -6726,7 +6778,7 @@ def _hula_convert_mov_to_tga(mov_path: str, dest_parent: str,
                     out[1::2] = arr_a[1::2]
                     out[0::2] = arr_b[0::2]
                 woven = Image.fromarray(out, 'RGBA')
-                filename = f"{i + 1:04d}.tga" if not is_sony else f"{cn}{i:04d}.tga"
+                filename = tga_frame_name(target, cn, i)
                 woven.save(os.path.join(dest_dir, filename), format='TGA')
                 if (i + 1) % 10 == 0 or i + 1 == out_count:
                     log(f"  Frame {i + 1}/{out_count}")
@@ -7641,9 +7693,8 @@ def _fit_tga_folder_to_show(folder: str, target: str, clip_name, src_fps: float,
     decision H). Already right: untouched. Only the 25/50 family is fitted;
     other rates keep today's handling. Returns the number of TGAs."""
     show_fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[show]]
-    is_sony = target == HULA_TARGET_SONY_TGA
-    start = 0 if is_sony else 1
-    pattern = os.path.join(folder, f"{clip_name}%04d.tga" if is_sony else '%04d.tga')
+    start = tga_start_number(target)
+    pattern = os.path.join(folder, tga_frame_pattern(target, tga_clip_name(target, clip_name)))
     names = sorted(n for n in os.listdir(folder)
                    if n.lower().endswith('.tga') and not n.startswith('.'))
     family = any(abs(src_fps - r) < 0.5 for r in (25.0, 50.0))
@@ -7916,6 +7967,7 @@ def parse_mov_fps(text) -> float:
 BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
 BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.eif
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
+BESPOKE_MODE_ROSS = 'ross'   # Ross TGA     — clip name up to 32, writes <Name>/
 BESPOKE_MODE_MOV  = 'mov'    # QuickTime MOV — free filename, writes <name>.mov;
                              # blank is allowed and means "use the source name"
 
@@ -7951,9 +8003,9 @@ def normalise_bespoke_value(raw, mode: str):
         if v.endswith((' ', '.')) or v.split('.')[0].upper() in _WINDOWS_RESERVED:
             return None
         return v or None
-    if mode == BESPOKE_MODE_SONY:
+    if mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS):
         try:
-            return sony_clip_name(v)
+            return (sony_clip_name if mode == BESPOKE_MODE_SONY else ross_clip_name)(v)
         except ValueError:
             return None
     if not v.isdigit():
@@ -7993,7 +8045,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     GUI can mark exactly the fields that need attention. Messages group by
     value, which reads better in a dialog than one line per row.
     """
-    is_sony  = (mode == BESPOKE_MODE_SONY)
+    is_sony  = mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS)   # a named clip folder
     codes    = [None] * len(entries)
     problems = []
 
@@ -8010,7 +8062,9 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
         # A blank MOV row is deliberate: it takes the source name. It is left
         # out of `values` so it cannot duplicate or collide with anything.
     if invalid:
-        what = ("a 4-character clip name (letters and digits only)" if is_sony
+        what = ("a 4-character clip name (letters and digits only)" if mode == BESPOKE_MODE_SONY
+                else f"a clip name of up to {ROSS_NAME_MAX} letters, digits, spaces, dashes or "
+                     f"underscores, not starting with an underscore" if mode == BESPOKE_MODE_ROSS
                 else "a filename without / \\ : * ? \" < > |, up to 64 characters"
                 if mode == BESPOKE_MODE_MOV
                 else "a number from 1 to 9999")
@@ -8022,8 +8076,10 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     #    second silently overwriting the first, which is the whole thing this
     #    mode exists to prevent.
     by_value = {}
+    first = {}   # Ross keeps case, but GOAL and Goal are one folder on a Mac or PC disk
     for i, value in values.items():
-        by_value.setdefault(value, []).append(i)
+        key = value.casefold() if mode == BESPOKE_MODE_ROSS else value
+        by_value.setdefault(first.setdefault(key, value), []).append(i)
     for value, idxs in by_value.items():
         if len(idxs) > 1:
             noun = ("Clip name" if is_sony

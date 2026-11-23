@@ -9739,3 +9739,147 @@ class TestKframeTgaFitsTheShow(unittest.TestCase):
     def test_without_keep_duration_nothing_changes(self):
         self.assertEqual(len(self._read(self._batch('sws_p25', '1080p50'))[0]), 4)
         self.assertEqual(len(self._read(self._batch('eif_i50', '1080p50'))[0]), 3)
+
+
+class TestRossTga(unittest.TestCase):
+    """Swift decision 85 (David, settled 2026-11-21/22): ONE output, "Ross TGA",
+    the same frames as Sony TGA (1920x1080 32-bit, key in the alpha), written
+    to <NAME>/<NAME>_0000.tga: an underscore, four digits, the first frame 0000.
+    A Carbonite+ and a Vision both played `_0000` as a clip; a Vision took
+    `_0001` as separate stills. Names: letters, digits, dashes, underscores and
+    spaces, up to 32 characters (Ross's own limit), not starting with an
+    underscore (Carbonite), case kept. Ross desks link a WAV by the SAME name,
+    so the name is never changed silently: a bad one is refused."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        ff = m._get_ffmpeg_path('ffmpeg')
+        cls.tmp = tempfile.mkdtemp(prefix='mh-ross-')
+        q = lambda *a: None
+        cls.mov = os.path.join(cls.tmp, 'src.mov')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', 'testsrc=size=192x108:rate=50', '-frames:v', '4',
+                        '-c:v', 'prores_ks', cls.mov], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(cls.tmp, 'src'); os.makedirs(d)
+        m.convert_clip(cls.mov, 1, d, video_standard='1080p50', include_audio=False,
+                       split_fat32=False, log=q)
+        cls.sws = os.path.join(d, '1.SWS')
+        cls.eif = m.convert_clip_to_eif(cls.mov, d, log=q, out_name='0001', include_audio=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_name_rule(self):
+        self.assertEqual(m.ross_clip_name('Sting_Goal'), 'Sting_Goal')
+        self.assertEqual(m.ross_clip_name('  Match Day Goal-2  '), 'Match Day Goal-2')
+        self.assertEqual(m.ross_clip_name('A' * 32), 'A' * 32)
+        for bad in ('', '   ', None, 'A' * 33, '_Goal', 'Goal.v2', 'Goal/1', 'Goal%d',
+                    'Éclair', 'Goal!', 'Goal\tWipe'):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                m.ross_clip_name(bad)
+
+    def test_a_name_made_from_a_source_name(self):
+        # The app's grey default: the source's name tidied, never refused.
+        t = m.ross_tidy_name
+        self.assertEqual(t('Sting_Goal'), 'Sting_Goal')
+        self.assertEqual(t('Goal v2.final'), 'Goal v2_final')
+        self.assertEqual(t('Éclair (Promo)!'), 'Eclair _Promo')
+        self.assertEqual(t('__Opening'), 'Opening')
+        self.assertEqual(t('***'), 'CLIP')
+        self.assertEqual(len(t('Premier League Match Day Opening Titles 2026')), 32)
+        for s in ('Goal v2.final', 'Éclair (Promo)!', '__Opening', '***',
+                  'Premier League Match Day Opening Titles 2026', ' x ' * 20):
+            with self.subTest(src=s):
+                self.assertEqual(m.ross_clip_name(t(s)), t(s), 'a tidied name always passes')
+
+    def test_the_target_and_its_frame_names(self):
+        self.assertEqual(m.HULA_TARGET_ROSS_TGA, 'Ross TGA')
+        self.assertIn(m.HULA_TARGET_ROSS_TGA, m._HULA_TGA_TARGETS)
+        self.assertEqual(m.tga_frame_name(m.HULA_TARGET_ROSS_TGA, 'Goal Wipe', 0), 'Goal Wipe_0000.tga')
+        self.assertEqual(m.tga_frame_name(m.HULA_TARGET_SONY_TGA, 'GOAL', 0), 'GOAL0000.tga')
+        self.assertEqual(m.tga_frame_name(m.HULA_TARGET_KFRAME_TGA, None, 0), '0001.tga')
+
+    def _ross(self, src, std, name='Goal Wipe', **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], d, m.HULA_TARGET_ROSS_TGA, standard=std,
+                          clip_name=name, log=lambda *a: None, **kw)
+        return d
+
+    def _sony(self, src, std, **kw):
+        d = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], d, m.HULA_TARGET_SONY_TGA, standard=std,
+                          clip_name='GOAL', log=lambda *a: None, **kw)
+        return os.path.join(d, 'GOAL')
+
+    @staticmethod
+    def _frames(folder):
+        return sorted(n for n in os.listdir(folder) if n.endswith('.tga'))
+
+    def test_every_route_writes_ross_names_from_0000_with_sonys_frames(self):
+        for src in (self.sws, self.eif, self.mov):
+            for std in ('1080p50', '1080i50'):
+                with self.subTest(src=Path(src).suffix, std=std):
+                    out = self._ross(src, std)
+                    self.assertEqual(os.listdir(out), ['Goal Wipe'])
+                    folder = os.path.join(out, 'Goal Wipe')
+                    names = self._frames(folder)
+                    self.assertEqual(names, [f'Goal Wipe_{i:04d}.tga' for i in range(len(names))])
+                    self.assertGreater(len(names), 0)
+                    sony = self._sony(src, std)
+                    self.assertEqual(
+                        [open(os.path.join(folder, n), 'rb').read() for n in names],
+                        [open(os.path.join(sony, n), 'rb').read() for n in self._frames(sony)],
+                        'the picture is byte for byte what Sony TGA writes')
+
+    def test_the_show_fitting_names_ross_frames_too(self):
+        # Decision 74.1's keep_duration: 25p into a 50p show, each frame twice.
+        import subprocess
+        ff = m._get_ffmpeg_path('ffmpeg')
+        p25 = os.path.join(self.tmp, 'p25.mov')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'testsrc=size=192x108:rate=25', '-frames:v', '3',
+                        '-c:v', 'prores_ks', p25], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(self.tmp, 'sws25'); os.makedirs(d)
+        m.convert_clip(p25, 1, d, video_standard='1080p25', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        out = self._ross(os.path.join(d, '1.SWS'), '1080p50', name='Rate', keep_duration=True)
+        self.assertEqual(self._frames(os.path.join(out, 'Rate')),
+                         [f'Rate_{i:04d}.tga' for i in range(6)])
+        clip = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_convert_mov_to_tga(p25, clip, m.HULA_TARGET_ROSS_TGA, '1080p50',
+                                   clip_name='Rate', log=lambda *a: None, keep_duration=True)
+        self.assertEqual(self._frames(os.path.join(clip, 'Rate')),
+                         [f'Rate_{i:04d}.tga' for i in range(6)])
+
+    def test_a_bad_name_writes_nothing(self):
+        for src in (self.sws, self.eif, self.mov):
+            for name in ('_Goal', 'A' * 33, ''):
+                with self.subTest(src=Path(src).suffix, name=name):
+                    self.assertEqual(os.listdir(self._ross(src, '1080p50', name=name)), [])
+
+
+class TestRossNamesAreChecked(unittest.TestCase):
+    """The app checks Ross names before converting, as it does Sony's (the
+    bespoke mode 'ross'): invalid, used twice (case ignored: a Mac and a
+    Windows disk both take GOAL and Goal as one folder), or already a folder
+    in the destination."""
+
+    def test_the_mode(self):
+        self.assertEqual(m.BESPOKE_MODE_ROSS, 'ross')
+        self.assertEqual(m.normalise_bespoke_value(' Goal Wipe ', 'ross'), 'Goal Wipe')
+        self.assertIsNone(m.normalise_bespoke_value('_Goal', 'ross'))
+        self.assertIsNone(m.normalise_bespoke_value('', 'ross'))
+        self.assertEqual(m.bespoke_output_name('Goal Wipe', 'ross'), 'Goal Wipe')
+
+    def test_problems(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(os.path.join(d, 'Taken'))
+        rows = [('a.mov', 'Goal'), ('b.mov', 'GOAL'), ('c.mov', 'Taken'),
+                ('d.mov', 'Bad.name'), ('e.mov', 'Fine One')]
+        codes = m.bespoke_row_issues(rows, 'ross', d)
+        self.assertEqual(codes, ['duplicate', 'duplicate', 'exists', 'invalid', None])
+        text = '\n'.join(m.validate_bespoke_ids(rows, 'ross', d))
+        self.assertIn('up to 32', text)
+        self.assertIn('a folder called Taken', text)
