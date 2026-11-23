@@ -8179,7 +8179,8 @@ def merge_input_types(current, incoming):
 
 def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn,
                      notes: Optional[list] = None):
-    """Write MacHuna_Log_DD-MM-YYYY.txt to dest_dir.
+    """Add this batch to MacHuna_Log_DD-MM-YYYY.txt in dest_dir (one file a
+    day, a section a batch, oldest first).
 
     `notes` carries anything the user was told on screen that is not per-item -
     chiefly the hardware-status warnings. They belong in the file too: the
@@ -8191,10 +8192,17 @@ def _write_batch_log(results: list, dest_dir: str, standard: str, log_fn,
     log_path = os.path.join(dest_dir, log_filename)
     try:
         max_len = max(len(name) for _, name, _ in results)
-        with open(log_path, 'w', encoding='utf-8') as f:
+        # APPENDED (agreed 2026-11-21, promised to a PC user): each batch of
+        # the day is added below the last, so an earlier batch's errors are
+        # never lost to a later Convert. Each has its heading and time.
+        earlier = os.path.isfile(log_path) and os.path.getsize(log_path) > 0
+        with open(log_path, 'a', encoding='utf-8') as f:
+            if earlier:
+                f.write("\n\n")
             f.write("MacHuna Conversion Log\n")
             f.write(f"{'=' * 40}\n")
             f.write(f"Date: {datetime.now().strftime('%d %b %Y')}\n")
+            f.write(f"Time: {datetime.now().strftime('%H:%M:%S')}\n")
             f.write(f"Standard: {standard}\n")
             f.write(f"{'=' * 40}\n\n")
             for note in (notes or []):

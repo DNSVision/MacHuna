@@ -9883,3 +9883,26 @@ class TestRossNamesAreChecked(unittest.TestCase):
         text = '\n'.join(m.validate_bespoke_ids(rows, 'ross', d))
         self.assertIn('up to 32', text)
         self.assertIn('a folder called Taken', text)
+
+
+class TestDaysLogIsAppended(unittest.TestCase):
+    """Agreed 2026-11-21 (promised to a PC user): the day's log keeps every
+    batch. It was opened with 'w', so each Convert wiped the earlier batches'
+    errors from MacHuna_Log_DD-MM-YYYY.txt."""
+
+    def test_two_batches_both_kept(self):
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        q = lambda *a: None
+        m._write_batch_log([(1, 'first.mov', 'ERROR: it broke')], d, '1080i50', q)
+        m._write_batch_log([(2, 'second.mov', 'OK')], d, '1080p50', q)
+        (name,) = [n for n in os.listdir(d) if n.startswith('MacHuna_Log_')]
+        text = open(os.path.join(d, name), encoding='utf-8').read()
+        self.assertIn('first.mov', text)
+        self.assertIn('ERROR: it broke', text)
+        self.assertIn('second.mov', text)
+        self.assertLess(text.index('first.mov'), text.index('second.mov'), 'oldest first')
+        self.assertEqual(text.count('MacHuna Conversion Log'), 2, 'each batch has its own heading')
+        self.assertIn('Standard: 1080i50', text)
+        self.assertIn('Standard: 1080p50', text)
+        # Each batch says when it ran, so a day's batches can be told apart.
+        self.assertEqual(len(re.findall(r'Time: \d\d:\d\d:\d\d', text)), 2)
