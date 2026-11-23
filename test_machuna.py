@@ -10066,6 +10066,88 @@ class TestTgaSound(unittest.TestCase):
         self.assertEqual(wavs, [])
 
 
+class TestSonyLongTga(unittest.TestCase):
+    """Swift decision 89 (David, 2026-11-23): a third Sony output, "XVS / MLS
+    TGA (32CHAR)", stored as "Sony Long TGA", for the XVS-9000, XVS-G1 and
+    MLS-X1: the same frames as Sony TGA, `Name/Name0000.tga`, names up to 32
+    characters (a Sony user's MLS-X1 loaded 8-32, spaces, underscores, lower
+    case; XVS-9000 manual: 32), letters, digits, spaces, dashes, underscores,
+    case kept, and NOT ending in a digit: the desks take a trailing number as
+    the frame number (MON101.. imports as "MON"). The WAV of decision 87."""
+
+    LONG = m.HULA_TARGET_SONY_LONG_TGA
+
+    @classmethod
+    def setUpClass(cls):
+        TestTgaSound.setUpClass.__func__(cls)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _run(self, src, target, name, **kw):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], out, target, standard='1080p50', clip_name=name,
+                          clip_names=[name], log=lambda *a: None, keep_duration=True, **kw)
+        return os.path.join(out, name)
+
+    def test_the_name_rule(self):
+        ok = ('Goal Sting', 'goal_sting', 'Goal-Wipe', 'MATCHDAYGOALWIPEFORTHESECONDHALF', 'G')
+        for v in ok:
+            with self.subTest(name=v):
+                self.assertEqual(m.sony_long_clip_name(v), v)
+        self.assertEqual(m.sony_long_clip_name('  Goal Sting  '), 'Goal Sting')
+        for bad in ('', '   ', None, 'A' * 33, 'Goal 2', 'Wipe1', 'Goal!', 'Éclair', 'Goal/1',
+                    'Goal.v2', 'Goal%d', 'Goal\tWipe'):
+            with self.subTest(name=bad), self.assertRaises(ValueError):
+                m.sony_long_clip_name(bad)
+
+    def test_a_name_made_from_a_source_name(self):
+        t = m.sony_long_tidy_name
+        self.assertEqual(t('Goal Sting'), 'Goal Sting')
+        self.assertEqual(t('Goal v2.final'), 'Goal v2_final')
+        self.assertEqual(t('Goal 2'), 'Goal')
+        self.assertEqual(t('Sting_01'), 'Sting')
+        self.assertEqual(t('2026'), 'CLIP')
+        self.assertEqual(t('Éclair (Promo)!'), 'Eclair _Promo')
+        self.assertEqual(len(t('Premier League Match Day Opening Titles 2026')), 32)
+        for s in ('Goal 2', 'Sting_01', '2026', 'Premier League Match Day Opening Titles 2026',
+                  'Éclair (Promo)!', ' x ' * 20, 'A' * 31 + '9'):
+            with self.subTest(src=s):
+                self.assertEqual(m.sony_long_clip_name(t(s)), t(s), 'a tidied name always passes')
+
+    def test_every_route_writes_sonys_frames_under_the_long_name(self):
+        name = 'Goal Sting'
+        for src in (self.mov, self.sws, self.eif):
+            with self.subTest(src=os.path.basename(src)):
+                folder = self._run(src, self.LONG, name, clear_frames='both')
+                sony = self._run(src, m.HULA_TARGET_SONY_TGA, 'GOAL', clear_frames='both')
+                tgas = sorted(f for f in os.listdir(folder) if f.endswith('.tga'))
+                want = sorted(f.replace('GOAL', name, 1) for f in os.listdir(sony) if f.endswith('.tga'))
+                self.assertEqual(tgas, want)
+                self.assertEqual(tgas[0], 'Goal Sting0000.tga')
+                for f in tgas:
+                    self.assertEqual(Path(folder, f).read_bytes(),
+                                     Path(sony, f.replace(name, 'GOAL', 1)).read_bytes(), f)
+                self.assertTrue(os.path.isfile(os.path.join(folder, 'Goal Sting.wav')))
+
+    def test_a_bad_name_writes_nothing(self):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([self.sws], out, self.LONG, standard='1080p50', clip_name='Goal 2',
+                          clip_names=['Goal 2'], log=lambda *a: None)
+        self.assertEqual(os.listdir(out), [])
+
+    def test_names_in_a_batch_are_checked(self):
+        mode = m.BESPOKE_MODE_SONY_LONG
+        self.assertEqual(m.normalise_bespoke_value(' Goal Sting ', mode), 'Goal Sting')
+        self.assertIsNone(m.normalise_bespoke_value('Goal 2', mode))
+        codes, problems = m._analyse_bespoke_ids([('a', 'Goal Sting'), ('b', 'goal sting'),
+                                                  ('c', 'Wipe 1')], mode, self.tmp)
+        self.assertEqual(codes, [m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE,
+                                 m.BESPOKE_ISSUE_INVALID])
+        self.assertIn('not ending in a digit', ' '.join(problems))
+
+
 class TestRossNamesAreChecked(unittest.TestCase):
     """The app checks Ross names before converting, as it does Sony's (the
     bespoke mode 'ross'): invalid, used twice (case ignored: a Mac and a

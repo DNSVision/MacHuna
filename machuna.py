@@ -6266,13 +6266,18 @@ def unverified_output_note(output_name):
 HULA_TARGET_QUICKTIME_MOV = "QuickTime MOV"
 HULA_TARGET_KFRAME_TGA = "K-Frame TGA"   # confirmed on a live K-Frame, 2026-10-07
 HULA_TARGET_SONY_TGA    = "Sony TGA"
+# Swift decision 89 (2026-11-23): Sony TGA with long names, for the XVS-9000,
+# XVS-G1 and MLS-X1 (shown as "XVS / MLS TGA (32CHAR)"; "Sony TGA" is shown
+# as "MVS TGA (4CHAR)").
+HULA_TARGET_SONY_LONG_TGA = "Sony Long TGA"
 # Swift decision 85: Sony's frames, Ross naming, TWO entries (David, 2026-11-23):
 # the Acuity manual (and a Vision, tested) wants frame 0; the Carbonite manual,
 # and a Ross contact, say a Carbonite reads from _001 and skips _000.
 HULA_TARGET_ACUITY_TGA    = "Acuity / Vision TGA"   # Name_0000.tga
 HULA_TARGET_CARBONITE_TGA = "Carbonite TGA"         # Name_001.tga
 _ROSS_TGA_TARGETS = (HULA_TARGET_ACUITY_TGA, HULA_TARGET_CARBONITE_TGA)
-_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, HULA_TARGET_SONY_TGA, *_ROSS_TGA_TARGETS}
+_SONY_TGA_TARGETS = (HULA_TARGET_SONY_TGA, HULA_TARGET_SONY_LONG_TGA)
+_HULA_TGA_TARGETS = {HULA_TARGET_KFRAME_TGA, *_SONY_TGA_TARGETS, *_ROSS_TGA_TARGETS}
 
 # Header field offsets for SWS read side (Hula uses read only)
 _HULA_OFF_STD_CODE = 0x188
@@ -6430,10 +6435,41 @@ def ross_tidy_name(source_name) -> str:
     return v or 'CLIP'
 
 
+SONY_LONG_NAME_MAX = 32     # XVS-9000 manual; 8-32 loaded on an MLS-X1 (2026-11-23)
+SONY_LONG_NAME_SHOWN = 20   # an XVS-G1 / MLS-X1 panel shows 20 (a note, not a limit)
+
+
+def sony_long_clip_name(name) -> str:
+    """A long Sony clip name (Swift decision 89): letters, digits, spaces,
+    dashes and underscores, 1-32 characters, case kept, and not ending in a
+    digit: Sony desks take a trailing number as the frame number (the XVS
+    manuals: MON101, MON102.. import as "MON"), so "Goal 2" + "0000" would
+    be misread. It names the folder and every frame (`Goal Sting/Goal
+    Sting0000.tga`)."""
+    v = (name or '').strip()
+    if (not v or len(v) > SONY_LONG_NAME_MAX or not _ROSS_NAME_OK.fullmatch(v)
+            or v[-1].isdigit()):
+        raise ValueError(f"Long Sony clip names are 1-{SONY_LONG_NAME_MAX} letters, digits, "
+                         f"spaces, dashes or underscores, not ending in a digit - "
+                         f"{v!r} is not one")
+    return v
+
+
+def sony_long_tidy_name(source_name) -> str:
+    """A long Sony clip name made from a source's name, for the app's default:
+    as `ross_tidy_name`, then any trailing digits, spaces, dashes and
+    underscores taken off. Always passes sony_long_clip_name."""
+    v = ross_tidy_name(source_name)
+    v = re.sub(r'[0-9 _-]+$', '', v)
+    return v or 'CLIP'
+
+
 def tga_clip_name(target: str, name):
     """The checked clip name for a named TGA target (Sony, Ross), else None."""
     if target == HULA_TARGET_SONY_TGA:
         return sony_clip_name(name)
+    if target == HULA_TARGET_SONY_LONG_TGA:
+        return sony_long_clip_name(name)
     if target in _ROSS_TGA_TARGETS:
         return ross_clip_name(name)
     return None
@@ -6441,12 +6477,12 @@ def tga_clip_name(target: str, name):
 
 def tga_named(target: str) -> bool:
     """Sony and Ross TGA: a folder named after the clip, frames from 0."""
-    return target == HULA_TARGET_SONY_TGA or target in _ROSS_TGA_TARGETS
+    return target in _SONY_TGA_TARGETS or target in _ROSS_TGA_TARGETS
 
 
 def tga_start_number(target: str) -> int:
     """Sony and Acuity / Vision from 0; K-Frame and Carbonite from 1."""
-    return 0 if target in (HULA_TARGET_SONY_TGA, HULA_TARGET_ACUITY_TGA) else 1
+    return 0 if target in (*_SONY_TGA_TARGETS, HULA_TARGET_ACUITY_TGA) else 1
 
 
 def tga_frame_pattern(target: str, cn) -> str:
@@ -6456,7 +6492,7 @@ def tga_frame_pattern(target: str, cn) -> str:
     order), and `tga_finish_names` makes them three at the end."""
     if target in _ROSS_TGA_TARGETS:
         return f"{cn}_%04d.tga"
-    if target == HULA_TARGET_SONY_TGA:
+    if target in _SONY_TGA_TARGETS:
         return f"{cn}%04d.tga"
     return '%04d.tga'
 
@@ -8059,6 +8095,7 @@ BESPOKE_MODE_SWS  = 'sws'    # Kahuna SWS   — integer 1-9999, writes <N>.SWS
 BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.eif
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
 BESPOKE_MODE_ROSS = 'ross'   # Ross TGA     — clip name up to 32, writes <Name>/
+BESPOKE_MODE_SONY_LONG = 'sonylong'   # XVS / MLS TGA — clip name up to 32, writes <Name>/
 BESPOKE_MODE_MOV  = 'mov'    # QuickTime MOV — free filename, writes <name>.mov;
                              # blank is allowed and means "use the source name"
 
@@ -8094,9 +8131,10 @@ def normalise_bespoke_value(raw, mode: str):
         if v.endswith((' ', '.')) or v.split('.')[0].upper() in _WINDOWS_RESERVED:
             return None
         return v or None
-    if mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS):
+    if mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG):
         try:
-            return (sony_clip_name if mode == BESPOKE_MODE_SONY else ross_clip_name)(v)
+            return {BESPOKE_MODE_SONY: sony_clip_name, BESPOKE_MODE_ROSS: ross_clip_name,
+                    BESPOKE_MODE_SONY_LONG: sony_long_clip_name}[mode](v)
         except ValueError:
             return None
     if not v.isdigit():
@@ -8136,7 +8174,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     GUI can mark exactly the fields that need attention. Messages group by
     value, which reads better in a dialog than one line per row.
     """
-    is_sony  = mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS)   # a named clip folder
+    is_sony  = mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG)   # a named clip folder
     codes    = [None] * len(entries)
     problems = []
 
@@ -8156,6 +8194,8 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
         what = ("a 4-character clip name (letters and digits only)" if mode == BESPOKE_MODE_SONY
                 else f"a clip name of up to {ROSS_NAME_MAX} letters, digits, spaces, dashes or "
                      f"underscores, not starting with an underscore" if mode == BESPOKE_MODE_ROSS
+                else f"a clip name of up to {SONY_LONG_NAME_MAX} letters, digits, spaces, dashes or "
+                     f"underscores, not ending in a digit" if mode == BESPOKE_MODE_SONY_LONG
                 else "a filename without / \\ : * ? \" < > |, up to 64 characters"
                 if mode == BESPOKE_MODE_MOV
                 else "a number from 1 to 9999")
@@ -8169,7 +8209,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     by_value = {}
     first = {}   # Ross keeps case, but GOAL and Goal are one folder on a Mac or PC disk
     for i, value in values.items():
-        key = value.casefold() if mode == BESPOKE_MODE_ROSS else value
+        key = value.casefold() if mode in (BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG) else value
         by_value.setdefault(first.setdefault(key, value), []).append(i)
     for value, idxs in by_value.items():
         if len(idxs) > 1:
