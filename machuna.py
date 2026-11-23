@@ -5351,6 +5351,29 @@ def _tga_sequence_files(first_tga: str) -> list:
     )
 
 
+def sequence_sound_file(first_frame: str, base: str):
+    """The WAV that belongs to a TGA sequence, or None (David, 2026-11-23):
+    one in the frames' own folder named exactly after the clip, the base with
+    its trailing separator taken off (`Goal Sting0000.tga` -> `Goal
+    Sting.wav`, `Sting_Goal_001.tga` -> `Sting_Goal.wav`), in any case. That
+    is how MacHuna writes it for Sony and Ross (decision 87) and how a Ross
+    desk links it. Any other WAV in the folder is not the clip's and is left
+    alone; a sequence named by numbers alone has no name to match."""
+    stem = (base or '').rstrip('_-. #')
+    if not stem:
+        return None
+    folder = os.path.dirname(os.path.abspath(first_frame))
+    want = f"{stem}.wav".casefold()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return None
+    for name in sorted(names):
+        if name.casefold() == want and os.path.isfile(os.path.join(folder, name)):
+            return os.path.join(folder, name)
+    return None
+
+
 def _find_tga_sequences(folder: str) -> list:
     """Scan folder and return list of (base_name, sorted_file_paths) for each TGA sequence found."""
     groups = {}

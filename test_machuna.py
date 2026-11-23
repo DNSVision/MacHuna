@@ -10148,6 +10148,47 @@ class TestSonyLongTga(unittest.TestCase):
         self.assertIn('not ending in a digit', ' '.join(problems))
 
 
+class TestSequenceSoundBesideTheFrames(unittest.TestCase):
+    """David, 2026-11-23: a WAV named exactly after a TGA sequence, in its
+    folder, is that sequence's sound (as MacHuna writes it for Sony and Ross,
+    and as a Ross desk links it): the player plays it and the row takes it.
+    Any other WAV in the folder is left alone."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='mh-seqsound-')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _seq(self, sub, names, wavs):
+        d = os.path.join(self.tmp, sub); os.makedirs(d)
+        for n in names:
+            Path(d, n).write_bytes(b'x')
+        for w in wavs:
+            Path(d, w).write_bytes(b'RIFF')
+        return d
+
+    def test_the_wav_named_after_the_clip_is_found(self):
+        for frames, wav in ((['Goal Sting0000.tga', 'Goal Sting0001.tga'], 'Goal Sting.wav'),
+                            (['GOAL0000.tga', 'GOAL0001.tga'], 'GOAL.WAV'),
+                            (['Sting_Goal_001.tga', 'Sting_Goal_002.tga'], 'Sting_Goal.wav'),
+                            (['Wipe_0000.tga', 'Wipe_0001.tga'], 'wipe.wav'),
+                            (['REPLAY.0001.tga', 'REPLAY.0002.tga'], 'REPLAY.wav')):
+            with self.subTest(frames=frames[0]):
+                d = self._seq(frames[0], frames, [wav, 'Music Bed.wav'])
+                (base, files), = m._find_tga_sequences(d)
+                self.assertEqual(m.sequence_sound_file(files[0], base), os.path.join(d, wav))
+
+    def test_any_other_wav_is_left_alone(self):
+        for frames, wavs in ((['GOAL0000.tga', 'GOAL0001.tga'], ['Music Bed.wav', 'GOAL2.wav', 'GOAL.aiff']),
+                             (['0001.tga', '0002.tga'], ['.wav', 'Sound.wav']),
+                             (['GOAL0000.tga', 'GOAL0001.tga'], [])):
+            with self.subTest(frames=frames[0], wavs=wavs):
+                d = self._seq(frames[0] + str(len(wavs)), frames, wavs)
+                (base, files), = m._find_tga_sequences(d)
+                self.assertIsNone(m.sequence_sound_file(files[0], base))
+
+
 class TestRossNamesAreChecked(unittest.TestCase):
     """The app checks Ross names before converting, as it does Sony's (the
     bespoke mode 'ross'): invalid, used twice (case ignored: a Mac and a
