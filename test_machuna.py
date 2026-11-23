@@ -10330,6 +10330,22 @@ class TestSonyScz(unittest.TestCase):
             self.assertTrue(np.array_equal(self._pixels(f), np.dstack([rgb, alpha])), f)
         self.assertIsNone(made['sound'])
 
+    def test_clip_names_for_an_archive_are_checked(self):
+        """One per clip: each writes NAME.scz, so it is checked against the
+        destination. One for the batch: the names live inside one archive,
+        so only duplicates (any case) matter. The long Sony name rule."""
+        d = os.path.join(self.tmp, 'names'); os.makedirs(d, exist_ok=True)
+        Path(d, 'Goal Sting.scz').write_bytes(b'x')
+        os.makedirs(os.path.join(d, 'Sub Sting'), exist_ok=True)
+        rows = [('a', 'Goal Sting'), ('b', 'Sub Sting'), ('c', 'Wipe 2'), ('d', 'replay'), ('e', 'Replay')]
+        codes, _ = m._analyse_bespoke_ids(rows, m.BESPOKE_MODE_SCZ, d)
+        self.assertEqual(codes, [m.BESPOKE_ISSUE_EXISTS, None, m.BESPOKE_ISSUE_INVALID,
+                                 m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE])
+        codes, _ = m._analyse_bespoke_ids(rows, m.BESPOKE_MODE_SCZ_BUNDLE, d)
+        self.assertEqual(codes, [None, None, m.BESPOKE_ISSUE_INVALID,
+                                 m.BESPOKE_ISSUE_DUPLICATE, m.BESPOKE_ISSUE_DUPLICATE])
+        self.assertEqual(m.bespoke_output_name('Goal Sting', m.BESPOKE_MODE_SCZ), 'Goal Sting.scz')
+
     def test_solid_key_for_ignore_key_on_tga_outputs(self):
         d = os.path.join(self.tmp, 'solid'); os.makedirs(d)
         for p in self.frames:

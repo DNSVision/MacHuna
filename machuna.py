@@ -8090,7 +8090,12 @@ def extract_scz_clip(path: str, index: int, out_dir: str, log=print) -> dict:
         for i, entry in enumerate(clip['fill']):
             _check_stop()
             out = os.path.join(out_dir, f"{safe}#{i:06d}.tga")
-            if clip['kind'] == 'tga':
+            if clip['kind'] == 'tga' and not clip['key']:
+                # Already a whole TGA with its key in the alpha: copied as it
+                # is, no decoding (a bundle opens in seconds, not minutes).
+                with open(out, 'wb') as f:
+                    f.write(z.read(entry))
+            elif clip['kind'] == 'tga':
                 with Image.open(io.BytesIO(z.read(entry))) as im:
                     rgba = im.convert('RGBA')
                     if clip['key']:
@@ -8380,6 +8385,9 @@ BESPOKE_MODE_EIF  = 'eif'    # K-Frame EIF  — integer 1-9999, writes <NNNN>.ei
 BESPOKE_MODE_SONY = 'sony'   # Sony TGA     — 4-char clip name, writes <NAME>/
 BESPOKE_MODE_ROSS = 'ross'   # Ross TGA     — clip name up to 32, writes <Name>/
 BESPOKE_MODE_SONY_LONG = 'sonylong'   # XVS / MLS TGA — clip name up to 32, writes <Name>/
+BESPOKE_MODE_SCZ = 'scz'              # Sony SCZ, one per clip — writes <Name>.scz
+BESPOKE_MODE_SCZ_BUNDLE = 'sczbundle' # Sony SCZ, one for the batch — names inside one archive
+_LONG_NAME_MODES = ('sonylong', 'scz', 'sczbundle')
 BESPOKE_MODE_MOV  = 'mov'    # QuickTime MOV — free filename, writes <name>.mov;
                              # blank is allowed and means "use the source name"
 
@@ -8415,10 +8423,10 @@ def normalise_bespoke_value(raw, mode: str):
         if v.endswith((' ', '.')) or v.split('.')[0].upper() in _WINDOWS_RESERVED:
             return None
         return v or None
-    if mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG):
+    if mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS) or mode in _LONG_NAME_MODES:
         try:
-            return {BESPOKE_MODE_SONY: sony_clip_name, BESPOKE_MODE_ROSS: ross_clip_name,
-                    BESPOKE_MODE_SONY_LONG: sony_long_clip_name}[mode](v)
+            return (sony_clip_name if mode == BESPOKE_MODE_SONY else ross_clip_name
+                    if mode == BESPOKE_MODE_ROSS else sony_long_clip_name)(v)
         except ValueError:
             return None
     if not v.isdigit():
@@ -8437,6 +8445,10 @@ def bespoke_output_name(value, mode: str) -> str:
         return f"{value:04d}.eif"
     if mode == BESPOKE_MODE_MOV:
         return f"{value}.mov"
+    if mode == BESPOKE_MODE_SCZ:
+        return f"{value}.scz"
+    if mode == BESPOKE_MODE_SCZ_BUNDLE:
+        return ''          # inside one archive: the archive's own name is checked apart
     return str(value)
 
 
@@ -8459,6 +8471,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     value, which reads better in a dialog than one line per row.
     """
     is_sony  = mode in (BESPOKE_MODE_SONY, BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG)   # a named clip folder
+    named    = is_sony or mode in _LONG_NAME_MODES
     codes    = [None] * len(entries)
     problems = []
 
@@ -8479,7 +8492,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
                 else f"a clip name of up to {ROSS_NAME_MAX} letters, digits, spaces, dashes or "
                      f"underscores, not starting with an underscore" if mode == BESPOKE_MODE_ROSS
                 else f"a clip name of up to {SONY_LONG_NAME_MAX} letters, digits, spaces, dashes or "
-                     f"underscores, not ending in a digit" if mode == BESPOKE_MODE_SONY_LONG
+                     f"underscores, not ending in a digit" if mode in _LONG_NAME_MODES
                 else "a filename without / \\ : * ? \" < > |, up to 64 characters"
                 if mode == BESPOKE_MODE_MOV
                 else "a number from 1 to 9999")
@@ -8493,11 +8506,11 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
     by_value = {}
     first = {}   # Ross keeps case, but GOAL and Goal are one folder on a Mac or PC disk
     for i, value in values.items():
-        key = value.casefold() if mode in (BESPOKE_MODE_ROSS, BESPOKE_MODE_SONY_LONG) else value
+        key = value.casefold() if mode == BESPOKE_MODE_ROSS or mode in _LONG_NAME_MODES else value
         by_value.setdefault(first.setdefault(key, value), []).append(i)
     for value, idxs in by_value.items():
         if len(idxs) > 1:
-            noun = ("Clip name" if is_sony
+            noun = ("Clip name" if named
                     else "Name" if mode == BESPOKE_MODE_MOV else "Number")
             for i in idxs:
                 codes[i] = BESPOKE_ISSUE_DUPLICATE
@@ -8510,7 +8523,7 @@ def _analyse_bespoke_ids(entries: list, mode: str, dest_dir: str, replaceable=()
         for value, idxs in by_value.items():
             name = bespoke_output_name(value, mode)
             path = os.path.join(dest_dir, name)
-            if not os.path.exists(path):
+            if not name or not os.path.exists(path):
                 continue
             if name in replaceable:
                 # Decision 68: the file this row made, this session, untouched
