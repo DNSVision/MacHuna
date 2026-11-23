@@ -9953,6 +9953,119 @@ class TestRossTga(unittest.TestCase):
                         self.assertEqual(os.listdir(self._ross(src, '1080p50', name=name, target=target)), [])
 
 
+class TestTgaSound(unittest.TestCase):
+    """Swift decision 87 (David, 2026-11-22): Sony TGA, Acuity / Vision TGA and
+    Carbonite TGA carry the row's sound as a WAV INSIDE the frames' folder,
+    named after the clip (Ross links a WAV by the same name; Sony links by
+    hand, so the place is only a convenience): 48 kHz stereo 24-bit, exactly
+    the picture's length, a leading clear frame as silence. Written only when
+    the row has sound and Include audio is on; other TGA outputs unchanged."""
+
+    NAMED = {m.HULA_TARGET_SONY_TGA: 'GOAL', m.HULA_TARGET_ACUITY_TGA: 'Sting Goal',
+             m.HULA_TARGET_CARBONITE_TGA: 'Sting_Goal'}
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        ff = m._get_ffmpeg_path('ffmpeg')
+        cls.tmp = tempfile.mkdtemp(prefix='mh-tgasound-')
+        q = lambda *a: None
+        cls.mov = os.path.join(cls.tmp, 'src.mov')
+        # 10 frames at 50fps (0.2 s) with 0.3 s of sound: the sound runs past
+        # the picture, as an SWS's may, so trimming is seen.
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=192x108:rate=50:duration=0.2',
+                        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=0.3',
+                        '-ac', '2', '-c:v', 'prores_ks', '-c:a', 'pcm_s24le',
+                        cls.mov], check=True, stdin=subprocess.DEVNULL)
+        assert len(m._clip_sound_stereo24(cls.mov)) > 9600, 'the fixture sound must outrun its picture'
+        d = os.path.join(cls.tmp, 'src'); os.makedirs(d)
+        m.convert_clip(cls.mov, 1, d, video_standard='1080p50', include_audio=True,
+                       split_fat32=False, log=q)
+        cls.sws = os.path.join(d, '1.SWS')
+        cls.eif = m.convert_clip_to_eif(cls.mov, d, log=q, out_name='0001', include_audio=True)
+        cls.quiet = os.path.join(cls.tmp, 'quiet.mov')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=192x108:rate=50',
+                        '-frames:v', '10', '-c:v', 'prores_ks', cls.quiet],
+                       check=True, stdin=subprocess.DEVNULL)
+        cls.tune = os.path.join(cls.tmp, 'Tune 1.wav')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi',
+                        '-i', 'sine=frequency=1000:sample_rate=44100:duration=0.1',
+                        '-ac', '1', '-c:a', 'pcm_s16le', cls.tune], check=True, stdin=subprocess.DEVNULL)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _run(self, src, target, name, **kw):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([src], out, target, standard='1080p50', clip_name=name,
+                          clip_names=[name], log=lambda *a: None,
+                          keep_duration=True, **kw)
+        return os.path.join(out, name)
+
+    @staticmethod
+    def _read(path):
+        import wave
+        with wave.open(path, 'rb') as w:
+            fmt = (w.getframerate(), w.getnchannels(), w.getsampwidth())
+            raw = np.frombuffer(w.readframes(w.getnframes()), np.uint8).reshape(-1, 3)
+        v = (raw[:, 0].astype(np.int64) | raw[:, 1].astype(np.int64) << 8
+             | raw[:, 2].astype(np.int64) << 16)
+        v = np.where(v >= 1 << 23, v - (1 << 24), v)
+        return fmt, v.reshape(-1, 2)
+
+    def _frames(self, folder):
+        return len([f for f in os.listdir(folder) if f.lower().endswith('.tga')])
+
+    def test_every_named_output_carries_the_sound_beside_its_frames(self):
+        for target, name in self.NAMED.items():
+            for src in (self.mov, self.sws, self.eif):
+                with self.subTest(target=target, src=os.path.basename(src)):
+                    folder = self._run(src, target, name)
+                    wav = os.path.join(folder, f'{name}.wav')
+                    self.assertTrue(os.path.isfile(wav), os.listdir(folder))
+                    fmt, got = self._read(wav)
+                    self.assertEqual(fmt, (48000, 2, 3))
+                    self.assertEqual(len(got), self._frames(folder) * 48000 // 50)
+                    want = np.asarray(m._clip_sound_stereo24(src), np.int64)[:len(got)]
+                    self.assertTrue(np.array_equal(got[:len(want)], want), 'the source\'s own sound')
+                    self.assertFalse(got[len(want):].any(), 'any gap after it is silence')
+
+    def test_a_clear_frame_at_the_start_is_silence_and_the_end_is_padded(self):
+        name = 'Sting_Goal'
+        folder = self._run(self.sws, m.HULA_TARGET_CARBONITE_TGA, name, clear_frames='both')
+        _, got = self._read(os.path.join(folder, f'{name}.wav'))
+        self.assertEqual(len(got), self._frames(folder) * 960)
+        self.assertFalse(got[:960].any(), 'one frame of silence for the clear frame')
+        want = np.asarray(m._clip_sound_stereo24(self.sws), np.int64)[:len(got) - 960]
+        self.assertTrue(np.array_equal(got[960:960 + len(want)], want))
+        self.assertFalse(got[960 + len(want):].any())
+
+    def test_a_chosen_sound_file_is_used_and_padded_to_the_picture(self):
+        name = 'GOAL'
+        folder = self._run(self.quiet, m.HULA_TARGET_SONY_TGA, name, sound_files=[self.tune])
+        fmt, got = self._read(os.path.join(folder, f'{name}.wav'))
+        self.assertEqual(fmt, (48000, 2, 3))
+        self.assertEqual(len(got), self._frames(folder) * 960)
+        want = np.asarray(m._clip_sound_stereo24(self.tune), np.int64)
+        self.assertTrue(np.array_equal(got[:len(want)], want))
+        self.assertFalse(got[len(want):].any(), 'padded with silence')
+
+    def test_no_sound_writes_no_wav(self):
+        for kw, src in (({'include_audio': False}, self.sws), ({}, self.quiet)):
+            with self.subTest(kw=kw, src=os.path.basename(src)):
+                folder = self._run(src, m.HULA_TARGET_ACUITY_TGA, 'Goal', **kw)
+                self.assertTrue(self._frames(folder))
+                self.assertEqual([f for f in os.listdir(folder) if f.lower().endswith('.wav')], [])
+
+    def test_other_tga_outputs_are_unchanged(self):
+        out = tempfile.mkdtemp(dir=self.tmp)
+        m._hula_run_batch([self.sws], out, m.HULA_TARGET_KFRAME_TGA, standard='1080p50',
+                          clip_name='WIPE', log=lambda *a: None)
+        wavs = [f for _, _, fs in os.walk(out) for f in fs if f.lower().endswith('.wav')]
+        self.assertEqual(wavs, [])
+
+
 class TestRossNamesAreChecked(unittest.TestCase):
     """The app checks Ross names before converting, as it does Sony's (the
     bespoke mode 'ross'): invalid, used twice (case ignored: a Mac and a

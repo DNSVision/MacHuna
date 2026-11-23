@@ -7761,6 +7761,54 @@ def _fit_tga_folder_to_show(folder: str, target: str, clip_name, src_fps: float,
     return len(names)
 
 
+def write_tga_sound(folder: str, target: str, cn, source: str = None,
+                    sound_file: str = None, standard: str = '1080p50',
+                    clear_frames: str = None, log=print):
+    """The row's sound beside a named TGA clip's frames (Swift decision 87,
+    David 2026-11-22): `<folder>/<name>.wav`, the name exactly the clip's, as
+    a Ross desk links a WAV by the same name (Sony links by hand). 48 kHz
+    stereo 24-bit, exactly the picture's length at the standard's rate
+    (padded with silence or cut), one frame of silence per clear frame at the
+    start. The sound is `sound_file` when given, else the source's own (clip,
+    SWS or EIF). Call it after the frames are final. Returns the WAV's path,
+    or None, writing nothing, for another target or when there is no sound."""
+    import wave
+    if not tga_named(target):
+        return None
+    if sound_file:
+        stereo = _sound_file_stereo24(sound_file, log)
+    else:
+        stereo = _clip_sound_stereo24(source) if source else None
+    if stereo is None or len(stereo) == 0:
+        return None
+    fps = FORMAT_VARIANT_FPS[FORMAT_VARIANTS[standard]]
+    frames = sum(1 for f in os.listdir(folder) if f.lower().endswith('.tga'))
+    stereo = np.asarray(_delay_sound(stereo, fps, clear_frames), np.int64).reshape(-1, 2)
+    n = int(round(frames * EAF_SAMPLE_RATE / fps))
+    have = len(stereo)
+    if have < n:
+        stereo = np.concatenate([stereo, np.zeros((n - have, 2), np.int64)])
+    stereo = stereo[:n]
+    out_path = os.path.join(folder, f"{cn}.wav")
+    tmp = f"{out_path}.part-{os.getpid()}"
+    try:
+        with wave.open(tmp, 'wb') as w:
+            w.setnchannels(2)
+            w.setsampwidth(3)
+            w.setframerate(EAF_SAMPLE_RATE)
+            w.writeframes((stereo & 0xFFFFFF).astype('<u4').view(np.uint8)
+                          .reshape(-1, 4)[:, :3].tobytes())
+        os.replace(tmp, out_path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    note = ('' if have == n else
+            f" (the sound runs {have / EAF_SAMPLE_RATE:.2f}s, "
+            f"{'cut' if have > n else 'padded with silence'} to the picture)")
+    log(f"  Sound: {cn}.wav, {n / EAF_SAMPLE_RATE:.2f}s, 24-bit 48 kHz stereo{note}")
+    return out_path
+
+
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
@@ -7776,7 +7824,8 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
     clip_names, when given, is one Sony clip name per input path (bespoke
     names) and overrides the single shared clip_name for that item.
     sound_files, when given, is one sound file (or None) per input path, for
-    QuickTime MOV output; TGA cannot carry sound. no_alpha (Ignore key) makes
+    QuickTime MOV output and the named TGA outputs (Sony, Acuity / Vision,
+    Carbonite: a WAV beside the frames, decision 87); other TGA carries none. no_alpha (Ignore key) makes
     a QuickTime MOV with no alpha channel; TGA output is not affected.
 
     keep_duration (Swift decision 74.1, K-Frame TGA and Sony TGA): `standard` is
@@ -7862,6 +7911,9 @@ def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                 add_clear_tga_frames(out, clear_frames, log=log)
             if out:
                 tga_finish_names(out, target, cn)
+                if include_audio:
+                    write_tga_sound(out, target, cn, source=path, sound_file=sound,
+                                    standard=standard, clear_frames=clear_frames, log=log)
             ok += 1
         except Exception as e:
             log(f"  ERROR: {e}")
