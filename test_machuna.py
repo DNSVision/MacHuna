@@ -10189,6 +10189,158 @@ class TestSequenceSoundBesideTheFrames(unittest.TestCase):
                 self.assertIsNone(m.sequence_sound_file(files[0], base))
 
 
+class TestSonyScz(unittest.TestCase):
+    """Swift decision 91 (David, 2026-11-23): Sony SCZ written, read and
+    played. An SCZ is a zip: numbered folders of frames (`NAME#000000.TGA` as
+    the desk's own multi-clip export, uncompressed 32-bit bottom row first,
+    one folder as fill and key; or Sony's `#000000.SFU`, a 4,096-byte header
+    and one v210 plane with every word the other way round from an SWS, fill
+    and key in two folders), a folder per sound, and LogicalMaterials.json:
+    unique_name, folder, comment (the Memo), tags, frame_rate (2500/5000),
+    physical_id {0 fill, 1 key, 2 sound}."""
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.tmp = tempfile.mkdtemp(prefix='mh-scz-')
+        cls.frames = []
+        rng = np.random.default_rng(7)
+        for i in range(3):
+            rgba = rng.integers(0, 256, (6, 8, 4), dtype=np.uint8)
+            p = os.path.join(cls.tmp, f'SRC{i:04d}.tga')
+            Image.fromarray(rgba, 'RGBA').save(p)
+            cls.frames.append(p)
+        ff = m._get_ffmpeg_path('ffmpeg')
+        cls.wav = os.path.join(cls.tmp, 'Tune 1.wav')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                        'sine=frequency=440:sample_rate=48000:duration=0.06', '-ac', '2',
+                        '-c:a', 'pcm_s24le', cls.wav], check=True, stdin=subprocess.DEVNULL)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _pixels(self, path):
+        with Image.open(path) as im:
+            return np.asarray(im.convert('RGBA'))
+
+    def test_folders_tags_memo_and_rates_are_checked(self):
+        self.assertEqual(m.scz_folder(''), '/Default_Folder/')
+        self.assertEqual(m.scz_folder('  '), '/Default_Folder/')
+        self.assertEqual(m.scz_folder('Match Day/Goals'), '/Match Day/Goals/')
+        self.assertEqual(m.scz_folder('/Match Day/Goals/'), '/Match Day/Goals/')
+        for bad in ('a/b/c/d/e/f', 'x' * 33, 'Goals:1', 'What?'):
+            with self.subTest(folder=bad), self.assertRaises(ValueError):
+                m.scz_folder(bad)
+        self.assertEqual(m.scz_tags(' Premier League, Goals ,, '), ['Premier League', 'Goals'])
+        self.assertEqual(m.scz_tags(''), [])
+        with self.assertRaises(ValueError):
+            m.scz_tags('x' * 25)
+        self.assertEqual(m.scz_memo('  Arsenal v Spurs '), 'Arsenal v Spurs')
+        with self.assertRaises(ValueError):
+            m.scz_memo('x' * 256)
+        self.assertEqual((m.scz_frame_rate(25.0), m.scz_frame_rate(50)), (2500, 5000))
+        with self.assertRaises(ValueError):
+            m.scz_frame_rate(29.97)
+
+    def test_written_as_the_desk_writes_and_read_back_whole(self):
+        dest = os.path.join(self.tmp, 'Match Day.scz')
+        clips = [{'name': 'Goal Sting', 'folder': '/Match Day/Goals/', 'memo': 'Arsenal v Spurs',
+                  'tags': ['Premier League', 'Goals'], 'frames': self.frames, 'sound': self.wav,
+                  'frame_rate': 5000},
+                 {'name': 'Still Slate', 'folder': '/Default_Folder/', 'memo': '', 'tags': [],
+                  'frames': self.frames[:1], 'sound': None, 'frame_rate': 2500}]
+        m.write_scz(dest, clips, log=lambda *a: None)
+        import zipfile
+        with zipfile.ZipFile(dest) as z:
+            meta = json.loads(z.read('LogicalMaterials.json'))['logical']
+            first = z.read('000001/Goal Sting#000000.TGA')
+            sound = z.read('000002/Goal Sting.WAV')
+        self.assertEqual(meta[0]['physical_id'], {'0': '000001', '1': '000001', '2': '000002'})
+        self.assertEqual(meta[1]['physical_id'], {'0': '000003', '1': '000003'})
+        self.assertEqual((meta[0]['unique_name'], meta[0]['folder'], meta[0]['comment'], meta[0]['tags'],
+                          meta[0]['frame_rate'], meta[0]['sfu_scan_type']),
+                         ('Goal Sting', '/Match Day/Goals/', 'Arsenal v Spurs', ['Premier League', 'Goals'],
+                          5000, ''))
+        self.assertEqual(first[:18], bytes([0, 0, 2]) + bytes(9) + (8).to_bytes(2, 'little')
+                         + (6).to_bytes(2, 'little') + bytes([32, 8]))
+        self.assertEqual(first[-26:], bytes(8) + b'TRUEVISION-XFILE.\0')
+        self.assertEqual(len(first), 18 + 8 * 6 * 4 + 26)
+        self.assertEqual(sound, Path(self.wav).read_bytes())
+        got = m.read_scz(dest)
+        self.assertEqual([(c['name'], c['folder'], c['memo'], c['tags'], c['fps'], c['frames'],
+                           c['kind'], c['sound'] is not None) for c in got],
+                         [('Goal Sting', '/Match Day/Goals/', 'Arsenal v Spurs', ['Premier League', 'Goals'],
+                           50.0, 3, 'tga', True),
+                          ('Still Slate', '/Default_Folder/', '', [], 25.0, 1, 'tga', False)])
+        out = os.path.join(self.tmp, 'cache-a')
+        made = m.extract_scz_clip(dest, 0, out, log=lambda *a: None)
+        for src, f in zip(self.frames, made['files']):
+            self.assertTrue(np.array_equal(self._pixels(f), self._pixels(src)), f)
+        self.assertEqual(Path(made['sound']).read_bytes(), Path(self.wav).read_bytes())
+        # The unpacked clip is an ordinary sequence with its WAV beside it.
+        (base, files), = m._find_tga_sequences(out)
+        self.assertEqual(len(files), 3)
+        self.assertEqual(m.sequence_sound_file(files[0], base), made['sound'])
+
+    def test_a_bundle_never_holds_two_clips_of_one_name_and_is_never_left_half_written(self):
+        dest = os.path.join(self.tmp, 'Twice.scz')
+        clip = {'name': 'Goal', 'folder': '', 'memo': '', 'tags': [], 'frames': self.frames,
+                'sound': None, 'frame_rate': 5000}
+        with self.assertRaisesRegex(ValueError, 'Goal'):
+            m.write_scz(dest, [clip, dict(clip, name='goal')], log=lambda *a: None)
+        self.assertFalse([n for n in os.listdir(self.tmp) if n.startswith('Twice')])
+
+    def test_sony_sfu_frames_are_read(self):
+        """A clip in Sony's own frame format: the SWS's own planes with each
+        word turned round, as the desk's SFU files hold them (the first test
+        archive, made that way, loaded on an MLS-X1, 2026-11-23)."""
+        import subprocess, zipfile
+        ff = m._get_ffmpeg_path('ffmpeg')
+        mov = os.path.join(self.tmp, 'sfu.mov')
+        subprocess.run([ff, '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=50',
+                        '-frames:v', '2', '-c:v', 'prores_ks', '-profile:v', '4444',
+                        '-pix_fmt', 'yuva444p10le', mov], check=True, stdin=subprocess.DEVNULL)
+        d = os.path.join(self.tmp, 'sfu-sws'); os.makedirs(d)
+        m.convert_clip(mov, 1, d, video_standard='1080p50', include_audio=False,
+                       split_fat32=False, log=lambda *a: None)
+        h = m.HulaSWSHeader(os.path.join(d, '1.SWS'))
+        planes = []
+        with open(os.path.join(d, '1.SWS'), 'rb') as f:
+            for i in range(h.frame_count):
+                f.seek(h.data_offset + i * h.plane_size); fill = f.read(h.plane_size)
+                f.seek(h.data_offset + (h.frame_count + i) * h.plane_size); key = f.read(h.plane_size)
+                planes.append((fill, key))
+        head = m.SCZ_SFU_HEADER
+        dest = os.path.join(self.tmp, 'Sony Own.scz')
+        swap = lambda b: np.frombuffer(b, '<u4').astype('>u4').tobytes()
+        with zipfile.ZipFile(dest, 'w') as z:
+            for i, (fill, key) in enumerate(planes):
+                z.writestr(f'000001/#{i:06d}.SFU', head + swap(fill))
+                z.writestr(f'000002/#{i:06d}.SFU', head + swap(key))
+            z.writestr('LogicalMaterials.json', json.dumps({'logical': [{
+                'physical_id': {'0': '000001', '1': '000002'}, 'comment': '', 'folder': '/Default_Folder/',
+                'unique_name': 'Sony Own', 'tags': [], 'trim_info': {}, 'frame_rate': 5000,
+                'physical_last_modified_date': {}, 'sfu_scan_type': 'PROGRESSIVE'}]}))
+        (clip,) = m.read_scz(dest)
+        self.assertEqual((clip['name'], clip['kind'], clip['frames'], clip['fps']), ('Sony Own', 'sfu', 2, 50.0))
+        made = m.extract_scz_clip(dest, 0, os.path.join(self.tmp, 'cache-sfu'), log=lambda *a: None)
+        for (fill, key), f in zip(planes, made['files']):
+            rgb, alpha = m._hula_decode_frame(fill, key, 1920, 1080)
+            self.assertTrue(np.array_equal(self._pixels(f), np.dstack([rgb, alpha])), f)
+        self.assertIsNone(made['sound'])
+
+    def test_solid_key_for_ignore_key_on_tga_outputs(self):
+        d = os.path.join(self.tmp, 'solid'); os.makedirs(d)
+        for p in self.frames:
+            shutil.copy(p, d)
+        m.solid_key_tga_folder(d)
+        for p in sorted(os.listdir(d)):
+            px = self._pixels(os.path.join(d, p))
+            self.assertTrue((px[..., 3] == 255).all())
+            self.assertTrue(np.array_equal(px[..., :3], self._pixels(os.path.join(self.tmp, p))[..., :3]))
+
+
 class TestRossNamesAreChecked(unittest.TestCase):
     """The app checks Ross names before converting, as it does Sony's (the
     bespoke mode 'ross'): invalid, used twice (case ignored: a Mac and a

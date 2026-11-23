@@ -7868,6 +7868,267 @@ def write_tga_sound(folder: str, target: str, cn, source: str = None,
     return out_path
 
 
+# ── Sony SCZ (Swift decision 91, David 2026-11-23) ───────────────────────────
+#
+# An SCZ is the content archive of a Sony XVS-G1 or MLS-X1 ("Import as
+# Archive"): a zip of numbered folders of frames, a folder per sound, and
+# LogicalMaterials.json saying, for each clip, its name, desk folder, memo,
+# tags and rate, and which folders hold its fill (0), key (1) and sound (2).
+# Learned from the desk's own exports and a Sony user's MLS-X1 tests (engine
+# DEVELOPMENT_NOTES, "SONY DESK RESULTS"); limits from Sony's MLS-X1 manual.
+# MacHuna writes frames as the desk's own multi-clip export does: TGA,
+# uncompressed 32-bit, bottom row first, one folder as fill and key. It reads
+# that and Sony's own SFU frames.
+
+HULA_TARGET_SONY_SCZ = "Sony SCZ"
+SCZ_DEFAULT_FOLDER = '/Default_Folder/'
+SCZ_FOLDER_MAX = 32        # MLS-X1 manual: folder names
+SCZ_FOLDER_LEVELS = 5      # "Folders cannot be created under a folder at the 5th level"
+SCZ_TAG_MAX = 24
+SCZ_MEMO_MAX = 255
+_SCZ_BAD = set('\\:*?"<>|')
+# The 4,096-byte header of every SFU frame the desk wrote (identical in all
+# 102 of one export, and in ours, which loaded): 1920x1080, 5,120-byte lines.
+SCZ_SFU_HEADER = (b"ULM FM  " + struct.pack("<7I", 1, 0x1000, 1920, 5120, 1080, 1, 1)
+                  + bytes.fromhex("56c96d40")).ljust(4096, b"\0")
+
+
+def scz_folder(text) -> str:
+    """A desk folder as the archive holds it ("/Match Day/Goals/"); blank is
+    the desk's own Default_Folder. At most five levels of 32 characters, none
+    of \\ : * ? " < > |."""
+    parts = [p.strip() for p in str(text or '').replace('\\', '/').split('/') if p.strip()]
+    if not parts:
+        return SCZ_DEFAULT_FOLDER
+    if len(parts) > SCZ_FOLDER_LEVELS:
+        raise ValueError(f"A desk folder can be at most {SCZ_FOLDER_LEVELS} levels deep.")
+    for part in parts:
+        if len(part) > SCZ_FOLDER_MAX:
+            raise ValueError(f"A desk folder name can be at most {SCZ_FOLDER_MAX} characters: \"{part}\".")
+        if any(c in _SCZ_BAD for c in part):
+            raise ValueError(f"A desk folder name cannot hold \\ : * ? \" < > |: \"{part}\".")
+    return '/' + '/'.join(parts) + '/'
+
+
+def scz_tags(text) -> list:
+    """Tags typed as one line, separated by commas; each at most 24 characters."""
+    out = []
+    for t in str(text or '').split(','):
+        t = t.strip()
+        if not t or t in out:
+            continue
+        if len(t) > SCZ_TAG_MAX:
+            raise ValueError(f"A tag can be at most {SCZ_TAG_MAX} characters: \"{t}\".")
+        out.append(t)
+    return out
+
+
+def scz_memo(text) -> str:
+    v = str(text or '').strip()
+    if len(v) > SCZ_MEMO_MAX:
+        raise ValueError(f"A memo can be at most {SCZ_MEMO_MAX} characters.")
+    return v
+
+
+def scz_frame_rate(fps) -> int:
+    """The archive's rate (frames a second x 100). 25 and 50 are the only ones
+    seen in a desk's own archives, so the only ones written."""
+    for rate in (25.0, 50.0):
+        if abs(float(fps) - rate) < 0.01:
+            return int(rate * 100)
+    raise ValueError(f"Sony SCZ is written at 25 or 50 frames a second, not {float(fps):g}.")
+
+
+def _scz_tga(rgba) -> bytes:
+    """One frame as the desk writes TGA inside an archive: uncompressed 32-bit,
+    bottom row first (descriptor 0x08), BGRA, the 26-byte TGA 2.0 footer."""
+    h, w = rgba.shape[:2]
+    head = bytes([0, 0, 2]) + bytes(9) + int(w).to_bytes(2, 'little') + int(h).to_bytes(2, 'little') + bytes([32, 0x08])
+    return head + np.ascontiguousarray(rgba[::-1][:, :, [2, 1, 0, 3]]).tobytes() + bytes(8) + b"TRUEVISION-XFILE.\0"
+
+
+def write_scz(dest_path: str, clips: list, log=print) -> str:
+    """Write an SCZ holding `clips`, each {'name', 'folder', 'memo', 'tags',
+    'frames' (TGA or PNG files, in order), 'sound' (a WAV or None),
+    'frame_rate' (2500 or 5000)}. Written to a temporary name and moved into
+    place only when whole, so a failure or Stop never leaves half an archive.
+    Two clips of one name (any case) are refused: the desk would quietly
+    rename the second."""
+    import zipfile
+    seen = {}
+    for c in clips:
+        key = c['name'].casefold()
+        if key in seen:
+            both = (f"\"{seen[key]}\"" if seen[key] == c['name']
+                    else f"\"{seen[key]}\" and \"{c['name']}\"")
+            raise ValueError(f"Two clips are called {both} in one archive: the desk "
+                             f"would rename one. Give each a name of its own.")
+        seen[key] = c['name']
+    now = str(int(time.time() * 1000))
+    stamp = time.localtime()[:6]
+
+    def entry(name):
+        zi = zipfile.ZipInfo(name, stamp)
+        zi.compress_type = zipfile.ZIP_DEFLATED
+        zi.create_system = 0
+        return zi
+    tmp = f"{dest_path}.part-{os.getpid()}"
+    logical, n = [], 0
+    try:
+        with zipfile.ZipFile(tmp, 'w', allowZip64=True) as z:
+            for c in clips:
+                n += 1
+                pic = f"{n:06d}"
+                for i, frame in enumerate(c['frames']):
+                    _check_stop()
+                    with Image.open(frame) as im:
+                        rgba = np.asarray(im.convert('RGBA'))
+                    z.writestr(entry(f"{pic}/{c['name']}#{i:06d}.TGA"), _scz_tga(rgba))
+                physical, dates = {"0": pic, "1": pic}, {pic: now}
+                if c.get('sound'):
+                    n += 1
+                    aud = f"{n:06d}"
+                    z.write(c['sound'], f"{aud}/{c['name']}.WAV", compress_type=zipfile.ZIP_DEFLATED)
+                    physical["2"], dates[aud] = aud, now
+                logical.append({"physical_id": physical, "comment": c.get('memo') or '',
+                                "folder": c.get('folder') or SCZ_DEFAULT_FOLDER,
+                                "unique_name": c['name'], "tags": list(c.get('tags') or []),
+                                "trim_info": {}, "frame_rate": int(c['frame_rate']),
+                                "physical_last_modified_date": dates, "sfu_scan_type": ""})
+                log(f"  SCZ: {c['name']}: {len(c['frames'])} frame(s)"
+                    f"{', with sound' if c.get('sound') else ''}, into {c.get('folder') or SCZ_DEFAULT_FOLDER}")
+            z.writestr(entry("LogicalMaterials.json"), json.dumps({"logical": logical}))
+        os.replace(tmp, dest_path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return dest_path
+
+
+def _scz_number(name: str) -> int:
+    mt = re.search(r'(\d+)\.[^.]+$', name)
+    return int(mt.group(1)) if mt else -1
+
+
+def read_scz(path: str) -> list:
+    """The clips in an SCZ, in the archive's order: each {'index', 'name',
+    'folder', 'memo', 'tags', 'frame_rate', 'fps', 'frames', 'kind' ('tga' or
+    'sfu'), 'fill', 'key' (entry lists; key None when the fill's alpha is the
+    key), 'sound' (an entry or None), 'sound_seconds', 'scan'}. Refused in
+    plain words when it is not an archive MacHuna can read."""
+    import zipfile, wave, io
+    name = os.path.basename(path)
+    try:
+        z = zipfile.ZipFile(path)
+    except (zipfile.BadZipFile, OSError):
+        raise ValueError(f"{name} is not a Sony SCZ archive MacHuna can read.") from None
+    with z:
+        try:
+            meta = json.loads(z.read('LogicalMaterials.json')).get('logical') or []
+        except (KeyError, ValueError):
+            raise ValueError(f"{name} has no list of clips (LogicalMaterials.json), "
+                             f"so it is not a Sony SCZ archive.") from None
+        names = [i.filename for i in z.infolist() if not i.is_dir()]
+
+        def folder_files(folder, exts):
+            got = [n for n in names if n.startswith(folder + '/') and n.lower().endswith(exts)]
+            return sorted(got, key=_scz_number)
+        clips = []
+        for index, c in enumerate(meta):
+            ids = c.get('physical_id') or {}
+            fill_dir = ids.get('0')
+            if not fill_dir:
+                continue
+            fill = folder_files(fill_dir, ('.tga', '.sfu'))
+            if not fill:
+                continue
+            kind = 'sfu' if fill[0].lower().endswith('.sfu') else 'tga'
+            key_dir = ids.get('1')
+            key = (folder_files(key_dir, ('.tga', '.sfu'))
+                   if key_dir and key_dir != fill_dir else None)
+            sound = None
+            if ids.get('2'):
+                wavs = folder_files(ids['2'], ('.wav',))
+                sound = wavs[0] if wavs else None
+            seconds = 0.0
+            if sound:
+                try:
+                    with wave.open(io.BytesIO(z.read(sound))) as w:
+                        seconds = w.getnframes() / float(w.getframerate())
+                except (wave.Error, EOFError):
+                    seconds = 0.0
+            rate = int(c.get('frame_rate') or 5000)
+            clips.append({'index': index, 'name': str(c.get('unique_name') or f'Clip {index + 1}'),
+                          'folder': c.get('folder') or SCZ_DEFAULT_FOLDER,
+                          'memo': c.get('comment') or '', 'tags': list(c.get('tags') or []),
+                          'frame_rate': rate, 'fps': rate / 100.0, 'frames': len(fill),
+                          'kind': kind, 'fill': fill, 'key': key, 'sound': sound,
+                          'sound_seconds': seconds, 'scan': c.get('sfu_scan_type') or ''})
+    return clips
+
+
+def _scz_safe(name: str) -> str:
+    v = re.sub(r'[\\/:*?"<>|]+', '_', name).strip(' .') or 'Clip'
+    return v[:64]
+
+
+def extract_scz_clip(path: str, index: int, out_dir: str, log=print) -> dict:
+    """Unpack clip `index` (as `read_scz` numbers them) into `out_dir` as an
+    ordinary TGA sequence, `NAME#000000.tga` on, with its sound beside it as
+    `NAME.wav` (the rule of `sequence_sound_file`), so every MacHuna route and
+    the player take it as they take any sequence. SFU frames are decoded with
+    the SWS's own decoder, each word turned round first. Returns {'files',
+    'first', 'sound'}."""
+    import io, zipfile
+    clip = next((c for c in read_scz(path) if c['index'] == index), None)
+    if clip is None:
+        raise ValueError(f"{os.path.basename(path)} has no clip {index + 1}.")
+    os.makedirs(out_dir, exist_ok=True)
+    safe = _scz_safe(clip['name'])
+    files = []
+    with zipfile.ZipFile(path) as z:
+        for i, entry in enumerate(clip['fill']):
+            _check_stop()
+            out = os.path.join(out_dir, f"{safe}#{i:06d}.tga")
+            if clip['kind'] == 'tga':
+                with Image.open(io.BytesIO(z.read(entry))) as im:
+                    rgba = im.convert('RGBA')
+                    if clip['key']:
+                        with Image.open(io.BytesIO(z.read(clip['key'][min(i, len(clip['key']) - 1)]))) as k:
+                            rgba.putalpha(k.convert('L'))
+                    rgba.save(out)
+            else:
+                turn = lambda b: np.frombuffer(b[4096:], '>u4').astype('<u4').tobytes()
+                fill = turn(z.read(entry))
+                key = turn(z.read(clip['key'][min(i, len(clip['key']) - 1)])) if clip['key'] else None
+                rgb, alpha = _hula_decode_frame(fill, key, 1920, 1080)
+                Image.fromarray(np.dstack([rgb, alpha]), 'RGBA').save(out)
+            files.append(out)
+        sound = None
+        if clip['sound']:
+            sound = os.path.join(out_dir, f"{safe}.wav")
+            with open(sound, 'wb') as f:
+                f.write(z.read(clip['sound']))
+    log(f"  SCZ: {clip['name']}: {len(files)} frame(s) unpacked{', with sound' if sound else ''}")
+    return {'files': files, 'first': files[0] if files else None, 'sound': sound}
+
+
+def solid_key_tga_folder(folder: str) -> int:
+    """Ignore key on a TGA output (Swift decision 91, David: for every TGA
+    output and SCZ): every frame's key made solid, the picture untouched."""
+    n = 0
+    for name in sorted(os.listdir(folder)):
+        if not name.lower().endswith('.tga'):
+            continue
+        p = os.path.join(folder, name)
+        with Image.open(p) as im:
+            rgba = im.convert('RGBA')
+        rgba.putalpha(255)
+        rgba.save(p)
+        n += 1
+    return n
+
+
 def _hula_run_batch(input_paths: list, dest_dir: str, target: str,
                     standard: str = '1080p50',
                     clip_name: str = 'WIPE', field_order: str = 'TFF',
