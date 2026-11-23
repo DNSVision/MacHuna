@@ -3241,6 +3241,60 @@ class TestHdrLut(unittest.TestCase):
         self.assertIsNone(c['does'])
         self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt709'))
 
+    # A broadcaster's LUTs (standardluts.tv, agreed 2026-11-21) have no CICP
+    # lines and say what they do only in the title, with "->", unquoted and
+    # with a level in between. Their tables convert to and from BT.2020, so a
+    # side named HLG or PQ is BT.2020; read as BT.709, saturated colours were
+    # up to 25 codes off and none of the wrong-way refusals fired.
+    TITLED = {
+        # title: (does, in matrix, out matrix, in transfer, out transfer, out primaries)
+        'HLG 203->SDR': ('HLG → SDR', 'bt2020nc', 'bt709', 'arib-std-b67', 'bt709', 'bt709'),
+        'SDR->HLG 203 NITS': ('SDR → HLG', 'bt709', 'bt2020nc', 'bt709', 'arib-std-b67', 'bt2020'),
+        'PQ 145 NITS->SDR': ('PQ → SDR', 'bt2020nc', 'bt709', 'smpte2084', 'bt709', 'bt709'),
+        'HLG203->PQ145': ('HLG → PQ', 'bt2020nc', 'bt2020nc', 'arib-std-b67', 'smpte2084', 'bt2020'),
+        '"SDR > HLG"': ('SDR → HLG', 'bt709', 'bt2020nc', 'bt709', 'arib-std-b67', 'bt2020'),
+        '"SDR to HLG"': ('SDR → HLG', 'bt709', 'bt2020nc', 'bt709', 'arib-std-b67', 'bt2020'),
+        '"hlg_to_sdr"': ('HLG → SDR', 'bt2020nc', 'bt709', 'arib-std-b67', 'bt709', 'bt709'),
+    }
+
+    def test_a_title_alone_says_what_the_lut_does_and_its_colour_spaces(self):
+        for title, want in self.TITLED.items():
+            c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b),
+                                       '# Standard LUTS\nTITLE ' + title))
+            got = (c['does'], c['input_matrix'], c['output_matrix'],
+                   c['input_transfer'], c['output_transfer'], c['output_primaries'])
+            self.assertEqual(got, want, title)
+
+    def test_a_title_naming_nothing_changes_nothing(self):
+        for title in ('"My LUT"', '"PQRS look"', '"SDRish to HLGish"', 'Show 2026->final'):
+            c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b), 'TITLE ' + title))
+            self.assertIsNone(c['does'], title)
+            self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt709'), title)
+            self.assertIsNone(c['input_transfer'], title)
+            self.assertIsNone(c['output_primaries'], title)
+
+    def test_cicp_lines_win_over_the_title(self):
+        c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b),
+                                   '# INPUT CICP: 1 1 1\n# OUTPUT CICP: 9 9 18\nTITLE "HLG->SDR"'))
+        self.assertEqual(c['does'], 'SDR → HLG')
+        self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt709', 'bt2020nc'))
+        # one side given by CICP, the other by the title
+        c = m.read_cube(self._cube(2, lambda r, g, b: (r, g, b),
+                                   '# OUTPUT CICP: 1 1 1\nTITLE "HLG->SDR"'))
+        self.assertEqual(c['does'], 'HLG → SDR')
+        self.assertEqual((c['input_matrix'], c['output_matrix']), ('bt2020nc', 'bt709'))
+        self.assertEqual(c['input_transfer'], 'arib-std-b67')
+
+    def test_a_titled_hdr_to_sdr_lut_refuses_an_sdr_clip(self):
+        p = self._cube(2, lambda r, g, b: (r, g, b), 'TITLE HLG 203->SDR')
+        lut = {'path': p, 'levels': 'full', 'name': 'WBD'}
+        with self.assertRaisesRegex(ValueError, 'already SDR.*expects HLG'):
+            m._lut_for(lut, log=lambda *_: None, info={'color_transfer': 'bt709'}, source='a.mov')
+        p = self._cube(2, lambda r, g, b: (r, g, b), 'TITLE PQ 145 NITS->SDR')
+        with self.assertRaisesRegex(ValueError, 'labelled HLG.*expects PQ'):
+            m._lut_for({'path': p, 'levels': 'full', 'name': 'WBD'}, log=lambda *_: None,
+                       info={'color_transfer': 'arib-std-b67'}, source='a.mov')
+
     def test_broken_files_are_refused_in_plain_words(self):
         good = Path(self._cube(3, lambda r, g, b: (r, g, b))).read_text().splitlines()
         cases = {

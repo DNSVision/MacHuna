@@ -1528,17 +1528,28 @@ def read_cube(path: str) -> dict:
                 return tuple(int(v) for v in mt.groups())   # primaries, matrix, transfer
         return None
     cin, cout = cicp('INPUT'), cicp('OUTPUT')
-    in_matrix = _CICP_MATRIX.get(cin[1], 'bt709') if cin else 'bt709'
-    out_matrix = _CICP_MATRIX.get(cout[1], in_matrix) if cout else in_matrix
-    in_tf = _CICP_TRANSFER.get(cin[2]) if cin else None
-    out_tf = _CICP_TRANSFER.get(cout[2]) if cout else None
+    # What the title says it does: "SDR to HLG", "SDR_TO_HLG", "HLG 203->SDR",
+    # "PQ 145 NITS->SDR", "SDR > HLG". A broadcaster's LUTs (standardluts.tv)
+    # say it only there, with no CICP lines; a side named HLG or PQ is then
+    # BT.2020, as their tables are. CICP lines, where present, win.
+    mt = re.search(r'(?<![A-Za-z])(SDR|HLG|PQ)(?:[\s_-]*\d+)?(?:[\s_-]*NITS?)?'
+                   r'[\s_-]*(?:>|→|TO(?![A-Za-z]))[\s_-]*(SDR|HLG|PQ)(?![A-Za-z])', title, re.I)
+    said_in, said_out = (mt.group(1).upper(), mt.group(2).upper()) if mt else (None, None)
+    word_tf = {'SDR': 'bt709', 'HLG': 'arib-std-b67', 'PQ': 'smpte2084'}
+    word_matrix = {'SDR': 'bt709', 'HLG': 'bt2020nc', 'PQ': 'bt2020nc'}
+    word_primaries = {'SDR': 'bt709', 'HLG': 'bt2020', 'PQ': 'bt2020'}
+    in_matrix = (_CICP_MATRIX.get(cin[1], 'bt709') if cin else
+                 word_matrix.get(said_in, 'bt709'))
+    out_matrix = (_CICP_MATRIX.get(cout[1], in_matrix) if cout else
+                  word_matrix.get(said_out, in_matrix))
+    in_tf = _CICP_TRANSFER.get(cin[2]) if cin else word_tf.get(said_in)
+    out_tf = _CICP_TRANSFER.get(cout[2]) if cout else word_tf.get(said_out)
+    out_primaries = _CICP_PRIMARIES.get(cout[0]) if cout else word_primaries.get(said_out)
     does = None
     if in_tf and out_tf and in_tf != out_tf:
         does = f"{_TRANSFER_WORD[in_tf]} → {_TRANSFER_WORD[out_tf]}"
-    else:
-        mt = re.search(r'\b(SDR|HLG|PQ)[ _-]*TO[ _-]*(SDR|HLG|PQ)\b', title, re.I)
-        if mt:
-            does = f"{mt.group(1).upper()} → {mt.group(2).upper()}"
+    elif said_in:
+        does = f"{said_in} → {said_out}"
     said = ' '.join(comments).lower()
     levels = ('full' if 'full range' in said else
               'video' if any(w in said for w in ('legal range', 'narrow range', 'video range')) else None)
@@ -1548,7 +1559,7 @@ def read_cube(path: str) -> dict:
             'title': title, 'notice': notice, 'levels': levels, 'does': does,
             'input_matrix': in_matrix, 'output_matrix': out_matrix,
             'input_transfer': in_tf, 'output_transfer': out_tf,
-            'output_primaries': _CICP_PRIMARIES.get(cout[0]) if cout else None}
+            'output_primaries': out_primaries}
 
 
 # Tetrahedral interpolation's six cases, in the order they are tried (the
