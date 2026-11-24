@@ -4,6 +4,29 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.24.0 — 2026-11-24
+
+**The desk formats release: Ross TGA, three Sony outputs, Sony SCZ written and read, and sound beside TGA frames.** MacHuna 2.13.0 pins it.
+
+### Added
+- **Ross TGA, two outputs** (Swift decision 85): Acuity / Vision TGA, `Name/Name_0000.tga` from 0000, and Carbonite TGA, `Name/Name_001.tga` from 001. Names up to 32 characters of letters, digits, spaces, dashes and underscores, not starting with an underscore (`ross_clip_name`, `ross_tidy_name`).
+- **Sony TGA with long names** (target "Sony Long TGA", shown as XVS / MLS TGA (32CHAR); Swift decision 89): `Name/Name0000.tga`, up to 32 characters, case kept, not ending in a digit, because a Sony desk reads a trailing number as the frame number (`sony_long_clip_name`, `sony_long_tidy_name`).
+- **Sony SCZ** (Swift decisions 91 and 92):
+  - `write_scz` writes an archive the way the desk's own multi-clip export does: uncompressed 32-bit TGA frames named `NAME#000000.TGA`, with key and sound in one clip, the desk folder, tags, memo and rate.
+  - `read_scz` and `extract_scz_clip` read Sony's own archives too, TGA or Sony's SFU frames.
+  - The rules follow Sony's manual: folders at most 5 levels of 32 characters, tags 24, memo 255, 25 or 50 fps.
+  - An archive too big for a FAT32 stick says so in plain words and leaves nothing behind.
+- **A WAV beside named TGA frames** (Swift decision 87; `write_tga_sound`): 48 kHz stereo 24-bit, named after the clip, cut or padded to the picture's length, with clear frames as silence. It is written for Acuity / Vision, Carbonite and XVS / MLS TGA, **not** for MVS Sony TGA (`tga_carries_sound`): an MVS cannot import a WAV.
+- **A TGA sequence's own WAV**, named after it in the same folder, is its sound (`sequence_sound_file`; Swift decision 90).
+- **Ignore key for every TGA output:** `solid_key_tga_folder` gives a solid key.
+- **LUTs that say what they do only in their title** (`SDR to HLG`, `HLG > SDR`, `PQ→SDR`): `read_cube` reads the direction from the title, and a side named HLG or PQ is BT.2020.
+
+### Changed
+- **The day's log is appended:** each batch is added with its time, instead of replacing the file.
+
+### Fixed
+- **Sony's `#` before the frame number** (`CLIP#000000.tga`, as an XVS-9000 exports) is part of the numbering. Such a sequence is now called "CLIP", not "CLIP#" (`_sequence_name`).
+
 ## v1.22.2 — 2026-11-15
 
 **HDR is about ten times faster, with the same output to the bit.** MacHuna 2.11.2 pins it.

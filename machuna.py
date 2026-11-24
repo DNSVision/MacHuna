@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.23.0"
+VERSION = "1.24.0"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
