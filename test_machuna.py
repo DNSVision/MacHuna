@@ -10386,6 +10386,22 @@ class TestSonyScz(unittest.TestCase):
             m.write_scz(dest, [clip], log=lambda *a: None)
         self.assertFalse([n for n in os.listdir(self.tmp) if n.startswith('Huge')])
 
+    def test_the_4_gb_limit_is_recognised_as_windows_reports_it(self):
+        # The M1's 2.13.0 review: Windows may report a write past 4 GB on a
+        # FAT32 stick as ENOSPC (ERROR_DISK_FULL 112) or winerror 223
+        # (ERROR_FILE_TOO_LARGE), not EFBIG as macOS does. A really full disk
+        # must still be reported as full, not as the 4 GB limit.
+        import errno
+        big, free = 0xFFFF0000, 2 * 1024 ** 3
+        hit = m._fat32_limit_hit
+        self.assertTrue(hit(OSError(errno.EFBIG, 'File too large'), 1000, 0))
+        self.assertTrue(hit(OSError(errno.ENOSPC, 'No space'), big, free))
+        e = OSError(errno.EINVAL, 'x'); e.winerror = 223
+        self.assertTrue(hit(e, 1000, free))
+        self.assertFalse(hit(OSError(errno.ENOSPC, 'No space'), 1000, free), 'a small file: the disk is full')
+        self.assertFalse(hit(OSError(errno.ENOSPC, 'No space'), big, 1024), 'no room left: the disk is full')
+        self.assertFalse(hit(OSError(errno.EACCES, 'Denied'), big, free))
+
     def test_solid_key_for_ignore_key_on_tga_outputs(self):
         d = os.path.join(self.tmp, 'solid'); os.makedirs(d)
         for p in self.frames:

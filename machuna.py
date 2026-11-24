@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.24.0"
+VERSION = "1.24.1"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -8011,8 +8011,12 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
             z.writestr(entry("LogicalMaterials.json"), json.dumps({"logical": logical}))
         os.replace(tmp, dest_path)
     except OSError as e:
-        import errno
-        if e.errno == errno.EFBIG:
+        size = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+        try:
+            free = shutil.disk_usage(os.path.dirname(os.path.abspath(tmp))).free
+        except OSError:
+            free = 0
+        if _fat32_limit_hit(e, size, free):
             raise ValueError("This archive is over 4 GB, which a FAT32 memory stick cannot hold. "
                              "Write it to an exFAT stick, or use One file per clip.") from None
         raise
@@ -8020,6 +8024,18 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
         if os.path.exists(tmp):
             os.unlink(tmp)
     return dest_path
+
+
+def _fat32_limit_hit(e: OSError, size: int, free: int) -> bool:
+    """Whether a failed write hit FAT32's 4 GB file limit, as each system
+    reports it: macOS EFBIG; Windows winerror 223 (ERROR_FILE_TOO_LARGE), or
+    ENOSPC (ERROR_DISK_FULL) with the file at the limit and room still left
+    on the disk, so a disk that is really full is still said to be full (the
+    M1's 2.13.0 review)."""
+    import errno
+    if e.errno == errno.EFBIG or getattr(e, 'winerror', None) == 223:
+        return True
+    return e.errno == errno.ENOSPC and size >= 0xFC000000 and free > 64 * 1024 ** 2
 
 
 def _scz_number(name: str) -> int:

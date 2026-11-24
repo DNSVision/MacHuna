@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.24.1 — 2026-11-24
+
+**The 4 GB limit is recognised on Windows too.** MacHuna 2.13.0 pins it.
+
+### Fixed
+- **SCZ: an archive too big for a FAT32 stick is reported in plain words on Windows as well as macOS.** macOS reports the 4 GB limit as EFBIG. Windows reports it as winerror 223, or as ENOSPC when the file is at the limit and the disk still has room (`_fat32_limit_hit`). A disk that is really full is still reported as full. Found in the PC port's review.
+
 ## v1.24.0 — 2026-11-24
 
 **The desk formats release: Ross TGA, three Sony outputs, Sony SCZ written and read, and sound beside TGA frames.** MacHuna 2.13.0 pins it.
