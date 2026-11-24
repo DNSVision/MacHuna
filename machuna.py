@@ -8014,7 +8014,7 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
         import errno
         if e.errno == errno.EFBIG:
             raise ValueError("This archive is over 4 GB, which a FAT32 memory stick cannot hold. "
-                             "Write it to an exFAT stick, or use One per clip.") from None
+                             "Write it to an exFAT stick, or use One file per clip.") from None
         raise
     finally:
         if os.path.exists(tmp):

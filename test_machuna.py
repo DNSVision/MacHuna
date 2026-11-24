@@ -10382,7 +10382,7 @@ class TestSonyScz(unittest.TestCase):
         def full(zf, info, data, *a, **k):
             raise OSError(errno.EFBIG, 'File too large')
         with mock.patch.object(zipfile.ZipFile, 'writestr', full), \
-                self.assertRaisesRegex(ValueError, '4 GB'):
+                self.assertRaisesRegex(ValueError, r'4 GB.*use One file per clip\.'):
             m.write_scz(dest, [clip], log=lambda *a: None)
         self.assertFalse([n for n in os.listdir(self.tmp) if n.startswith('Huge')])
 
