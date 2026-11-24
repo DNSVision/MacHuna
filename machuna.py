@@ -7820,6 +7820,15 @@ def _fit_tga_folder_to_show(folder: str, target: str, clip_name, src_fps: float,
     return len(names)
 
 
+def tga_carries_sound(target: str) -> bool:
+    """Whether a named TGA output writes the row's sound beside its frames
+    (decision 87): Acuity / Vision, Carbonite and XVS / MLS TGA. Not MVS Sony
+    TGA (2.13.0 change list item 1, David 2026-11-24): an MVS records sound
+    from embedded SDI and cannot import a WAV, so one among the frames could
+    make a Select All at the desk fail."""
+    return tga_named(target) and target != HULA_TARGET_SONY_TGA
+
+
 def write_tga_sound(folder: str, target: str, cn, source: str = None,
                     sound_file: str = None, standard: str = '1080p50',
                     clear_frames: str = None, log=print):
@@ -7832,7 +7841,7 @@ def write_tga_sound(folder: str, target: str, cn, source: str = None,
     SWS or EIF). Call it after the frames are final. Returns the WAV's path,
     or None, writing nothing, for another target or when there is no sound."""
     import wave
-    if not tga_named(target):
+    if not tga_carries_sound(target):
         return None
     if sound_file:
         stereo = _sound_file_stereo24(sound_file, log)

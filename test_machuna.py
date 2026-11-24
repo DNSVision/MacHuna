@@ -9954,14 +9954,14 @@ class TestRossTga(unittest.TestCase):
 
 
 class TestTgaSound(unittest.TestCase):
-    """Swift decision 87 (David, 2026-11-22): Sony TGA, Acuity / Vision TGA and
-    Carbonite TGA carry the row's sound as a WAV INSIDE the frames' folder,
+    """Swift decision 87 (David, 2026-11-22): XVS / MLS TGA, Acuity / Vision TGA and
+    Carbonite TGA (not MVS Sony TGA: 2.13.0 change list item 1) carry the row's sound as a WAV INSIDE the frames' folder,
     named after the clip (Ross links a WAV by the same name; Sony links by
     hand, so the place is only a convenience): 48 kHz stereo 24-bit, exactly
     the picture's length, a leading clear frame as silence. Written only when
     the row has sound and Include audio is on; other TGA outputs unchanged."""
 
-    NAMED = {m.HULA_TARGET_SONY_TGA: 'GOAL', m.HULA_TARGET_ACUITY_TGA: 'Sting Goal',
+    NAMED = {m.HULA_TARGET_SONY_LONG_TGA: 'Goal Sting', m.HULA_TARGET_ACUITY_TGA: 'Sting Goal',
              m.HULA_TARGET_CARBONITE_TGA: 'Sting_Goal'}
 
     @classmethod
@@ -10042,8 +10042,8 @@ class TestTgaSound(unittest.TestCase):
         self.assertFalse(got[960 + len(want):].any())
 
     def test_a_chosen_sound_file_is_used_and_padded_to_the_picture(self):
-        name = 'GOAL'
-        folder = self._run(self.quiet, m.HULA_TARGET_SONY_TGA, name, sound_files=[self.tune])
+        name = 'Goal Sting'
+        folder = self._run(self.quiet, m.HULA_TARGET_SONY_LONG_TGA, name, sound_files=[self.tune])
         fmt, got = self._read(os.path.join(folder, f'{name}.wav'))
         self.assertEqual(fmt, (48000, 2, 3))
         self.assertEqual(len(got), self._frames(folder) * 960)
@@ -10057,6 +10057,19 @@ class TestTgaSound(unittest.TestCase):
                 folder = self._run(src, m.HULA_TARGET_ACUITY_TGA, 'Goal', **kw)
                 self.assertTrue(self._frames(folder))
                 self.assertEqual([f for f in os.listdir(folder) if f.lower().endswith('.wav')], [])
+
+    def test_mvs_tga_writes_no_wav(self):
+        # 2.13.0 change list item 1 (David, 2026-11-24): an MVS records its
+        # sound from embedded SDI and cannot import a WAV, so a WAV among the
+        # frames could make a Select All at the desk fail. Its own sound, an
+        # SWS's or EIF's, and a chosen sound file: none is written.
+        self.assertFalse(m.tga_carries_sound(m.HULA_TARGET_SONY_TGA))
+        for src, kw in ((self.mov, {}), (self.sws, {}), (self.eif, {}),
+                        (self.quiet, {'sound_files': [self.tune]})):
+            with self.subTest(src=os.path.basename(src)):
+                folder = self._run(src, m.HULA_TARGET_SONY_TGA, 'GOAL', **kw)
+                self.assertTrue(self._frames(folder))
+                self.assertEqual([f for f in os.listdir(folder) if not f.lower().endswith('.tga')], [])
 
     def test_other_tga_outputs_are_unchanged(self):
         out = tempfile.mkdtemp(dir=self.tmp)
