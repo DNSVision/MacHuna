@@ -4736,8 +4736,10 @@ GENERIC_TGA_QUIET_SECS = 3.0
 
 def _sequence_name(base: str, first_frame: str) -> str:
     """What a sequence is called: its base without trailing separators, or,
-    for frames named only with numbers, the folder they are in."""
-    name = (base or '').rstrip('._- ')
+    for frames named only with numbers, the folder they are in. Sony's `#`
+    (`CLIP#000000.tga`, XVS-9000 exports and SCZ frames) is a separator too
+    (2.13.0 change list item 13)."""
+    name = (base or '').rstrip('._- #')
     return name or os.path.basename(os.path.dirname(os.path.abspath(first_frame))) or 'CLIP'
 
 # ─────────────────────────────────────────────────────────────

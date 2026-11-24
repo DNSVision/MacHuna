@@ -7905,6 +7905,16 @@ class TestNumbersOnlySequences(unittest.TestCase):
         for base, want in (('GRAPHIC_', 'GRAPHIC'), ('STING', 'STING'), ('clip.', 'clip')):
             self.assertEqual(m._sequence_name(base, '/x/FOLDER/f.tga'), want)
 
+    def test_sonys_hash_separator_is_not_part_of_the_name(self):
+        # 2.13.0 change list item 13 (David, 2026-11-24): Sony exports frames
+        # as `CLIP#000000.tga` (XVS-9000, and inside an SCZ). The # belongs to
+        # the numbering, so the sequence is "CLIP", not "CLIP#", in the list
+        # and as an SWS's Name.
+        d = self._folder([f'Goal Sting#{i:06d}.tga' for i in range(3)])
+        base = m._find_tga_sequences(d)[0][0]
+        self.assertEqual(m._sequence_name(base, os.path.join(d, 'Goal Sting#000000.tga')), 'Goal Sting')
+        self.assertEqual(m._sequence_name('WIPE #', '/x/F/f.tga'), 'WIPE')
+
     def test_names_with_letters_group_as_before(self):
         names = ['STING0001', 'BUMPER1_100_0001', 'shot1_0001', 'A1', 'clip.0001',
                  'x-12', 'Lower_Third_00001', 'GRAPHIC_000', 'v2_final_010', 'B_0', 'a1b2c3']
