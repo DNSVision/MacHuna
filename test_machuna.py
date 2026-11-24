@@ -10386,6 +10386,27 @@ class TestSonyScz(unittest.TestCase):
             m.write_scz(dest, [clip], log=lambda *a: None)
         self.assertFalse([n for n in os.listdir(self.tmp) if n.startswith('Huge')])
 
+    def test_written_with_the_fast_zip_setting(self):
+        # David, 2026-11-24: the Sony user's MLS-X1 imported and played a
+        # level-1 (fast) archive, so SCZ is written at level 1: about five
+        # times quicker than the standard 6, files about 25% bigger.
+        import zipfile
+        from unittest import mock
+        self.assertEqual(m.SCZ_ZIP_LEVEL, 1)
+        seen = []
+        real_ws, real_w = zipfile.ZipFile.writestr, zipfile.ZipFile.write
+        def ws(zf, info, data, *a, **k):
+            seen.append(k.get('compresslevel')); return real_ws(zf, info, data, *a, **k)
+        def w(zf, path, arc=None, *a, **k):
+            seen.append(k.get('compresslevel')); return real_w(zf, path, arc, *a, **k)
+        dest = os.path.join(self.tmp, 'Fast.scz')
+        clip = {'name': 'Fast', 'folder': '', 'memo': '', 'tags': [], 'frames': self.frames,
+                'sound': None, 'frame_rate': 5000}
+        with mock.patch.object(zipfile.ZipFile, 'writestr', ws), mock.patch.object(zipfile.ZipFile, 'write', w):
+            m.write_scz(dest, [clip], log=lambda *a: None)
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {1}, 'every member written at level 1')
+
     def test_the_4_gb_limit_is_recognised_as_windows_reports_it(self):
         # The M1's 2.13.0 review: Windows may report a write past 4 GB on a
         # FAT32 stick as ENOSPC (ERROR_DISK_FULL 112) or winerror 223

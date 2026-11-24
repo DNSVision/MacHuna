@@ -44,7 +44,7 @@ try:
 except (ImportError, Exception):
     HAS_DND = False
 
-VERSION = "1.24.1"
+VERSION = "1.24.2"
 
 # ─────────────────────────────────────────────────────────────
 #  SWS format constants (reverse-engineered from binary analysis)
@@ -7958,6 +7958,13 @@ def _scz_tga(rgba) -> bytes:
     return head + np.ascontiguousarray(rgba[::-1][:, :, [2, 1, 0, 3]]).tobytes() + bytes(8) + b"TRUEVISION-XFILE.\0"
 
 
+# Deflate level for SCZ archives (David, 2026-11-24): the fast setting. The
+# Sony user's MLS-X1 imported and played a level-1 archive; about five times
+# quicker to write than the standard 6, files about 25% bigger. The level does
+# not show in the zip's headers (method 8 either way).
+SCZ_ZIP_LEVEL = 1
+
+
 def write_scz(dest_path: str, clips: list, log=print) -> str:
     """Write an SCZ holding `clips`, each {'name', 'folder', 'memo', 'tags',
     'frames' (TGA or PNG files, in order), 'sound' (a WAV or None),
@@ -7994,12 +8001,14 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
                     _check_stop()
                     with Image.open(frame) as im:
                         rgba = np.asarray(im.convert('RGBA'))
-                    z.writestr(entry(f"{pic}/{c['name']}#{i:06d}.TGA"), _scz_tga(rgba))
+                    z.writestr(entry(f"{pic}/{c['name']}#{i:06d}.TGA"), _scz_tga(rgba),
+                               compresslevel=SCZ_ZIP_LEVEL)
                 physical, dates = {"0": pic, "1": pic}, {pic: now}
                 if c.get('sound'):
                     n += 1
                     aud = f"{n:06d}"
-                    z.write(c['sound'], f"{aud}/{c['name']}.WAV", compress_type=zipfile.ZIP_DEFLATED)
+                    z.write(c['sound'], f"{aud}/{c['name']}.WAV", compress_type=zipfile.ZIP_DEFLATED,
+                            compresslevel=SCZ_ZIP_LEVEL)
                     physical["2"], dates[aud] = aud, now
                 logical.append({"physical_id": physical, "comment": c.get('memo') or '',
                                 "folder": c.get('folder') or SCZ_DEFAULT_FOLDER,
@@ -8008,7 +8017,8 @@ def write_scz(dest_path: str, clips: list, log=print) -> str:
                                 "physical_last_modified_date": dates, "sfu_scan_type": ""})
                 log(f"  SCZ: {c['name']}: {len(c['frames'])} frame(s)"
                     f"{', with sound' if c.get('sound') else ''}, into {c.get('folder') or SCZ_DEFAULT_FOLDER}")
-            z.writestr(entry("LogicalMaterials.json"), json.dumps({"logical": logical}))
+            z.writestr(entry("LogicalMaterials.json"), json.dumps({"logical": logical}),
+                       compresslevel=SCZ_ZIP_LEVEL)
         os.replace(tmp, dest_path)
     except OSError as e:
         size = os.path.getsize(tmp) if os.path.exists(tmp) else 0

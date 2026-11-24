@@ -4,6 +4,13 @@ All notable changes to MacHuna are documented here.
 
 ---
 
+## v1.24.2 — 2026-11-24
+
+**SCZ files are written about three times quicker.** MacHuna 2.13.0 pins it.
+
+### Changed
+- **SCZ archives are zipped at deflate level 1, the fast setting (`SCZ_ZIP_LEVEL`), instead of the standard 6.** The Sony user's MLS-X1 imported and played a level-1 archive. A 85-frame 1080p50 clip now takes 5.2 s instead of 16.3 s, and the file is 161 MB instead of 128 MB. Nothing in the zip's headers changes.
+
 ## v1.24.1 — 2026-11-24
 
 **The 4 GB limit is recognised on Windows too.** MacHuna 2.13.0 pins it.
