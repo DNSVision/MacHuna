@@ -392,6 +392,8 @@ together first, then the public PC release. Each line is open until ticked here.
 
 **OPEN, David to decide (2026-10-29):** K-Frame TGA from a 25p clip still gives one TGA per frame (decision 44: no Video standard; right for a 50i or 25p K-Frame, double speed on a 50p one). Option: ask "Is the desk 50p or 50i?" for 25p clips too.
 
+**PC send folder route (David, 2026-11-25, told the M1 himself):** the M1 may ADD (only) the release send folder to his Desktop's MacHuna Transfer (iCloud-synced), never delete, move, rename or overwrite; name clash = stop and tell the M5; list before and after, SHA-256 every file. The M5 then checks it against the M1's sums and publishes. The M1 is on rc6 (part A green).
+
 **2.14.0 at v2.14.0-rc5 (Swift 55a0ecc), notarised, David checked it all (2026-11-25); engine unchanged v1.24.2; the M1 has the STEP 1 brief.** From a Sony specialist's reply (Sony manuals): an XVS takes no spaces in file names and 32 characters including the frame number; folders 16; an MLS takes 64 and spaces. So XVS / MLS TGA names are XVS-safe (Swift decision 93 item 9). OPEN with Sony: an XVS-G1's SCZ desk folder limit (16?), and reading an MLS-exported SCZ with a grabbed still.
 
 **2.14.0 SCOPE (David, 2026-11-25):** mixed batches (Swift decision 86: Use Preset / Add Preset trees / Select Rows Named / numbering per desk with blocks / one SCZ file across presets / one log entry; built and checked by David step by step 2026-11-25) PLUS the small items below (reading sign, leftover work files on quit, the internal path in the bar, the 4 GB wording, field order for SCZ) and the PC-only points (the M1). **2160p moves to 2.15.0.** Then: manual and Quick Start, rc1, David's end-to-end check, the M1 brief.
